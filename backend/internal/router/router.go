@@ -166,6 +166,33 @@ func New(cfg config.Config) (http.Handler, error) {
 		response.JSON(w, http.StatusOK, "ok", "blind box draw completed", result)
 	})
 
+	// 购买月卡/周卡
+	mux.HandleFunc("POST /api/v1/blindbox/buy-card", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		var input model.BuyCardRequest
+		if err := decodeJSON(r, &input); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		result, err := services.BuyCard(token, input)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "card purchased", result)
+	})
+
+	// 查询我的月卡
+	mux.HandleFunc("GET /api/v1/blindbox/my-card", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		card, err := services.GetUserCard(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "my card", card)
+	})
+
 	// 保底状态查询
 	mux.HandleFunc("GET /api/v1/blindbox/pity-status", func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r)

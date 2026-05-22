@@ -579,15 +579,17 @@ async function loadLeaderboard() {
 // ============================================================
 // 会员信息
 // ============================================================
-
+// 会员信息
 async function loadMember() {
   try {
-    const [memberRes, pointsRes] = await Promise.all([
+    const [memberRes, pointsRes, cardRes] = await Promise.all([
       api('/api/v1/blindbox/member'),
       api('/api/v1/blindbox/points-log'),
+      api('/api/v1/blindbox/my-card'),
     ]);
     const member = memberRes.data;
     const logs = pointsRes.data || [];
+    const card = cardRes.data;
     state.member = member;
     updatePoints();
 
@@ -599,33 +601,71 @@ async function loadMember() {
       normal: '#94a3b8', silver: '#c0c0c0', gold: '#fbbf24', diamond: '#a78bfa',
     };
 
-    document.getElementById('memberContent').innerHTML = `
-      <div class="member-card">
-        <div class="level-icon">${levelIcons[member.level] || '🥉'}</div>
-        <div class="level-name" style="color:${levelColors[member.level] || '#94a3b8'}">${levelNames[member.level] || '青铜'}会员</div>
-        <div class="points">💎 ${member.points} 分</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:6px;">
-          累计抽奖 ${member.total_draws} 次 | 累计消费 ${member.total_spent} 分
-        </div>
-      </div>
-      <div class="panel-head"><h2>💳 积分变动</h2></div>
-      ${logs.slice(0, 20).map(log => `
-        <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px solid rgba(255,255,255,0.05)">
-          <span style="color:var(--muted);font-size:12px">${formatTime(log.created_at)}</span>
-          <span style="flex:1;margin-left:8px">${log.remark || log.reason}</span>
-          <span style="color:${log.points >= 0 ? 'var(--green)' : 'var(--accent)'};font-weight:600">${log.points >= 0 ? '+' : ''}${log.points}</span>
-        </div>
-      `).join('')}
+    // 优化月卡显示
+    let cardHtml = '';
+    if (card) {
+      const cardNames = { weekly: '周卡', monthly: '月卡', season: '季卡' };
+      cardHtml = '<div class="member-card" style="border-color:var(--accent2);">' +
+        '<div style="font-size:14px;color:var(--accent2);font-weight:600;">🎫 ' + (cardNames[card.card_type] || card.card_type) + '</div>' +
+        '<div style="font-size:12px;color:var(--muted);">有效期至: ' + (card.expires_at ? card.expires_at.slice(0,10) : '-') + '</div>' +
+        '</div>';
+    } else {
+      cardHtml = '<div class="member-card">' +
+        '<div style="font-size:14px;color:var(--muted);">暂无月卡</div>' +
+        '<div style="display:flex;gap:8px;justify-content:center;margin-top:10px;flex-wrap:wrap;">' +
+        '<button class="btn-sm" onclick="buyCard(\'weekly\')">周卡 9.9</button>' +
+        '<button class="btn-sm" style="background:rgba(167,139,250,0.3);" onclick="buyCard(\'monthly\')">🔥 月卡 28</button>' +
+        '<button class="btn-sm" onclick="buyCard(\'season\')">季卡 68</button>' +
+        '</div></div>';
+    }
+
+    document.getElementById('memberContent').innerHTML =
+      '<div class="member-card">' +
+        '<div class="level-icon">' + (levelIcons[member.level] || '🥉') + '</div>' +
+        '<div class="level-name" style="color:' + (levelColors[member.level] || '#94a3b8') + '">' + (levelNames[member.level] || '青铜') + '会员</div>' +
+        '<div class="points">💎 ' + member.points + ' 分</div>' +
+        '<div style="font-size:12px;color:var(--muted);margin-top:6px;">累计抽奖 ' + member.total_draws + ' 次 | 累计消费 ' + member.total_spent + ' 分</div>' +
+      '</div>' +
+      cardHtml +
+      '<div class="panel-head"><h2>💳 积分变动</h2></div>' +
+      logs.slice(0, 20).map(function(log) {
+        return '<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px solid rgba(255,255,255,0.05)">' +
+          '<span style="color:var(--muted);font-size:12px">' + formatTime(log.created_at) + '</span>' +
+          '<span style="flex:1;margin-left:8px">' + (log.remark || log.reason) + '</span>' +
+          '<span style="color:' + (log.points >= 0 ? 'var(--green)' : 'var(--accent)') + ';font-weight:600">' + (log.points >= 0 ? '+' : '') + log.points + '</span>' +
+        '</div>';
+      }).join('');
+
     `;
   } catch (e) {
-    document.getElementById('memberContent').innerHTML = `<div class="loading">❌ ${e.message}</div>`;
+    document.getElementById('memberContent').innerHTML = '<div class="loading">❌ ' + e.message + '</div>';
   }
 }
 
 function formatTime(t) {
   if (!t) return '';
-  const d = new Date(t);
-  return `${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+  var d = new Date(t);
+  return (d.getMonth()+1) + '/' + d.getDate() + ' ' +
+    d.getHours().toString().padStart(2,'0') + ':' +
+    d.getMinutes().toString().padStart(2,'0');
+}
+
+// 购买月卡
+async function buyCard(cardType) {
+  if (!state.token) { showToast('请先登录', true); return; }
+  var names = { weekly: '周卡(990分)', monthly: '月卡(2800分)', season: '季卡(6800分)' };
+  if (!confirm('确定购买' + (names[cardType] || cardType) + '吗？')) return;
+  try {
+    var res = await api('/api/v1/blindbox/buy-card', {
+      method: 'POST',
+      body: JSON.stringify({ card_type: cardType }),
+    });
+    var data = res.data;
+    showToast('🎫 购买成功！有效期至 ' + data.expires_at);
+    loadMember();
+  } catch (e) {
+    showToast('❌ ' + e.message, true);
+  }
 }
 
 // ============================================================

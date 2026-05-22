@@ -171,18 +171,48 @@ func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.Blind
 	}
 	isTenPull := drawCount >= 2
 
-	// 4. 检查并扣减积分
+	// 检查月卡
+	card, _ := s.store.GetUserCard(user.ID)
+	freeRemaining := 0
+	if card != nil {
+		freeRemaining, _ = s.store.GetFreeDrawRemaining(user.ID)
+	}
+
+	// 4. 检查并扣减积分（含月卡免费抽+折扣）
 	member, err := s.store.GetUserMember(user.ID)
 	if err != nil {
 		return nil, err
 	}
-	// 单抽100分，十连950分（9.5折）
-	pointsCost := int64(drawCount * 100)
-	if isTenPull {
-		pointsCost = int64(drawCount * 95) // 95分/次 for ten-pull
+	// 月卡: 先用免费抽
+	actualFree := 0
+	if freeRemaining > 0 {
+		actualFree = freeRemaining
+		if actualFree > drawCount {
+			actualFree = drawCount
+		}
+		for i := 0; i < actualFree; i++ {
+			s.store.ConsumeFreeDraw(user.ID)
+		}
 	}
-	if member.Points < pointsCost {
-		return nil, store.ErrInsufficientPoints
+
+	// 剩余的计费
+	chargeCount := drawCount - actualFree
+	pointsCost := int64(0)
+	if chargeCount > 0 {
+		unitPrice := 100
+		if isTenPull {
+			unitPrice = 95 // 十连基础折扣
+		}
+		// 月卡用户的额外折扣
+		if card != nil {
+			cfg := model.CardConfigs[card.CardType]
+			unitPrice = int(float64(unitPrice) * cfg.DiscountRate)
+		}
+		pointsCost = int64(chargeCount * unitPrice)
+		if member.Points < pointsCost {
+			return nil, store.ErrInsufficientPoints
+		}
+		member.Points -= pointsCost
 	}
 
 	// 5. 构建概率引擎
@@ -297,7 +327,7 @@ func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.Blind
 	}
 
 	// 9. 扣减积分 + 更新消费记录（自动更新会员等级）
-	member.Points -= pointsCost
+	// 注：member.Points 已在第4步中扣减，这里只更新消费统计
 	member.TotalSpent += pointsCost
 	member.TotalDraws += int64(drawCount)
 	// 自动计算会员等级
@@ -343,6 +373,28 @@ func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.Blind
 		PityStatus:       ps,
 		CollectionReward: rewardInfo,
 	}, nil
+}
+
+// BuyCard 购买月卡/周卡/季卡
+func (s *Service) BuyCard(token string, input model.BuyCardRequest) (*model.BuyCardResult, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.BuyCard(user.ID, input.CardType)
+}
+
+// GetUserCard 获取用户月卡信息
+func (s *Service) GetUserCard(token string) (*model.UserCard, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	card, err := s.store.GetUserCard(user.ID)
+	if err != nil {
+		return nil, err
+	}
+	return card, nil
 }
 
 // PityStatus 查询用户在当前活动的保底状态

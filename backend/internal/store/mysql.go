@@ -1726,6 +1726,20 @@ func (store *MySQLStore) GetTodayFreeDrawUsed(userID string) (int, error) {
 	return 0, fmt.Errorf("mysql monthcard not implemented, use memory store")
 }
 
+// 🆕 ---- 用户卡（月卡/周卡/季卡）MySQL Stubs（使用 MemoryStore）----
+func (store *MySQLStore) GetUserCard(userID string) (*model.UserCard, error) {
+	return nil, nil
+}
+func (store *MySQLStore) BuyCard(userID string, cardType model.CardType) (*model.BuyCardResult, error) {
+	return nil, fmt.Errorf("mysql buy card not implemented, use memory store")
+}
+func (store *MySQLStore) ConsumeFreeDraw(userID string) (bool, error) {
+	return false, nil
+}
+func (store *MySQLStore) GetFreeDrawRemaining(userID string) (int, error) {
+	return 0, nil
+}
+
 // 🆕 ---- 战令系统 MySQL Stubs（使用 MemoryStore）----
 func (store *MySQLStore) GetActiveSeason() (*model.BattlePassSeason, error) {
 	return nil, fmt.Errorf("mysql battlepass not implemented, use memory store")

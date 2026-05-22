@@ -86,6 +86,16 @@ UpdateUserMember(member *model.UserMember) error
 // LogPoints 记录积分变动日志
 LogPoints(userID string, points int64, balance int64, reason, remark string) error
 
+	// ---- 月卡/付费卡系统 ----
+	// GetUserCard 获取用户当前生效的卡（nil=无）
+	GetUserCard(userID string) (*model.UserCard, error)
+	// BuyCard 购买卡，扣减积分
+	BuyCard(userID string, cardType model.CardType) (*model.BuyCardResult, error)
+	// ConsumeFreeDraw 消耗一次免费抽，返回是否成功
+	ConsumeFreeDraw(userID string) (bool, error)
+	// GetFreeDrawRemaining 查询今日剩余免费抽次数
+	GetFreeDrawRemaining(userID string) (int, error)
+
 	// ---- 数据统计 ----
 	GetDrawStatistics(token, campaignID string) (*model.DrawStatistics, error)
 

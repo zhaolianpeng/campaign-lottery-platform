@@ -273,6 +273,59 @@ type UserMember struct {
 	UpdatedAt   time.Time   `json:"updated_at"`
 }
 
+// ============================================================
+// 月卡/付费卡系统
+// ============================================================
+
+// CardType 卡类型
+type CardType string
+
+const (
+	CardWeekly  CardType = "weekly"  // 周卡
+	CardMonthly CardType = "monthly" // 月卡
+	CardSeason  CardType = "season"  // 季卡
+)
+
+// CardConfig 卡配置
+type CardConfig struct {
+	CardType       CardType `json:"card_type"`
+	Price          int      `json:"price"`           // 价格（分）
+	DurationDays   int      `json:"duration_days"`   // 有效期天数
+	FreeDrawsDaily int      `json:"free_draws_daily"` // 每日免费抽次数
+	DiscountRate   float64  `json:"discount_rate"`    // 折扣率 0.9=9折
+	Description    string   `json:"description"`
+}
+
+// 卡配置表
+var CardConfigs = map[CardType]CardConfig{
+	CardWeekly:  {CardType: CardWeekly, Price: 990, DurationDays: 7, FreeDrawsDaily: 1, DiscountRate: 0.9, Description: "周卡·每日免费1抽+9折"},
+	CardMonthly: {CardType: CardMonthly, Price: 2800, DurationDays: 30, FreeDrawsDaily: 2, DiscountRate: 0.8, Description: "月卡·每日免费2抽+8折"},
+	CardSeason:  {CardType: CardSeason, Price: 6800, DurationDays: 90, FreeDrawsDaily: 2, DiscountRate: 0.75, Description: "季卡·每日免费2抽+7.5折+限定优先"},
+}
+
+// UserCard 用户已购卡
+type UserCard struct {
+	UserID        string    `json:"user_id"`
+	CardType      CardType  `json:"card_type"`
+	StartedAt     time.Time `json:"started_at"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	DailyFreeUsed int       `json:"daily_free_used"` // 今日已用免费次数
+	FreeDate      string    `json:"free_date"`       // 记录免费次数日期 "2006-01-02"
+}
+
+// BuyCardRequest 购买卡请求
+type BuyCardRequest struct {
+	CardType CardType `json:"card_type"`
+}
+
+// BuyCardResult 购买结果
+type BuyCardResult struct {
+	CardType  CardType `json:"card_type"`
+	ExpiresAt string   `json:"expires_at"`
+	Price     int      `json:"price"`
+	Points    int64    `json:"points"` // 扣减后剩余积分
+}
+
 // UserPointsLog 积分变动记录
 type UserPointsLog struct {
 	ID        int64     `json:"id"`
