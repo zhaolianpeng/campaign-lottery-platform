@@ -1,59 +1,120 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Campaign Lottery H5</title>
-    <link rel="stylesheet" href="./styles.css" />
-  </head>
-  <body>
-    <main class="shell">
-      <section class="hero">
-        <p class="eyebrow">Original Campaign Demo</p>
-        <h1>夏季开门红抽奖活动</h1>
-        <p class="summary">这是一个原创营销活动演示页，包含游客登录、活动列表、即时抽奖和个人记录查询。</p>
-      </section>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>BOX·MAGIC 盲盒</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- 顶部栏 -->
+    <header id="topbar">
+      <span class="logo">🎁 BOX·MAGIC</span>
+      <span id="pointsDisplay" class="points-badge">💎 0</span>
+      <button id="checkinBtn" class="btn-sm" onclick="dailyCheckIn()">📅 签到</button>
+    </header>
 
-      <section class="panel grid-two">
-        <div>
-          <label for="apiBase">API 地址</label>
-          <input id="apiBase" value="http://localhost:18100" />
+    <!-- 登录覆盖层 -->
+    <div id="loginOverlay" class="overlay">
+      <div class="login-card">
+        <h1>🎁 BOX·MAGIC</h1>
+        <p>盲盒抽奖平台</p>
+        <input id="nicknameInput" placeholder="输入昵称（留空随机）" />
+        <input id="apiBaseInput" value="http://localhost:18100" placeholder="API地址" />
+        <button class="btn-primary" onclick="guestLogin()">🚀 开始抽盒</button>
+        <div id="loginStatus" class="status-msg"></div>
+      </div>
+    </div>
+
+    <!-- 错误/提示 Toast -->
+    <div id="toast" class="toast hidden"></div>
+
+    <!-- 导航栏 -->
+    <nav id="tabbar">
+      <button class="tab active" data-tab="series" onclick="switchTab('series')">🏠 系列</button>
+      <button class="tab" data-tab="inventory" onclick="switchTab('inventory')">📦 我的</button>
+      <button class="tab" data-tab="exchange" onclick="switchTab('exchange')">🔄 交换</button>
+      <button class="tab" data-tab="rank" onclick="switchTab('rank')">🏅 排行</button>
+      <button class="tab" data-tab="member" onclick="switchTab('member')">👑 会员</button>
+    </nav>
+
+    <!-- ===== 系列列表 Tab ===== -->
+    <div id="tab-series" class="tab-content active">
+      <div id="seriesList" class="series-grid">
+        <div class="loading">加载中...</div>
+      </div>
+    </div>
+
+    <!-- ===== 系列详情/抽盒 Tab ===== -->
+    <div id="tab-detail" class="tab-content">
+      <button class="btn-back" onclick="switchTab('series')">← 返回系列</button>
+      <div id="detailContent"></div>
+    </div>
+
+    <!-- ===== 我的盲盒 Tab ===== -->
+    <div id="tab-inventory" class="tab-content">
+      <div class="panel-head"><h2>📦 我的收藏</h2></div>
+      <div id="inventoryContent" class="prize-grid"><div class="loading">加载中...</div></div>
+    </div>
+
+    <!-- ===== 交换市场 Tab ===== -->
+    <div id="tab-exchange" class="tab-content">
+      <div class="panel-head">
+        <h2>🔄 交换市场</h2>
+        <button class="btn-sm" onclick="showExchangeForm()">+ 发布</button>
+      </div>
+      <div id="exchangeContent" class="exchange-list"><div class="loading">加载中...</div></div>
+    </div>
+
+    <!-- ===== 排行榜 Tab ===== -->
+    <div id="tab-rank" class="tab-content">
+      <div class="panel-head"><h2>🏅 收集排行榜</h2></div>
+      <div id="rankContent" class="rank-list"><div class="loading">加载中...</div></div>
+    </div>
+
+    <!-- ===== 会员 Tab ===== -->
+    <div id="tab-member" class="tab-content">
+      <div id="memberContent"><div class="loading">加载中...</div></div>
+    </div>
+  </div>
+
+  <!-- 开盒动画弹窗 -->
+  <div id="openBoxModal" class="modal hidden">
+    <div class="modal-bg" onclick="closeModal()"></div>
+    <div class="modal-content">
+      <div id="boxAnim" class="box-anim">
+        <div class="box-shake">🎁</div>
+        <div class="box-glow"></div>
+      </div>
+      <div id="boxResult" class="box-result hidden">
+        <div id="resultRarity" class="rarity-badge"></div>
+        <div id="resultIcon" class="result-icon">🎉</div>
+        <div id="resultName" class="result-name"></div>
+        <div id="resultNew" class="result-new hidden">✨ NEW!</div>
+        <div id="resultReward" class="result-reward hidden"></div>
+        <div class="result-actions">
+          <button class="btn-sm" onclick="closeModal()">再来一盒</button>
+          <button class="btn-sm" onclick="shareDraw()">📤 炫耀</button>
         </div>
-        <div>
-          <label for="nickname">昵称</label>
-          <input id="nickname" placeholder="输入昵称后游客登录" />
-        </div>
-      </section>
+      </div>
+    </div>
+  </div>
 
-      <section class="panel actions">
-        <button id="loginBtn">游客登录</button>
-        <button id="loadCampaignsBtn">读取活动</button>
-        <button id="loadRecordsBtn">查看我的抽奖记录</button>
-      </section>
+  <!-- 交换发布弹窗 -->
+  <div id="exchangeModal" class="modal hidden">
+    <div class="modal-bg" onclick="closeExchangeModal()"></div>
+    <div class="modal-content modal-sm">
+      <h3>发布交换</h3>
+      <label>我有（选择重复款）：</label>
+      <select id="havePrizeSelect"></select>
+      <label>我想要：</label>
+      <select id="wantPrizeSelect"></select>
+      <button class="btn-primary" onclick="publishExchange()">📤 发布</button>
+      <button onclick="closeExchangeModal()">取消</button>
+    </div>
+  </div>
 
-      <section class="panel" id="sessionPanel">
-        <h2>当前会话</h2>
-        <pre id="sessionOutput">尚未登录</pre>
-      </section>
-
-      <section class="panel" id="campaignPanel">
-        <div class="panel-head">
-          <h2>活动与奖池</h2>
-          <span id="drawHint">先读取活动，再发起抽奖</span>
-        </div>
-        <div id="campaignList" class="card-list"></div>
-      </section>
-
-      <section class="panel" id="drawPanel">
-        <h2>最近一次抽奖结果</h2>
-        <pre id="drawOutput">暂无结果</pre>
-      </section>
-
-      <section class="panel" id="recordPanel">
-        <h2>我的抽奖记录</h2>
-        <pre id="recordOutput">暂无记录</pre>
-      </section>
-    </main>
-    <script src="./app.js"></script>
-  </body>
+  <script src="./app.js"></script>
+</body>
 </html>

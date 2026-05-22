@@ -78,8 +78,10 @@ type Store interface {
 	GetUserMember(userID string) (*model.UserMember, error)
 	GetPointsLog(userID string) ([]model.UserPointsLog, error)
 	RedeemPrize(userID string, input model.RedeemRequest) (*model.RedeemResult, error)
-	// UpdateUserMember 更新用户的会员/积分信息
-	UpdateUserMember(member *model.UserMember) error
+// UpdateUserMember 更新用户的会员/积分信息
+UpdateUserMember(member *model.UserMember) error
+// LogPoints 记录积分变动日志
+LogPoints(userID string, points int64, balance int64, reason, remark string) error
 
 	// ---- 数据统计 ----
 	GetDrawStatistics(token, campaignID string) (*model.DrawStatistics, error)

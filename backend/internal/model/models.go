@@ -183,6 +183,7 @@ type SingleDrawResult struct {
 	PrizeImageURL string `json:"prize_image_url,omitempty"`
 	IsWin        bool   `json:"is_win"`
 	IsHardPity   bool   `json:"is_hard_pity,omitempty"`
+	IsNew        bool   `json:"is_new,omitempty"`
 }
 
 // SeriesProgress 用户系列收集进度

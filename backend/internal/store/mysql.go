@@ -1157,6 +1157,14 @@ func (store *MySQLStore) GetPointsLog(userID string) ([]model.UserPointsLog, err
 	return items, nil
 }
 
+func (store *MySQLStore) LogPoints(userID string, points int64, balance int64, reason, remark string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := store.db.ExecContext(ctx, `INSERT INTO user_points_logs (user_id, points, balance, reason, remark, created_at)
+		VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP())`, userID, points, balance, reason, remark)
+	return err
+}
+
 func (store *MySQLStore) RedeemPrize(userID string, input model.RedeemRequest) (*model.RedeemResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

@@ -168,6 +168,26 @@ func (s *MemoryStore) CreateGuestSession(nickname string) (model.User, model.Ses
 		ExpiresAt: time.Now().UTC().Add(7 * 24 * time.Hour),
 	}
 	s.sessions[session.Token] = session
+
+	// 新用户赠送初始积分
+	now := time.Now().UTC()
+	s.members[user.ID] = model.UserMember{
+		UserID:    user.ID,
+		Level:     model.MemberNormal,
+		Points:    100,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.pointsLog = append(s.pointsLog, model.UserPointsLog{
+		ID:        int64(len(s.pointsLog) + 1),
+		UserID:    user.ID,
+		Points:    100,
+		Balance:   100,
+		Reason:    "welcome",
+		Remark:    "新用户注册赠送",
+		CreatedAt: now,
+	})
+
 	return user, session, nil
 }
 
@@ -500,6 +520,21 @@ func (s *MemoryStore) GetUserMember(userID string) (*model.UserMember, error) {
 		return &m, nil
 	}
 	return &model.UserMember{UserID: userID, Level: model.MemberNormal}, nil
+}
+
+func (s *MemoryStore) LogPoints(userID string, points int64, balance int64, reason, remark string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pointsLog = append(s.pointsLog, model.UserPointsLog{
+		ID:        int64(len(s.pointsLog) + 1),
+		UserID:    userID,
+		Points:    points,
+		Balance:   balance,
+		Reason:    reason,
+		Remark:    remark,
+		CreatedAt: time.Now().UTC(),
+	})
+	return nil
 }
 
 func (s *MemoryStore) GetPointsLog(userID string) ([]model.UserPointsLog, error) {

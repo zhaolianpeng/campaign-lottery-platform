@@ -206,6 +206,9 @@ func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.Blind
 			sr.PrizeID = d.PrizeID
 			sr.PrizeName = rec.PrizeName
 			sr.PrizeLevel = d.PrizeLevel
+			// 检查是否为新款式
+			count, _ := s.store.GetPrizeCount(user.ID, d.PrizeID)
+			sr.IsNew = (count <= 1) // 库存中只有刚加的1条或0条 -> 新款式
 		} else {
 			rec, err := s.store.CreateMissRecord(user.ID, campaign.ID, isTenPull)
 			if err != nil {
@@ -230,6 +233,9 @@ func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.Blind
 	// 自动计算会员等级
 	member.Level = s.calcMemberLevel(member.TotalSpent)
 	s.store.UpdateUserMember(member) // 需要在Store接口加
+
+	// 记录积分变动日志
+	s.store.LogPoints(user.ID, -pointsCost, member.Points, "draw", fmt.Sprintf("抽奖消耗: %s x%d", campaign.Name, drawCount))
 
 	// 10. 检查集齐奖励
 	reward, _ := s.store.CheckCollectionCompletion(user.ID, campaign.ID)
@@ -546,8 +552,12 @@ func (s *Service) DailyCheckIn(token string) (*model.CheckInResult, error) {
 		}
 		bonusResult.PointsAwarded = result.PointsAwarded + 20
 		bonusResult.IsBonus = true
+		member, _ := s.store.GetUserMember(user.ID)
+		s.store.LogPoints(user.ID, bonusResult.PointsAwarded, member.Points, "daily", "每日签到")
 		return bonusResult, nil
 	}
+	member, _ := s.store.GetUserMember(user.ID)
+	s.store.LogPoints(user.ID, result.PointsAwarded, member.Points, "daily", "每日签到")
 	return result, nil
 }
 
@@ -565,7 +575,13 @@ func (s *Service) ShareReward(token string) (*model.ShareRewardResult, error) {
 	if count >= 10 {
 		return nil, store.ErrShareLimitReached
 	}
-	return s.store.ShareReward(user.ID, 2)
+	result, err := s.store.ShareReward(user.ID, 2)
+	if err != nil {
+		return nil, err
+	}
+	member, _ := s.store.GetUserMember(user.ID)
+	s.store.LogPoints(user.ID, 2, member.Points, "share", "分享奖励")
+	return result, nil
 }
 
 // GetLeaderboard 获取收集排行榜
