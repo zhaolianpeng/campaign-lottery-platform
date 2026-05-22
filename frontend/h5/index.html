@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Campaign Lottery H5</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Original Campaign Demo</p>
+        <h1>夏季开门红抽奖活动</h1>
+        <p class="summary">这是一个原创营销活动演示页，包含游客登录、活动列表、即时抽奖和个人记录查询。</p>
+      </section>
+
+      <section class="panel grid-two">
+        <div>
+          <label for="apiBase">API 地址</label>
+          <input id="apiBase" value="http://localhost:18100" />
+        </div>
+        <div>
+          <label for="nickname">昵称</label>
+          <input id="nickname" placeholder="输入昵称后游客登录" />
+        </div>
+      </section>
+
+      <section class="panel actions">
+        <button id="loginBtn">游客登录</button>
+        <button id="loadCampaignsBtn">读取活动</button>
+        <button id="loadRecordsBtn">查看我的抽奖记录</button>
+      </section>
+
+      <section class="panel" id="sessionPanel">
+        <h2>当前会话</h2>
+        <pre id="sessionOutput">尚未登录</pre>
+      </section>
+
+      <section class="panel" id="campaignPanel">
+        <div class="panel-head">
+          <h2>活动与奖池</h2>
+          <span id="drawHint">先读取活动，再发起抽奖</span>
+        </div>
+        <div id="campaignList" class="card-list"></div>
+      </section>
+
+      <section class="panel" id="drawPanel">
+        <h2>最近一次抽奖结果</h2>
+        <pre id="drawOutput">暂无结果</pre>
+      </section>
+
+      <section class="panel" id="recordPanel">
+        <h2>我的抽奖记录</h2>
+        <pre id="recordOutput">暂无记录</pre>
+      </section>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

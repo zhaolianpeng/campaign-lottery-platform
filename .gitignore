@@ -1,0 +1,5 @@
+.DS_Store
+
+backend/campaign-lottery-api
+backend/server.log
+backend/.env

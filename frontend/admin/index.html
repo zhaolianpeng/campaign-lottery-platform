@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Campaign Lottery Admin</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="sidebar">
+        <p class="kicker">Admin Console</p>
+        <h1>营销活动后台</h1>
+        <p>这是一个全新原创后台骨架，用于登录、查看活动概览、奖池库存和抽奖记录。</p>
+      </section>
+
+      <section class="content">
+        <div class="panel form-grid">
+          <div>
+            <label for="apiBase">API 地址</label>
+            <input id="apiBase" value="http://localhost:18100" />
+          </div>
+          <div>
+            <label for="username">账号</label>
+            <input id="username" value="admin" />
+          </div>
+          <div>
+            <label for="password">密码</label>
+            <input id="password" type="password" value="change-me-now" />
+          </div>
+          <div class="button-cell">
+            <button id="loginBtn">后台登录</button>
+          </div>
+        </div>
+
+        <div class="panel actions">
+          <button id="overviewBtn">读取总览</button>
+          <button id="recordsBtn">读取抽奖记录</button>
+        </div>
+
+        <div class="panel">
+          <h2>登录状态</h2>
+          <pre id="authOutput">未登录</pre>
+        </div>
+
+        <div class="panel">
+          <h2>总览数据</h2>
+          <pre id="overviewOutput">暂无数据</pre>
+        </div>
+
+        <div class="panel">
+          <h2>抽奖记录</h2>
+          <pre id="recordOutput">暂无数据</pre>
+        </div>
+      </section>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>
