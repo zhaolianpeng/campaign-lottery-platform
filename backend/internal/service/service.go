@@ -561,6 +561,18 @@ func (s *Service) AdminUpdatePityConfig(token string, campaignID string, cfg mod
 	return s.store.UpdateCampaign(token, campaignID, mutation)
 }
 
+// 🆕 AdminGetCampaign 管理员获取活动详情
+func (s *Service) AdminGetCampaign(token, campaignID string) (*model.Campaign, error) {
+	if _, err := s.store.AdminOverview(token); err != nil {
+		return nil, err
+	}
+	campaign, err := s.store.GetCampaign(campaignID)
+	if err != nil {
+		return nil, err
+	}
+	return &campaign, nil
+}
+
 // ============================================================
 // 原 Draw 兼容
 // ============================================================

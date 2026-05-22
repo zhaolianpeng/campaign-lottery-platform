@@ -111,15 +111,29 @@ func (store *MySQLStore) Seed() error {
 
 	// --- 盲盒专用种子数据 ---
 	blindboxID := "camp_blindbox_001"
-	_, err = store.db.ExecContext(ctx, `INSERT INTO campaigns (id, name, slug, status, starts_at, ends_at, daily_draw_limit, miss_weight, banner_image_url, campaign_summary,
-		pity_enabled, soft_pity_n, pity_factor, hard_pity_n, target_prize_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 30, 0.0150, 60, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())`,
+	bbPityConfig := model.PityConfig{
+		Enabled:     true,
+		SoftPityN:   30,
+		PityFactor:  0.015,
+		HardPityN:   60,
+		TargetPrize: "prize_bb_secret",
+		// UP池配置：雅典娜限时UP
+		UPPoolEnabled: true,
+		UPPrizeID:     "prize_bb_secret",
+		UPMultiplier:  5,
+		UPLevel:       "secret",
+		UPStartAt:     now.Add(-24 * time.Hour),
+		UPEndAt:       now.Add(14 * 24 * time.Hour),
+	}
+	bbPityBytes, _ := json.Marshal(bbPityConfig)
+	_, err = store.db.ExecContext(ctx, `INSERT INTO campaigns (id, name, slug, status, starts_at, ends_at, daily_draw_limit, miss_weight, banner_image_url, campaign_summary, pity_config, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())`,
 		blindboxID, "梦幻星辰系列盲盒", "dream-star-series", "online",
 		now.Add(-24*time.Hour), now.Add(60*24*time.Hour),
 		10, 30,
 		"https://static.example.com/blindbox/dream-star/banner.png",
-		"收集12款星辰主题公仔，集齐全套可兑换隐藏款！每抽必出，软保底30抽递增，60抽硬保底。",
-		"prize_bb_secret")
+		"收集12款星辰主题公仔，集齐全套可兑换隐藏款！每抽必出，软保底30抽递增，60抽硬保底。🌟 限时UP：雅典娜·黄金圣衣 EX 概率5倍提升！",
+		string(bbPityBytes))
 	if err != nil {
 		return err
 	}

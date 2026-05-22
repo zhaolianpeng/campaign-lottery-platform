@@ -501,6 +501,17 @@ func New(cfg config.Config) (http.Handler, error) {
 		response.JSON(w, http.StatusOK, "ok", "pity config updated", campaign)
 	})
 
+	// 🆕 管理端 - 获取活动保底配置
+	mux.HandleFunc("GET /api/v1/admin/campaigns/{campaignID}/pity-config", func(w http.ResponseWriter, r *http.Request) {
+		campaignID := r.PathValue("campaignID")
+		campaign, err := services.AdminGetCampaign(bearerToken(r), campaignID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "pity config", campaign.PityConfig)
+	})
+
 	// ============================================================
 	// 集卡系统新路由
 	// ============================================================
