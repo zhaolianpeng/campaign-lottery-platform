@@ -105,4 +105,9 @@ LogPoints(userID string, points int64, balance int64, reason, remark string) err
 	GetShareDailyCount(userID string) (int, error)
 	// GetPrizeCount 获取用户某系列某款式的数量
 	GetPrizeCount(userID, prizeID string) (int, error)
+
+	// BlendPrizes 合成：消耗指定数量的重复款式，获得更高级款式
+	// sourcePrizeID 是要消耗的款式ID，campaignID 是系列ID
+	// 返回合成的结果
+	BlendPrizes(userID string, sourcePrizeID string, campaignID string) (*model.BlendResult, error)
 }

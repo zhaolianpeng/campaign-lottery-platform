@@ -359,3 +359,35 @@ type DailyDrawStat struct {
 	Count int64  `json:"count"`
 	Wins  int64  `json:"wins"`
 }
+
+// ============================================================
+// 合成系统模型
+// ============================================================
+
+// BlendRecipe 合成配方
+var BlendRecipes = map[string]struct {
+	NeedCount    int    // 需要多少个
+	ResultLevel  string // 合成结果级别
+	Description  string // 描述
+}{
+	"common":  {NeedCount: 3, ResultLevel: "rare",   Description: "3个普通 → 1个稀有"},
+	"rare":    {NeedCount: 5, ResultLevel: "secret", Description: "5个稀有 → 1个隐藏"},
+	"secret":  {NeedCount: 3, ResultLevel: "limited", Description: "3个隐藏 → 1个限定"},
+}
+
+// BlendRequest 合成请求
+type BlendRequest struct {
+	SourcePrizeID string `json:"source_prize_id"` // 要合成的源款式ID
+	CampaignID    string `json:"campaign_id"`      // 系列ID
+}
+
+// BlendResult 合成结果
+type BlendResult struct {
+	SourcePrizeID   string `json:"source_prize_id"`
+	SourcePrizeName string `json:"source_prize_name"`
+	SourceLevel     string `json:"source_level"`
+	ResultPrizeID   string `json:"result_prize_id"`
+	ResultPrizeName string `json:"result_prize_name"`
+	ResultLevel     string `json:"result_level"`
+	RemainingSrc    int    `json:"remaining_src"` // 合成后剩余的源款式数量
+}

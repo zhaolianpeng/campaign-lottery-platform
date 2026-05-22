@@ -424,6 +424,15 @@ func (s *Service) RedeemPrize(token string, input model.RedeemRequest) (*model.R
 	return s.store.RedeemPrize(user.ID, input)
 }
 
+// BlendPrizes 合成：消耗多个重复款式，合成更高级款式
+func (s *Service) BlendPrizes(token string, input model.BlendRequest) (*model.BlendResult, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.BlendPrizes(user.ID, input.SourcePrizeID, input.CampaignID)
+}
+
 // ============================================================
 // 管理端
 // ============================================================

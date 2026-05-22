@@ -1006,6 +1006,109 @@ func (s *MemoryStore) GetPrizeCount(userID, prizeID string) (int, error) {
 	return count, nil
 }
 
+func (s *MemoryStore) BlendPrizes(userID string, sourcePrizeID string, campaignID string) (*model.BlendResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 查找源款式信息
+	var sourcePrize model.Prize
+	var found bool
+	for _, prizes := range s.prizes {
+		for _, p := range prizes {
+			if p.ID == sourcePrizeID {
+				sourcePrize = p
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("prize not found")
+	}
+
+	recipe, ok := model.BlendRecipes[sourcePrize.Level]
+	if !ok {
+		return nil, fmt.Errorf("no recipe for level: %s", sourcePrize.Level)
+	}
+
+	// 检查用户拥有数量
+	count := 0
+	for _, inv := range s.inventory {
+		if inv.UserID == userID && inv.PrizeID == sourcePrizeID {
+			count++
+		}
+	}
+	if count < recipe.NeedCount {
+		return nil, fmt.Errorf("need %d of %s, have %d", recipe.NeedCount, sourcePrize.Name, count)
+	}
+
+	// 找到目标级别的奖品（同级随机选一个 active 且 stock > 0 的）
+	var resultPrize model.Prize
+	found = false
+	for _, prizes := range s.prizes {
+		for _, p := range prizes {
+			if p.Level == recipe.ResultLevel && p.Status == "active" && p.Stock > 0 {
+				resultPrize = p
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("no available prize of level %s to blend into", recipe.ResultLevel)
+	}
+
+	now := time.Now().UTC()
+
+	// 删除 N 条库存记录
+	deleted := 0
+	newInventory := make([]model.UserInventory, 0, len(s.inventory))
+	for _, inv := range s.inventory {
+		if inv.UserID == userID && inv.PrizeID == sourcePrizeID && deleted < recipe.NeedCount {
+			deleted++
+			continue
+		}
+		newInventory = append(newInventory, inv)
+	}
+	s.inventory = newInventory
+
+	// 扣库存
+	for i := range s.prizes[campaignID] {
+		if s.prizes[campaignID][i].ID == resultPrize.ID && s.prizes[campaignID][i].Stock > 0 {
+			s.prizes[campaignID][i].Stock--
+			break
+		}
+	}
+
+	// 添加结果到用户库存
+	s.inventory = append(s.inventory, model.UserInventory{
+		ID:         "inv_" + randomSuffix(12),
+		UserID:     userID,
+		PrizeID:    resultPrize.ID,
+		PrizeName:  resultPrize.Name,
+		PrizeLevel: resultPrize.Level,
+		CampaignID: campaignID,
+		Source:     "blend",
+		CreatedAt:  now,
+	})
+
+	return &model.BlendResult{
+		SourcePrizeID:   sourcePrizeID,
+		SourcePrizeName: sourcePrize.Name,
+		SourceLevel:     sourcePrize.Level,
+		ResultPrizeID:   resultPrize.ID,
+		ResultPrizeName: resultPrize.Name,
+		ResultLevel:     resultPrize.Level,
+		RemainingSrc:    count - recipe.NeedCount,
+	}, nil
+}
+
 // ============================================================
 // 管理员
 // ============================================================

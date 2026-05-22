@@ -1578,3 +1578,7 @@ func (store *MySQLStore) GetPrizeCount(userID, prizeID string) (int, error) {
 	}
 	return count, nil
 }
+
+func (store *MySQLStore) BlendPrizes(userID string, sourcePrizeID string, campaignID string) (*model.BlendResult, error) {
+	return nil, fmt.Errorf("mysql blend not implemented, use memory store")
+}

@@ -290,6 +290,22 @@ func New(cfg config.Config) (http.Handler, error) {
 		response.JSON(w, http.StatusOK, "ok", "redeem success", result)
 	})
 
+	// 合成系统
+	mux.HandleFunc("POST /api/v1/blindbox/blend", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		var input model.BlendRequest
+		if err := decodeJSON(r, &input); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		result, err := services.BlendPrizes(token, input)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "blend success", result)
+	})
+
 	// ============================================================
 	// 管理端路由（保留原有）
 	// ============================================================

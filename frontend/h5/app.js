@@ -399,6 +399,7 @@ function renderInventory() {
 
   const rarityIcons = { common: '⬜', rare: '🔵', secret: '🟣', limited: '🌟' };
   const rarityNames = { common: '普通', rare: '稀有', secret: '隐藏', limited: '限定' };
+  const blendRecipes = { common: 3, rare: 5, secret: 3 };
 
   el.innerHTML = Object.entries(groups).map(([campId, items]) => {
     const camp = state.campaigns.find(c => (c.campaign || c).id === campId);
@@ -413,15 +414,39 @@ function renderInventory() {
     return `<div class="inv-group">
       <h3>${name} (${unique.length}款 / ${items.length}件)</h3>
       <div class="prize-grid">
-        ${unique.map(it => `<div class="prize-item owned">
-          <div class="icon">${rarityIcons[it.prize_level] || '🎁'}</div>
-          <div class="name ${'rarity-' + it.prize_level}">${it.prize_name}</div>
-          <div style="font-size:11px;color:var(--muted);">${rarityNames[it.prize_level] || ''}</div>
-          ${it.count > 1 ? `<div class="count-badge">×${it.count}</div>` : ''}
-        </div>`).join('')}
+        ${unique.map(it => {
+          const need = blendRecipes[it.prize_level];
+          const canBlend = need && it.count >= need;
+          return `<div class="prize-item owned">
+            <div class="icon">${rarityIcons[it.prize_level] || '🎁'}</div>
+            <div class="name ${'rarity-' + it.prize_level}">${it.prize_name}</div>
+            <div style="font-size:11px;color:var(--muted);">${rarityNames[it.prize_level] || ''}</div>
+            ${it.count > 1 ? `<div class="count-badge">×${it.count}</div>` : ''}
+            ${canBlend ? `<button class="btn-sm" style="margin-top:6px;font-size:11px;" onclick="blendPrize('${it.prize_id}','${campId}')">🔬 合成</button>` : ''}
+          </div>`;
+        }).join('')}
       </div>
     </div>`;
   }).join('');
+}
+
+// 合成
+async function blendPrize(prizeId, campaignId) {
+  const recipe = { common: '3普通→1稀有', rare: '5稀有→1隐藏', secret: '3隐藏→1限定' };
+  const prize = state.inventory.find(i => i.prize_id === prizeId);
+  if (!confirm(`确定合成吗？\n${recipe[prize?.prize_level] || ''}`)) return;
+  try {
+    const res = await api('/api/v1/blindbox/blend', {
+      method: 'POST',
+      body: JSON.stringify({ source_prize_id: prizeId, campaign_id: campaignId }),
+    });
+    const data = res.data;
+    showToast(`🔬 合成成功！${data.source_prize_name} → ${data.result_prize_name} 🎉`);
+    loadInventory();
+    refreshAll();
+  } catch (e) {
+    showToast('❌ ' + e.message, true);
+  }
 }
 
 // ============================================================
