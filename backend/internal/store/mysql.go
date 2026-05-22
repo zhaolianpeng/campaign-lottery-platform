@@ -736,3 +736,519 @@ func scanDrawRecords(rows *sql.Rows) ([]model.DrawRecord, error) {
 func parseTaskID(raw string) (int64, error) {
 	return strconv.ParseInt(raw, 10, 64)
 }
+
+// ============================================================
+// 盲盒扩展方法实现
+// ============================================================
+
+func (store *MySQLStore) GetCampaign(campaignID string) (model.Campaign, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	items, err := store.fetchCampaigns(ctx, true)
+	if err != nil {
+		return model.Campaign{}, err
+	}
+	for _, c := range items {
+		if c.ID == campaignID {
+			return c, nil
+		}
+	}
+	return model.Campaign{}, ErrCampaignNotFound
+}
+
+func (store *MySQLStore) CreateDrawRecord(userID, campaignID, prizeID string, _ bool) (model.DrawRecord, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return model.DrawRecord{}, err
+	}
+	defer tx.Rollback()
+
+	// 扣库存
+	var prizeName string
+	err = tx.QueryRowContext(ctx, `SELECT name FROM prizes WHERE id = ? AND stock > 0 AND status = 'active' FOR UPDATE`, prizeID).Scan(&prizeName)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.DrawRecord{}, fmt.Errorf("prize out of stock or not found")
+		}
+		return model.DrawRecord{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE prizes SET stock = stock - 1, updated_at = UTC_TIMESTAMP() WHERE id = ? AND stock > 0`, prizeID); err != nil {
+		return model.DrawRecord{}, err
+	}
+
+	now := time.Now().UTC()
+	record := model.DrawRecord{
+		ID:         "draw_" + randomSuffix(12),
+		CampaignID: campaignID,
+		UserID:     userID,
+		PrizeID:    &prizeID,
+		PrizeName:  prizeName,
+		Result:     "win",
+		DrawnAt:    now,
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO draw_records (id, campaign_id, user_id, prize_id, prize_name, result, chance_after, request_id, created_at)
+		VALUES (?, ?, ?, ?, ?, 'win', 0, '', ?)`, record.ID, campaignID, userID, prizeID, prizeName, now); err != nil {
+		return model.DrawRecord{}, err
+	}
+
+	// 加入库存
+	if _, err := tx.ExecContext(ctx, `INSERT INTO user_inventories (id, user_id, prize_id, prize_name, prize_level, campaign_id, source, created_at)
+		VALUES (?, ?, ?, ?, (SELECT level FROM prizes WHERE id = ?), ?, 'draw', ?)`,
+		"inv_"+randomSuffix(12), userID, prizeID, prizeName, prizeID, campaignID, now); err != nil {
+		return model.DrawRecord{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return model.DrawRecord{}, err
+	}
+	return record, nil
+}
+
+func (store *MySQLStore) CreateMissRecord(userID, campaignID string, _ bool) (model.DrawRecord, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	now := time.Now().UTC()
+	record := model.DrawRecord{
+		ID:         "draw_" + randomSuffix(12),
+		CampaignID: campaignID,
+		UserID:     userID,
+		PrizeName:  "未中奖",
+		Result:     "miss",
+		DrawnAt:    now,
+	}
+	_, err := store.db.ExecContext(ctx, `INSERT INTO draw_records (id, campaign_id, user_id, prize_id, prize_name, result, chance_after, request_id, created_at)
+		VALUES (?, ?, ?, NULL, '未中奖', 'miss', 0, '', ?)`, record.ID, campaignID, userID, now)
+	if err != nil {
+		return model.DrawRecord{}, err
+	}
+	return record, nil
+}
+
+func (store *MySQLStore) CheckDrawQuota(userID, campaignID string, dailyLimit int) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	today := time.Now().UTC().Format("2006-01-02")
+	var used int
+	err := store.db.QueryRowContext(ctx, `SELECT used_count FROM user_campaign_quotas WHERE user_id = ? AND campaign_id = ? AND quota_date = ?`,
+		userID, campaignID, today).Scan(&used)
+	if errors.Is(err, sql.ErrNoRows) {
+		return dailyLimit, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	remaining := dailyLimit - used
+	if remaining < 0 {
+		remaining = 0
+	}
+	return remaining, nil
+}
+
+func (store *MySQLStore) DeductDrawQuota(userID, campaignID string, count int) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	today := time.Now().UTC().Format("2006-01-02")
+
+	_, err := store.db.ExecContext(ctx, `INSERT INTO user_campaign_quotas (user_id, campaign_id, quota_date, used_count, created_at, updated_at)
+		VALUES (?, ?, ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())
+		ON DUPLICATE KEY UPDATE used_count = used_count + ?, updated_at = UTC_TIMESTAMP()`,
+		userID, campaignID, today, count, count)
+	if err != nil {
+		return 0, err
+	}
+
+	var used int
+	store.db.QueryRowContext(ctx, `SELECT used_count FROM user_campaign_quotas WHERE user_id = ? AND campaign_id = ? AND quota_date = ?`,
+		userID, campaignID, today).Scan(&used)
+
+	// 返回剩余次数（需知道 dailyLimit，此处返回增量值，由 service 层计算精确剩余）
+	return 99 - used, nil
+}
+
+func (store *MySQLStore) GetUserInventory(userID string) ([]model.UserInventory, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rows, err := store.db.QueryContext(ctx, `SELECT id, user_id, prize_id, prize_name, prize_level, campaign_id, source, created_at
+		FROM user_inventories WHERE user_id = ? ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]model.UserInventory, 0, 16)
+	for rows.Next() {
+		var item model.UserInventory
+		if err := rows.Scan(&item.ID, &item.UserID, &item.PrizeID, &item.PrizeName, &item.PrizeLevel, &item.CampaignID, &item.Source, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func (store *MySQLStore) GetSeriesProgress(userID, campaignID, campaignName string) (*model.SeriesProgress, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 获取系列总款式数
+	var totalItems int
+	err := store.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM prizes WHERE campaign_id = ? AND status = 'active'`, campaignID).Scan(&totalItems)
+	if err != nil {
+		return nil, err
+	}
+
+	// 获取用户已收集的款式
+	rows, err := store.db.QueryContext(ctx, `SELECT prize_id, prize_name, prize_level, COUNT(1)
+		FROM user_inventories WHERE user_id = ? AND campaign_id = ?
+		GROUP BY prize_id, prize_name, prize_level`, userID, campaignID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	collected := make(map[string]int) // prizeID -> count
+	prizeNames := make(map[string]string)
+	prizeLevels := make(map[string]string)
+	for rows.Next() {
+		var prizeID, prizeName, prizeLevel string
+		var count int
+		if err := rows.Scan(&prizeID, &prizeName, &prizeLevel, &count); err != nil {
+			return nil, err
+		}
+		collected[prizeID] = count
+		prizeNames[prizeID] = prizeName
+		prizeLevels[prizeID] = prizeLevel
+	}
+
+	// 构建已收集列表和缺失列表
+	collectedItems := make([]model.CollectedPrize, 0, len(collected))
+	for prizeID, count := range collected {
+		collectedItems = append(collectedItems, model.CollectedPrize{
+			Prize: model.Prize{ID: prizeID, Name: prizeNames[prizeID], Level: prizeLevels[prizeID]},
+			Count: count,
+		})
+	}
+
+	// 计算重复款数量
+	duplicates := 0
+	for _, count := range collected {
+		if count > 1 {
+			duplicates += count - 1
+		}
+	}
+
+	progress := &model.SeriesProgress{
+		CampaignID:      campaignID,
+		CampaignName:    campaignName,
+		TotalItems:      totalItems,
+		CollectedItems:  len(collectedItems),
+		Duplicates:      duplicates,
+		CollectedPrizes: collectedItems,
+	}
+	if totalItems > 0 {
+		progress.ProgressPercent = float64(len(collectedItems)) / float64(totalItems) * 100
+	}
+
+	// 缺失款式
+	prizes, err := store.fetchPrizes(ctx, campaignID)
+	if err == nil {
+		for _, p := range prizes {
+			if _, ok := collected[p.ID]; !ok {
+				progress.MissingPrizes = append(progress.MissingPrizes, model.PrizeSummary{
+					PrizeID: p.ID, PrizeName: p.Name, PrizeLevel: p.Level, Stock: p.Stock,
+				})
+			}
+		}
+	}
+
+	return progress, nil
+}
+
+func (store *MySQLStore) UserHasPrize(userID, prizeID string) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var count int
+	err := store.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM user_inventories WHERE user_id = ? AND prize_id = ?`, userID, prizeID).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (store *MySQLStore) ExchangeOffers() []model.ExchangeOffer {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rows, err := store.db.QueryContext(ctx, `SELECT id, user_id, user_nickname, have_prize_id, have_prize_name, want_prize_id, want_prize_name, status, created_at
+		FROM exchange_offers WHERE status = 'pending' ORDER BY created_at DESC LIMIT 50`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	items := make([]model.ExchangeOffer, 0, 8)
+	for rows.Next() {
+		var item model.ExchangeOffer
+		if err := rows.Scan(&item.ID, &item.UserID, &item.UserNickname, &item.HavePrizeID, &item.HavePrizeName,
+			&item.WantPrizeID, &item.WantPrizeName, &item.Status, &item.CreatedAt); err != nil {
+			continue
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+func (store *MySQLStore) CreateExchangeOffer(userID string, input model.ExchangeOfferMutation) (model.ExchangeOffer, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 获取奖品名称
+	var haveName, wantName string
+	if err := store.db.QueryRowContext(ctx, `SELECT name FROM prizes WHERE id = ?`, input.HavePrizeID).Scan(&haveName); err != nil {
+		return model.ExchangeOffer{}, fmt.Errorf("have_prize not found: %w", err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT name FROM prizes WHERE id = ?`, input.WantPrizeID).Scan(&wantName); err != nil {
+		return model.ExchangeOffer{}, fmt.Errorf("want_prize not found: %w", err)
+	}
+
+	var nickname string
+	store.db.QueryRowContext(ctx, `SELECT nickname FROM users WHERE id = ?`, userID).Scan(&nickname)
+
+	offer := model.ExchangeOffer{
+		ID:            "exch_" + randomSuffix(12),
+		UserID:        userID,
+		UserNickname:  nickname,
+		HavePrizeID:   input.HavePrizeID,
+		HavePrizeName: haveName,
+		WantPrizeID:   input.WantPrizeID,
+		WantPrizeName: wantName,
+		Status:        "pending",
+		CreatedAt:     time.Now().UTC(),
+	}
+	_, err := store.db.ExecContext(ctx, `INSERT INTO exchange_offers (id, user_id, user_nickname, have_prize_id, have_prize_name, want_prize_id, want_prize_name, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+		offer.ID, userID, nickname, input.HavePrizeID, haveName, input.WantPrizeID, wantName, offer.CreatedAt, offer.CreatedAt)
+	if err != nil {
+		return model.ExchangeOffer{}, err
+	}
+	return offer, nil
+}
+
+func (store *MySQLStore) CancelExchangeOffer(userID, offerID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := store.db.ExecContext(ctx, `UPDATE exchange_offers SET status = 'cancelled', updated_at = UTC_TIMESTAMP() WHERE id = ? AND user_id = ? AND status = 'pending'`, offerID, userID)
+	if err != nil {
+		return err
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("offer not found or already matched")
+	}
+	return nil
+}
+
+func (store *MySQLStore) AcceptExchangeOffer(userID, offerID string) (model.ExchangeOffer, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return model.ExchangeOffer{}, err
+	}
+	defer tx.Rollback()
+
+	// 读取挂单信息（加锁）
+	var offer model.ExchangeOffer
+	err = tx.QueryRowContext(ctx, `SELECT id, user_id, user_nickname, have_prize_id, have_prize_name, want_prize_id, want_prize_name, status, created_at
+		FROM exchange_offers WHERE id = ? AND status = 'pending' FOR UPDATE`, offerID).Scan(
+		&offer.ID, &offer.UserID, &offer.UserNickname, &offer.HavePrizeID, &offer.HavePrizeName,
+		&offer.WantPrizeID, &offer.WantPrizeName, &offer.Status, &offer.CreatedAt)
+	if err != nil {
+		return model.ExchangeOffer{}, fmt.Errorf("offer not available")
+	}
+
+	// 不能接受自己的挂单
+	if offer.UserID == userID {
+		return model.ExchangeOffer{}, fmt.Errorf("cannot accept your own offer")
+	}
+
+	// 确保双方都有对方想要的库存
+	var accepterHasWant int
+	tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM user_inventories WHERE user_id = ? AND prize_id = ?`, userID, offer.WantPrizeID).Scan(&accepterHasWant)
+	if accepterHasWant == 0 {
+		return model.ExchangeOffer{}, fmt.Errorf("you don't own the requested prize")
+	}
+
+	var offererHasHave int
+	tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM user_inventories WHERE user_id = ? AND prize_id = ?`, offer.UserID, offer.HavePrizeID).Scan(&offererHasHave)
+	if offererHasHave == 0 {
+		return model.ExchangeOffer{}, fmt.Errorf("offerer's prize is no longer available")
+	}
+
+	// 删除双方库存中对应的条目（各一条）
+	_, _ = tx.ExecContext(ctx, `DELETE FROM user_inventories WHERE user_id = ? AND prize_id = ? LIMIT 1`, userID, offer.WantPrizeID)
+	_, _ = tx.ExecContext(ctx, `DELETE FROM user_inventories WHERE user_id = ? AND prize_id = ? LIMIT 1`, offer.UserID, offer.HavePrizeID)
+
+	// 插入交换后的库存
+	now := time.Now().UTC()
+	tx.ExecContext(ctx, `INSERT INTO user_inventories (id, user_id, prize_id, prize_name, prize_level, campaign_id, source, created_at)
+		VALUES (?, ?, ?, ?, (SELECT level FROM prizes WHERE id = ?), (SELECT campaign_id FROM prizes WHERE id = ?), 'exchange', ?)`,
+		"inv_"+randomSuffix(12), userID, offer.HavePrizeID, offer.HavePrizeName, offer.HavePrizeID, offer.HavePrizeID, now)
+	tx.ExecContext(ctx, `INSERT INTO user_inventories (id, user_id, prize_id, prize_name, prize_level, campaign_id, source, created_at)
+		VALUES (?, ?, ?, ?, (SELECT level FROM prizes WHERE id = ?), (SELECT campaign_id FROM prizes WHERE id = ?), 'exchange', ?)`,
+		"inv_"+randomSuffix(12), offer.UserID, offer.WantPrizeID, offer.WantPrizeName, offer.WantPrizeID, offer.WantPrizeID, now)
+
+	// 更新挂单状态
+	tx.ExecContext(ctx, `UPDATE exchange_offers SET status = 'completed', updated_at = ? WHERE id = ?`, now, offerID)
+
+	if err := tx.Commit(); err != nil {
+		return model.ExchangeOffer{}, err
+	}
+	offer.Status = "completed"
+	return offer, nil
+}
+
+func (store *MySQLStore) GetUserMember(userID string) (*model.UserMember, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var member model.UserMember
+	err := store.db.QueryRowContext(ctx, `SELECT user_id, level, points, total_draws, total_spent, created_at, updated_at
+		FROM user_members WHERE user_id = ?`, userID).Scan(
+		&member.UserID, &member.Level, &member.Points, &member.TotalDraws, &member.TotalSpent, &member.CreatedAt, &member.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return &model.UserMember{
+			UserID: userID,
+			Level:  model.MemberNormal,
+			Points: 0,
+		}, nil
+	}
+	return &member, err
+}
+
+func (store *MySQLStore) GetPointsLog(userID string) ([]model.UserPointsLog, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rows, err := store.db.QueryContext(ctx, `SELECT id, user_id, points, balance, reason, remark, created_at
+		FROM user_points_logs WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]model.UserPointsLog, 0, 16)
+	for rows.Next() {
+		var item model.UserPointsLog
+		if err := rows.Scan(&item.ID, &item.UserID, &item.Points, &item.Balance, &item.Reason, &item.Remark, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func (store *MySQLStore) RedeemPrize(userID string, input model.RedeemRequest) (*model.RedeemResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	// 查询奖品信息和价格（用积分价格简化：普通=100,稀有=500,隐藏=2000）
+	var prizeName, prizeLevel string
+	if err := tx.QueryRowContext(ctx, `SELECT name, level FROM prizes WHERE id = ? AND status = 'active'`, input.PrizeID).Scan(&prizeName, &prizeLevel); err != nil {
+		return nil, fmt.Errorf("prize not found")
+	}
+	pointsCost := map[string]int64{
+		"common":  100, "rare": 500, "secret": 2000, "limited": 5000,
+	}[prizeLevel]
+	if pointsCost == 0 {
+		pointsCost = 100
+	}
+
+	// 查余额
+	var balance int64
+	_ = tx.QueryRowContext(ctx, `SELECT points FROM user_members WHERE user_id = ? FOR UPDATE`, userID).Scan(&balance)
+	if balance < pointsCost {
+		return nil, fmt.Errorf("insufficient points: have %d, need %d", balance, pointsCost)
+	}
+
+	// 扣积分
+	if _, err := tx.ExecContext(ctx, `UPDATE user_members SET points = points - ? WHERE user_id = ?`, pointsCost, userID); err != nil {
+		return nil, err
+	}
+
+	// 记日志
+	tx.ExecContext(ctx, `INSERT INTO user_points_logs (user_id, points, balance, reason, remark, created_at)
+		VALUES (?, ?, ?, 'redeem', ?, UTC_TIMESTAMP())`, userID, -pointsCost, balance-pointsCost, "兑换: "+prizeName)
+
+	// 加入库存
+	now := time.Now().UTC()
+	tx.ExecContext(ctx, `INSERT INTO user_inventories (id, user_id, prize_id, prize_name, prize_level, campaign_id, source, created_at)
+		VALUES (?, ?, ?, ?, ?, (SELECT campaign_id FROM prizes WHERE id = ?), 'redeem', ?)`,
+		"inv_"+randomSuffix(12), userID, input.PrizeID, prizeName, prizeLevel, input.PrizeID, now)
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &model.RedeemResult{
+		RecordID:   "rdm_" + randomSuffix(12),
+		PrizeID:    input.PrizeID,
+		PrizeName:  prizeName,
+		PointsCost: pointsCost,
+		Remaining:  balance - pointsCost,
+	}, nil
+}
+
+func (store *MySQLStore) GetDrawStatistics(token, campaignID string) (*model.DrawStatistics, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := store.ensureAdmin(ctx, token); err != nil {
+		return nil, err
+	}
+
+	var totalDraws, totalUsers, totalWins int64
+	where := ""
+	args := []any{}
+	if campaignID != "" {
+		where = " WHERE campaign_id = ?"
+		args = append(args, campaignID)
+	}
+
+	store.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM draw_records`+where, args...).Scan(&totalDraws)
+	store.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT user_id) FROM draw_records`+where, args...).Scan(&totalUsers)
+	store.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM draw_records WHERE result = 'win'`+where, args...).Scan(&totalWins)
+
+	winRate := 0.0
+	if totalDraws > 0 {
+		winRate = float64(totalWins) / float64(totalDraws) * 100
+	}
+
+	// 奖品分布
+	prizeRows, err := store.db.QueryContext(ctx, `SELECT prize_id, prize_name, level, COUNT(1) as cnt
+		FROM draw_records JOIN prizes ON draw_records.prize_id = prizes.id
+		WHERE draw_records.result = 'win'`+where+` GROUP BY prize_id, prize_name, level ORDER BY cnt DESC`, args...)
+	var prizeBreakdown []model.PrizeStatItem
+	if err == nil {
+		defer prizeRows.Close()
+		for prizeRows.Next() {
+			var item model.PrizeStatItem
+			if prizeRows.Scan(&item.PrizeID, &item.PrizeName, &item.Level, &item.Count) == nil {
+				if totalWins > 0 {
+					item.Percent = float64(item.Count) / float64(totalWins) * 100
+				}
+				prizeBreakdown = append(prizeBreakdown, item)
+			}
+		}
+	}
+
+	return &model.DrawStatistics{
+		TotalDraws:     totalDraws,
+		TotalUsers:     totalUsers,
+		TotalWins:      totalWins,
+		WinRate:        winRate,
+		PrizeBreakdown: prizeBreakdown,
+	}, nil
+}

@@ -109,3 +109,66 @@ CREATE TABLE IF NOT EXISTS prize_fulfillment_tasks (
   PRIMARY KEY (id),
   UNIQUE KEY uk_prize_fulfillment_draw_record_id (draw_record_id)
 );
+
+-- ============================================================
+-- 盲盒扩展表
+-- ============================================================
+
+-- 用户库存（收集到的盲盒款式）
+CREATE TABLE IF NOT EXISTS user_inventories (
+  id VARCHAR(32) NOT NULL,
+  user_id VARCHAR(32) NOT NULL,
+  prize_id VARCHAR(32) NOT NULL,
+  prize_name VARCHAR(128) NOT NULL,
+  prize_level VARCHAR(16) NOT NULL DEFAULT 'common',
+  campaign_id VARCHAR(32) NOT NULL,
+  source VARCHAR(32) NOT NULL DEFAULT 'draw',  -- draw / exchange / redeem
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_user_inventories_user_id (user_id),
+  KEY idx_user_inventories_campaign_id (campaign_id),
+  KEY idx_user_inventories_prize_id (prize_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 交换市场挂单
+CREATE TABLE IF NOT EXISTS exchange_offers (
+  id VARCHAR(32) NOT NULL,
+  user_id VARCHAR(32) NOT NULL,
+  user_nickname VARCHAR(64) NOT NULL DEFAULT '',
+  have_prize_id VARCHAR(32) NOT NULL,
+  have_prize_name VARCHAR(128) NOT NULL,
+  want_prize_id VARCHAR(32) NOT NULL,
+  want_prize_name VARCHAR(128) NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'pending', -- pending / matched / completed / cancelled
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_exchange_offers_user_id (user_id),
+  KEY idx_exchange_offers_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 用户会员/积分信息
+CREATE TABLE IF NOT EXISTS user_members (
+  user_id VARCHAR(32) NOT NULL,
+  level VARCHAR(16) NOT NULL DEFAULT 'normal',  -- normal / silver / gold / diamond
+  points BIGINT NOT NULL DEFAULT 0,
+  total_draws BIGINT NOT NULL DEFAULT 0,
+  total_spent BIGINT NOT NULL DEFAULT 0,  -- 累计消费（分）
+  created_at DATETIME NOT NULL,
+  updated_at DATETIME NOT NULL,
+  PRIMARY KEY (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 积分变动记录
+CREATE TABLE IF NOT EXISTS user_points_logs (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  user_id VARCHAR(32) NOT NULL,
+  points BIGINT NOT NULL,              -- 变动数量（正=增加，负=消耗）
+  balance BIGINT NOT NULL,             -- 变动后余额
+  reason VARCHAR(32) NOT NULL,         -- draw / exchange / daily / redeem / admin
+  remark VARCHAR(255) NOT NULL DEFAULT '',
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_user_points_logs_user_id (user_id),
+  KEY idx_user_points_logs_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

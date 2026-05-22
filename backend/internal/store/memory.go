@@ -78,6 +78,61 @@ func (s *MemoryStore) seedDefaultCampaign() {
 		{ID: "prize_002", CampaignID: campaign.ID, Name: "20元优惠券", Level: "A", Stock: 60, ProbabilityWeight: 18, Status: "active"},
 		{ID: "prize_003", CampaignID: campaign.ID, Name: "品牌周边礼盒", Level: "B", Stock: 20, ProbabilityWeight: 8, Status: "active"},
 	}
+
+	// 盲盒系列1: 星空系列
+	series := model.Campaign{
+		ID:              "series_starry_001",
+		Name:            "🌙 星空系列",
+		Slug:            "starry-night",
+		Status:          "online",
+		StartsAt:        now.Add(-24 * time.Hour),
+		EndsAt:          now.Add(60 * 24 * time.Hour),
+		DailyDrawLimit:  10,
+		MissWeight:      72,
+		BannerImageURL:  "https://static.example.com/series/starry-night/banner.png",
+		CampaignSummary: "收集星光、月色与银河，集齐6款普通+1款隐藏可解锁限定奖励！",
+	}
+	s.campaigns[series.ID] = series
+	s.prizes[series.ID] = []model.Prize{
+		// 普通款（权重累加=72）
+		{ID: "star_01", CampaignID: series.ID, Name: "繁星点点", Level: "common", Stock: 500, ProbabilityWeight: 15, Status: "active"},
+		{ID: "star_02", CampaignID: series.ID, Name: "月光如水", Level: "common", Stock: 500, ProbabilityWeight: 15, Status: "active"},
+		{ID: "star_03", CampaignID: series.ID, Name: "银河之泪", Level: "common", Stock: 400, ProbabilityWeight: 14, Status: "active"},
+		{ID: "star_04", CampaignID: series.ID, Name: "流星划过", Level: "common", Stock: 400, ProbabilityWeight: 12, Status: "active"},
+		{ID: "star_05", CampaignID: series.ID, Name: "极光之舞", Level: "common", Stock: 300, ProbabilityWeight: 10, Status: "active"},
+		{ID: "star_06", CampaignID: series.ID, Name: "星云之眼", Level: "common", Stock: 300, ProbabilityWeight: 6, Status: "active"},
+		// 稀有款
+		{ID: "star_07", CampaignID: series.ID, Name: "星月传说", Level: "rare", Stock: 100, ProbabilityWeight: 15, Status: "active"},
+		{ID: "star_08", CampaignID: series.ID, Name: "北极光", Level: "rare", Stock: 80, ProbabilityWeight: 10, Status: "active"},
+		// 隐藏款
+		{ID: "star_09", CampaignID: series.ID, Name: "宇宙之心 ★", Level: "secret", Stock: 10, ProbabilityWeight: 2, Status: "active"},
+		// 限定款
+		{ID: "star_10", CampaignID: series.ID, Name: "星辰大海 ★★", Level: "limited", Stock: 3, ProbabilityWeight: 1, Status: "active"},
+	}
+
+	// 盲盒系列2: 猫咪系列
+	cat := model.Campaign{
+		ID:              "series_cat_001",
+		Name:            "🐱 猫咪系列",
+		Slug:            "cute-cats",
+		Status:          "online",
+		StartsAt:        now.Add(-12 * time.Hour),
+		EndsAt:          now.Add(45 * 24 * time.Hour),
+		DailyDrawLimit:  8,
+		MissWeight:      68,
+		BannerImageURL:  "https://static.example.com/series/cute-cats/banner.png",
+		CampaignSummary: "超萌猫咪盲盒！集齐全部6款可以解锁隐藏版「布偶猫王」！",
+	}
+	s.campaigns[cat.ID] = cat
+	s.prizes[cat.ID] = []model.Prize{
+		{ID: "cat_01", CampaignID: cat.ID, Name: "英短蓝猫", Level: "common", Stock: 600, ProbabilityWeight: 16, Status: "active"},
+		{ID: "cat_02", CampaignID: cat.ID, Name: "橘猫胖胖", Level: "common", Stock: 600, ProbabilityWeight: 16, Status: "active"},
+		{ID: "cat_03", CampaignID: cat.ID, Name: "黑猫酷酷", Level: "common", Stock: 500, ProbabilityWeight: 14, Status: "active"},
+		{ID: "cat_04", CampaignID: cat.ID, Name: "三花猫", Level: "common", Stock: 500, ProbabilityWeight: 12, Status: "active"},
+		{ID: "cat_05", CampaignID: cat.ID, Name: "暹罗猫", Level: "common", Stock: 400, ProbabilityWeight: 10, Status: "active"},
+		{ID: "cat_06", CampaignID: cat.ID, Name: "俄罗斯蓝猫", Level: "rare", Stock: 120, ProbabilityWeight: 18, Status: "active"},
+		{ID: "cat_07", CampaignID: cat.ID, Name: "布偶猫王 ★", Level: "secret", Stock: 8, ProbabilityWeight: 2, Status: "active"},
+	}
 }
 
 // ============================================================
@@ -452,7 +507,89 @@ func (s *MemoryStore) GetPointsLog(userID string) ([]model.UserPointsLog, error)
 }
 
 func (s *MemoryStore) RedeemPrize(userID string, input model.RedeemRequest) (*model.RedeemResult, error) {
-	return nil, errors.New("not implemented in memory store")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 找奖品
+	var prizeName, prizeLevel string
+	var found bool
+	for _, prizes := range s.prizes {
+		for _, p := range prizes {
+			if p.ID == input.PrizeID && p.Status == "active" {
+				prizeName = p.Name
+				prizeLevel = p.Level
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("prize not found")
+	}
+
+	pointsCost := map[string]int64{
+		"common": 100, "rare": 500, "secret": 2000, "limited": 5000,
+	}[prizeLevel]
+	if pointsCost == 0 {
+		pointsCost = 100
+	}
+
+	member, ok := s.members[userID]
+	if !ok {
+		member = model.UserMember{UserID: userID, Level: model.MemberNormal, Points: 0}
+	}
+	if member.Points < pointsCost {
+		return nil, fmt.Errorf("insufficient points: have %d, need %d", member.Points, pointsCost)
+	}
+
+	member.Points -= pointsCost
+	s.members[userID] = member
+
+	s.pointsLog = append(s.pointsLog, model.UserPointsLog{
+		ID:        int64(len(s.pointsLog) + 1),
+		UserID:    userID,
+		Points:    -pointsCost,
+		Balance:   member.Points,
+		Reason:    "redeem",
+		Remark:    "兑换: " + prizeName,
+		CreatedAt: time.Now().UTC(),
+	})
+
+	// 加库存
+	prizeCampaignID := ""
+	for cid, prizes := range s.prizes {
+		for _, p := range prizes {
+			if p.ID == input.PrizeID {
+				prizeCampaignID = cid
+				break
+			}
+		}
+		if prizeCampaignID != "" {
+			break
+		}
+	}
+	now := time.Now().UTC()
+	s.inventory = append(s.inventory, model.UserInventory{
+		ID:         "inv_" + randomSuffix(12),
+		UserID:     userID,
+		PrizeID:    input.PrizeID,
+		PrizeName:  prizeName,
+		PrizeLevel: prizeLevel,
+		CampaignID: prizeCampaignID,
+		Source:     "redeem",
+		CreatedAt:  now,
+	})
+
+	return &model.RedeemResult{
+		RecordID:   "rdm_" + randomSuffix(12),
+		PrizeID:    input.PrizeID,
+		PrizeName:  prizeName,
+		PointsCost: pointsCost,
+		Remaining:  member.Points,
+	}, nil
 }
 
 // ============================================================

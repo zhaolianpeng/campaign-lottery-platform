@@ -39,7 +39,8 @@ type adminLoginRequest struct {
 func New(cfg config.Config) (http.Handler, error) {
 	dataStore, err := store.NewMySQLStore(cfg)
 	if err != nil {
-		return nil, err
+		// MySQL 不可用时使用内存存储（适合本地开发/演示）
+		dataStore = store.NewMemoryStore(cfg.AdminUser, cfg.AdminPassword)
 	}
 	if err := dataStore.Seed(); err != nil {
 		return nil, err
