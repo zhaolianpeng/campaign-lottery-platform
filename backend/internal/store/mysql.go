@@ -109,6 +109,45 @@ func (store *MySQLStore) Seed() error {
 		}
 	}
 
+	// --- 盲盒专用种子数据 ---
+	blindboxID := "camp_blindbox_001"
+	_, err = store.db.ExecContext(ctx, `INSERT INTO campaigns (id, name, slug, status, starts_at, ends_at, daily_draw_limit, miss_weight, banner_image_url, campaign_summary,
+		pity_enabled, soft_pity_n, pity_factor, hard_pity_n, target_prize_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 30, 0.0150, 60, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())`,
+		blindboxID, "梦幻星辰系列盲盒", "dream-star-series", "online",
+		now.Add(-24*time.Hour), now.Add(60*24*time.Hour),
+		10, 30,
+		"https://static.example.com/blindbox/dream-star/banner.png",
+		"收集12款星辰主题公仔，集齐全套可兑换隐藏款！每抽必出，软保底30抽递增，60抽硬保底。",
+		"prize_bb_secret")
+	if err != nil {
+		return err
+	}
+
+	bbPrizes := []model.Prize{
+		{ID: "prize_bb_01", CampaignID: blindboxID, Name: "射手座·星矢", Level: "common", Stock: 2000, ProbabilityWeight: 12, Status: "active"},
+		{ID: "prize_bb_02", CampaignID: blindboxID, Name: "白羊座·穆", Level: "common", Stock: 2000, ProbabilityWeight: 12, Status: "active"},
+		{ID: "prize_bb_03", CampaignID: blindboxID, Name: "金牛座·阿鲁", Level: "common", Stock: 2000, ProbabilityWeight: 12, Status: "active"},
+		{ID: "prize_bb_04", CampaignID: blindboxID, Name: "双子座·撒加", Level: "common", Stock: 2000, ProbabilityWeight: 12, Status: "active"},
+		{ID: "prize_bb_05", CampaignID: blindboxID, Name: "巨蟹座·迪斯", Level: "common", Stock: 2000, ProbabilityWeight: 12, Status: "active"},
+		{ID: "prize_bb_06", CampaignID: blindboxID, Name: "狮子座·艾欧", Level: "common", Stock: 2000, ProbabilityWeight: 12, Status: "active"},
+		{ID: "prize_bb_07", CampaignID: blindboxID, Name: "处女座·沙加", Level: "common", Stock: 2000, ProbabilityWeight: 12, Status: "active"},
+		{ID: "prize_bb_08", CampaignID: blindboxID, Name: "天秤座·童虎", Level: "common", Stock: 2000, ProbabilityWeight: 12, Status: "active"},
+		{ID: "prize_bb_09", CampaignID: blindboxID, Name: "天蝎座·米罗", Level: "common", Stock: 2000, ProbabilityWeight: 12, Status: "active"},
+		{ID: "prize_bb_10", CampaignID: blindboxID, Name: "射手座·艾俄", Level: "common", Stock: 2000, ProbabilityWeight: 12, Status: "active"},
+		{ID: "prize_bb_11", CampaignID: blindboxID, Name: "摩羯座·修罗", Level: "common", Stock: 2000, ProbabilityWeight: 12, Status: "active"},
+		{ID: "prize_bb_12", CampaignID: blindboxID, Name: "水瓶座·卡妙", Level: "common", Stock: 2000, ProbabilityWeight: 12, Status: "active"},
+		{ID: "prize_bb_rare", CampaignID: blindboxID, Name: "双鱼座·阿布罗狄 (闪光版)", Level: "rare", Stock: 300, ProbabilityWeight: 5, Status: "active"},
+		{ID: "prize_bb_secret", CampaignID: blindboxID, Name: "🌟 雅典娜·黄金圣衣 EX", Level: "secret", Stock: 20, ProbabilityWeight: 1, Status: "active"},
+	}
+	for _, prize := range bbPrizes {
+		_, err = store.db.ExecContext(ctx, `INSERT INTO prizes (id, campaign_id, name, level, stock, probability_weight, status, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())`, prize.ID, prize.CampaignID, prize.Name, prize.Level, prize.Stock, prize.ProbabilityWeight, prize.Status)
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 
 }
