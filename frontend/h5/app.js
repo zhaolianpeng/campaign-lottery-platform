@@ -100,7 +100,7 @@ async function refreshAll() {
   if (!state.token) return;
   try {
     const [seriesData, memberData] = await Promise.all([
-      api('/api/v1/campaigns'),
+      api('/api/v1/blindbox/campaigns'),
       api('/api/v1/blindbox/member'),
     ]);
     state.campaigns = seriesData.data;
@@ -164,7 +164,7 @@ function renderSeries() {
 
 async function loadSeries() {
   try {
-    const seriesData = await api('/api/v1/campaigns');
+    const seriesData = await api('/api/v1/blindbox/campaigns');
     state.campaigns = seriesData.data;
     renderSeries();
   } catch (e) {

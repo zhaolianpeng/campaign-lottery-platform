@@ -392,9 +392,11 @@ func (store *MySQLStore) CreateCampaign(token string, input model.CampaignMutati
 	if err := store.ensureAdmin(ctx, token); err != nil {
 		return model.Campaign{}, err
 	}
-	campaign := model.Campaign{ID: "camp_" + randomSuffix(10), Name: input.Name, Slug: input.Slug, Status: input.Status, StartsAt: input.StartsAt, EndsAt: input.EndsAt, DailyDrawLimit: input.DailyDrawLimit, MissWeight: input.MissWeight, BannerImageURL: input.BannerImageURL, CampaignSummary: input.CampaignSummary}
-	_, err := store.db.ExecContext(ctx, `INSERT INTO campaigns (id, name, slug, status, starts_at, ends_at, daily_draw_limit, miss_weight, banner_image_url, campaign_summary, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())`, campaign.ID, campaign.Name, campaign.Slug, campaign.Status, campaign.StartsAt, campaign.EndsAt, campaign.DailyDrawLimit, campaign.MissWeight, campaign.BannerImageURL, campaign.CampaignSummary)
+	campaign := model.Campaign{ID: "camp_" + randomSuffix(10), Name: input.Name, Slug: input.Slug, Status: input.Status, StartsAt: input.StartsAt, EndsAt: input.EndsAt, DailyDrawLimit: input.DailyDrawLimit, MissWeight: input.MissWeight, BannerImageURL: input.BannerImageURL, CampaignSummary: input.CampaignSummary, PityConfig: input.PityConfig}
+	pityConfigBytes, _ := json.Marshal(input.PityConfig)
+	pityConfigStr := string(pityConfigBytes)
+	_, err := store.db.ExecContext(ctx, `INSERT INTO campaigns (id, name, slug, status, starts_at, ends_at, daily_draw_limit, miss_weight, banner_image_url, campaign_summary, pity_config, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())`, campaign.ID, campaign.Name, campaign.Slug, campaign.Status, campaign.StartsAt, campaign.EndsAt, campaign.DailyDrawLimit, campaign.MissWeight, campaign.BannerImageURL, campaign.CampaignSummary, pityConfigStr)
 	if err != nil {
 		return model.Campaign{}, err
 	}
@@ -408,8 +410,10 @@ func (store *MySQLStore) UpdateCampaign(token string, campaignID string, input m
 	if err := store.ensureAdmin(ctx, token); err != nil {
 		return model.Campaign{}, err
 	}
-	result, err := store.db.ExecContext(ctx, `UPDATE campaigns SET name = ?, slug = ?, status = ?, starts_at = ?, ends_at = ?, daily_draw_limit = ?, miss_weight = ?, banner_image_url = ?, campaign_summary = ?, updated_at = UTC_TIMESTAMP() WHERE id = ?`,
-		input.Name, input.Slug, input.Status, input.StartsAt, input.EndsAt, input.DailyDrawLimit, input.MissWeight, input.BannerImageURL, input.CampaignSummary, campaignID)
+	pityConfigBytes, _ := json.Marshal(input.PityConfig)
+	pityConfigStr := string(pityConfigBytes)
+	result, err := store.db.ExecContext(ctx, `UPDATE campaigns SET name = ?, slug = ?, status = ?, starts_at = ?, ends_at = ?, daily_draw_limit = ?, miss_weight = ?, banner_image_url = ?, campaign_summary = ?, pity_config = ?, updated_at = UTC_TIMESTAMP() WHERE id = ?`,
+		input.Name, input.Slug, input.Status, input.StartsAt, input.EndsAt, input.DailyDrawLimit, input.MissWeight, input.BannerImageURL, input.CampaignSummary, pityConfigStr, campaignID)
 	if err != nil {
 		return model.Campaign{}, err
 	}
@@ -564,7 +568,7 @@ func (store *MySQLStore) fetchCampaigns(ctx context.Context, includeOffline bool
 		}
 	}
 
-	query := `SELECT id, name, slug, status, starts_at, ends_at, daily_draw_limit, miss_weight, banner_image_url, campaign_summary FROM campaigns`
+	query := `SELECT id, name, slug, status, starts_at, ends_at, daily_draw_limit, miss_weight, banner_image_url, campaign_summary, pity_config FROM campaigns`
 	if !includeOffline {
 		query += ` WHERE status = 'online' ORDER BY starts_at DESC`
 	} else {
@@ -578,8 +582,12 @@ func (store *MySQLStore) fetchCampaigns(ctx context.Context, includeOffline bool
 	items := make([]model.Campaign, 0, 8)
 	for rows.Next() {
 		var item model.Campaign
-		if err := rows.Scan(&item.ID, &item.Name, &item.Slug, &item.Status, &item.StartsAt, &item.EndsAt, &item.DailyDrawLimit, &item.MissWeight, &item.BannerImageURL, &item.CampaignSummary); err != nil {
+		var pityConfigJSON string
+		if err := rows.Scan(&item.ID, &item.Name, &item.Slug, &item.Status, &item.StartsAt, &item.EndsAt, &item.DailyDrawLimit, &item.MissWeight, &item.BannerImageURL, &item.CampaignSummary, &pityConfigJSON); err != nil {
 			return nil, err
+		}
+		if pityConfigJSON != "" {
+			json.Unmarshal([]byte(pityConfigJSON), &item.PityConfig)
 		}
 		items = append(items, item)
 	}

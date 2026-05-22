@@ -172,3 +172,11 @@ CREATE TABLE IF NOT EXISTS user_points_logs (
   KEY idx_user_points_logs_user_id (user_id),
   KEY idx_user_points_logs_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ============================================================
+-- v1.1 迁移: campaigns 表加 pity_config JSON 字段
+-- ============================================================
+ALTER TABLE campaigns ADD COLUMN pity_config JSON NULL COMMENT '保底概率配置' AFTER campaign_summary;
+
+-- user_inventories 表加索引
+ALTER TABLE user_inventories ADD INDEX idx_ui_user_campaign (user_id, campaign_id);

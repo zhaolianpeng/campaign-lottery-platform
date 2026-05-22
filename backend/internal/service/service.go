@@ -43,6 +43,37 @@ func (s *Service) CampaignList() []model.Campaign {
 	return s.store.Campaigns()
 }
 
+// CampaignListWithProgress 返回系列列表，如果提供了token则带用户收集进度
+func (s *Service) CampaignListWithProgress(token string) ([]map[string]any, error) {
+	campaigns := s.store.Campaigns()
+	result := make([]map[string]any, 0, len(campaigns))
+
+	// 尝试获取用户ID（token可选）
+	var userID string
+	if token != "" {
+		user, err := s.store.UserFromToken(token)
+		if err == nil {
+			userID = user.ID
+		}
+	}
+
+	for _, campaign := range campaigns {
+		item := map[string]any{
+			"campaign": campaign,
+			"prizes":   s.store.PrizeList(campaign.ID),
+		}
+		// 如果用户已登录，附带收集进度
+		if userID != "" {
+			progress, err := s.store.GetSeriesProgress(userID, campaign.ID, campaign.Name)
+			if err == nil {
+				item["progress"] = progress
+			}
+		}
+		result = append(result, item)
+	}
+	return result, nil
+}
+
 func (s *Service) CampaignPrizeList(campaignID string) []model.Prize {
 	return s.store.PrizeList(campaignID)
 }

@@ -129,6 +129,17 @@ func New(cfg config.Config) (http.Handler, error) {
 	// 盲盒专用路由（新增）
 	// ============================================================
 
+	// 系列列表（带用户收集进度，可选token）
+	mux.HandleFunc("GET /api/v1/blindbox/campaigns", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		result, err := services.CampaignListWithProgress(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "campaign list with progress", result)
+	})
+
 	// 系列概率公示详情
 	mux.HandleFunc("GET /api/v1/blindbox/campaigns/{campaignID}/probabilities", func(w http.ResponseWriter, r *http.Request) {
 		result, err := services.BlindBoxCampaignProbabilities(r.PathValue("campaignID"))
