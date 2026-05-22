@@ -8,12 +8,14 @@ import (
 
 // Error sentinels (preserved from original)
 var (
-	ErrUnauthorized      = errors.New("unauthorized")
-	ErrCampaignNotFound  = errors.New("campaign not found")
-	ErrCampaignInactive  = errors.New("campaign inactive")
-	ErrNoDrawChances     = errors.New("no draw chances")
-	ErrBadAdminAuth      = errors.New("bad admin credentials")
-	ErrAdminUnauthorized = errors.New("admin unauthorized")
+	ErrUnauthorized         = errors.New("unauthorized")
+	ErrCampaignNotFound     = errors.New("campaign not found")
+	ErrCampaignInactive     = errors.New("campaign inactive")
+	ErrNoDrawChances        = errors.New("no draw chances")
+	ErrBadAdminAuth         = errors.New("bad admin credentials")
+	ErrAdminUnauthorized    = errors.New("admin unauthorized")
+	ErrInsufficientPoints   = errors.New("insufficient points")
+	ErrShareLimitReached    = errors.New("daily share limit reached")
 )
 
 // Store defines the data access interface for the blind box lottery platform.
@@ -76,7 +78,29 @@ type Store interface {
 	GetUserMember(userID string) (*model.UserMember, error)
 	GetPointsLog(userID string) ([]model.UserPointsLog, error)
 	RedeemPrize(userID string, input model.RedeemRequest) (*model.RedeemResult, error)
+	// UpdateUserMember 更新用户的会员/积分信息
+	UpdateUserMember(member *model.UserMember) error
 
 	// ---- 数据统计 ----
 	GetDrawStatistics(token, campaignID string) (*model.DrawStatistics, error)
+
+	// ---- 集卡系统扩展 ----
+	// DailyCheckIn 每日签到，points 参数是本次应增加的积分
+	DailyCheckIn(userID string, points int64) (*model.CheckInResult, error)
+	// GetCheckInStreak 获取连续签到天数
+	GetCheckInStreak(userID string) (int, error)
+	// CheckCollectionCompletion 检查用户是否集齐系列所有款式，返回奖励（nil=未集齐）
+	CheckCollectionCompletion(userID, campaignID string) (*model.CollectionReward, error)
+	// GrantCollectionReward 发放集齐奖励（隐藏款解锁）
+	GrantCollectionReward(userID string, reward *model.CollectionReward) error
+	// GetLeaderboard 获取收集排行榜（按所有系列收集进度排名）
+	GetLeaderboard(limit int) ([]model.LeaderboardEntry, error)
+	// GetCampaignHint 获取系列摇盒提示文案
+	GetCampaignHint(campaignID string) *model.HintMessage
+	// ShareReward 分享奖励，返回今日还可分享次数
+	ShareReward(userID string, points int64) (*model.ShareRewardResult, error)
+	// GetShareDailyCount 获取今日已分享次数
+	GetShareDailyCount(userID string) (int, error)
+	// GetPrizeCount 获取用户某系列某款式的数量
+	GetPrizeCount(userID, prizeID string) (int, error)
 }

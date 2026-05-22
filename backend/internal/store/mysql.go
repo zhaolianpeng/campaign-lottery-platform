@@ -1126,6 +1126,17 @@ func (store *MySQLStore) GetUserMember(userID string) (*model.UserMember, error)
 	return &member, err
 }
 
+func (store *MySQLStore) UpdateUserMember(member *model.UserMember) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := store.db.ExecContext(ctx, `INSERT INTO user_members (user_id, level, points, total_draws, total_spent, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())
+		ON DUPLICATE KEY UPDATE level = ?, points = ?, total_draws = ?, total_spent = ?, updated_at = UTC_TIMESTAMP()`,
+		member.UserID, member.Level, member.Points, member.TotalDraws, member.TotalSpent,
+		member.Level, member.Points, member.TotalDraws, member.TotalSpent)
+	return err
+}
+
 func (store *MySQLStore) GetPointsLog(userID string) ([]model.UserPointsLog, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1251,4 +1262,264 @@ func (store *MySQLStore) GetDrawStatistics(token, campaignID string) (*model.Dra
 		WinRate:        winRate,
 		PrizeBreakdown: prizeBreakdown,
 	}, nil
+}
+
+// ============================================================
+// 集卡系统扩展方法实现
+// ============================================================
+
+// DailyCheckIn 每日签到 - 简化实现：直接给 user_members 加积分
+func (store *MySQLStore) DailyCheckIn(userID string, points int64) (*model.CheckInResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 先查 user_members，不存在则创建
+	var currentPoints int64
+	err := store.db.QueryRowContext(ctx, `SELECT points FROM user_members WHERE user_id = ?`, userID).Scan(&currentPoints)
+	if errors.Is(err, sql.ErrNoRows) {
+		now := time.Now().UTC()
+		_, err = store.db.ExecContext(ctx, `INSERT INTO user_members (user_id, level, points, total_draws, total_spent, created_at, updated_at)
+			VALUES (?, 'normal', 0, 0, 0, ?, ?)`, userID, now, now)
+		if err != nil {
+			return nil, err
+		}
+		currentPoints = 0
+	} else if err != nil {
+		return nil, err
+	}
+
+	newBalance := currentPoints + points
+
+	// 加积分
+	_, err = store.db.ExecContext(ctx, `UPDATE user_members SET points = points + ?, updated_at = UTC_TIMESTAMP() WHERE user_id = ?`, points, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 记录积分日志
+	_, err = store.db.ExecContext(ctx, `INSERT INTO user_points_logs (user_id, points, balance, reason, remark, created_at)
+		VALUES (?, ?, ?, 'daily', '每日签到', UTC_TIMESTAMP())`, userID, points, newBalance)
+	if err != nil {
+		return nil, err
+	}
+
+	return &model.CheckInResult{
+		PointsAwarded: points,
+		StreakDays:    1,
+		IsBonus:       false,
+		NewBalance:    newBalance,
+	}, nil
+}
+
+// GetCheckInStreak 获取连续签到天数 - 简化返回0
+func (store *MySQLStore) GetCheckInStreak(userID string) (int, error) {
+	return 0, nil
+}
+
+// CheckCollectionCompletion 检查用户是否集齐系列所有款式
+func (store *MySQLStore) CheckCollectionCompletion(userID, campaignID string) (*model.CollectionReward, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 查询所有 active 的奖品，排除 secret/limited 级别
+	rows, err := store.db.QueryContext(ctx, `SELECT id, name FROM prizes WHERE campaign_id = ? AND status = 'active' AND level NOT IN ('secret', 'limited')`, campaignID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type prizeInfo struct {
+		ID   string
+		Name string
+	}
+	var allPrizes []prizeInfo
+	for rows.Next() {
+		var p prizeInfo
+		if err := rows.Scan(&p.ID, &p.Name); err != nil {
+			return nil, err
+		}
+		allPrizes = append(allPrizes, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(allPrizes) == 0 {
+		return nil, nil
+	}
+
+	// 检查用户是否拥有所有这些款式
+	for _, p := range allPrizes {
+		var count int
+		err := store.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM user_inventories WHERE user_id = ? AND prize_id = ?`, userID, p.ID).Scan(&count)
+		if err != nil {
+			return nil, err
+		}
+		if count == 0 {
+			return nil, nil // 缺少该款式
+		}
+	}
+
+	// 集齐了
+	var campaignName string
+	store.db.QueryRowContext(ctx, `SELECT name FROM campaigns WHERE id = ?`, campaignID).Scan(&campaignName)
+
+	return &model.CollectionReward{
+		CampaignID:   campaignID,
+		CampaignName: campaignName,
+		RewardType:   "title",
+		RewardName:   "收集大师",
+		Description:  "恭喜你集齐了「" + campaignName + "」系列所有款式！",
+	}, nil
+}
+
+// GrantCollectionReward 发放集齐奖励
+func (store *MySQLStore) GrantCollectionReward(userID string, reward *model.CollectionReward) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 插入一条 inventory 记录，source="collection_reward"
+	_, err = tx.ExecContext(ctx, `INSERT INTO user_inventories (id, user_id, prize_id, prize_name, prize_level, campaign_id, source, created_at)
+		VALUES (?, ?, ?, ?, 'collection', ?, 'collection_reward', UTC_TIMESTAMP())`,
+		"inv_"+randomSuffix(12), userID, "reward_"+reward.RewardName, reward.RewardName, reward.CampaignID)
+	if err != nil {
+		return err
+	}
+
+	// 加500积分
+	_, err = tx.ExecContext(ctx, `UPDATE user_members SET points = points + 500, updated_at = UTC_TIMESTAMP() WHERE user_id = ?`, userID)
+	if err != nil {
+		return err
+	}
+
+	// 查询当前余额
+	var balance int64
+	tx.QueryRowContext(ctx, `SELECT points FROM user_members WHERE user_id = ?`, userID).Scan(&balance)
+
+	// 记录积分日志
+	_, err = tx.ExecContext(ctx, `INSERT INTO user_points_logs (user_id, points, balance, reason, remark, created_at)
+		VALUES (?, ?, ?, 'collection', ?, UTC_TIMESTAMP())`, userID, int64(500), balance, "集卡奖励: "+reward.RewardName)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// GetLeaderboard 获取收集排行榜
+func (store *MySQLStore) GetLeaderboard(limit int) ([]model.LeaderboardEntry, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	rows, err := store.db.QueryContext(ctx, `SELECT user_id, COUNT(DISTINCT prize_id) as collected
+		FROM user_inventories GROUP BY user_id ORDER BY collected DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	entries := make([]model.LeaderboardEntry, 0)
+	rank := 0
+	for rows.Next() {
+		rank++
+		var entry model.LeaderboardEntry
+		if err := rows.Scan(&entry.UserID, &entry.CollectedCount); err != nil {
+			return nil, err
+		}
+		entry.Rank = rank
+		// 获取昵称
+		store.db.QueryRowContext(ctx, `SELECT nickname FROM users WHERE id = ?`, entry.UserID).Scan(&entry.Nickname)
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return entries, nil
+}
+
+// GetCampaignHint 随机返回一条摇盒提示文案
+func (store *MySQLStore) GetCampaignHint(campaignID string) *model.HintMessage {
+	hints := []model.HintMessage{
+		{Type: "hot", Content: "这个系列的隐藏款好像特别轻，摇晃时有细微的零件松动声。"},
+		{Type: "social", Content: "听说今天很多玩家都在抽这个系列，热门款式快要被抽光了！"},
+		{Type: "luck", Content: "今天的幸运色是红色，试试在整点时刻抽取？"},
+	}
+	return &hints[rand.IntN(len(hints))]
+}
+
+// ShareReward 分享奖励
+func (store *MySQLStore) ShareReward(userID string, points int64) (*model.ShareRewardResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	// 查询当前余额
+	var balance int64
+	err = tx.QueryRowContext(ctx, `SELECT points FROM user_members WHERE user_id = ? FOR UPDATE`, userID).Scan(&balance)
+	if errors.Is(err, sql.ErrNoRows) {
+		now := time.Now().UTC()
+		_, err = tx.ExecContext(ctx, `INSERT INTO user_members (user_id, level, points, total_draws, total_spent, created_at, updated_at)
+			VALUES (?, 'normal', 0, 0, 0, ?, ?)`, userID, now, now)
+		if err != nil {
+			return nil, err
+		}
+		balance = 0
+	} else if err != nil {
+		return nil, err
+	}
+
+	newBalance := balance + points
+
+	// 加积分
+	_, err = tx.ExecContext(ctx, `UPDATE user_members SET points = points + ?, updated_at = UTC_TIMESTAMP() WHERE user_id = ?`, points, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 记录积分日志
+	_, err = tx.ExecContext(ctx, `INSERT INTO user_points_logs (user_id, points, balance, reason, remark, created_at)
+		VALUES (?, ?, ?, 'share', '分享奖励', UTC_TIMESTAMP())`, userID, points, newBalance)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return &model.ShareRewardResult{
+		PointsAwarded: points,
+		DailyLeft:     9,
+		NewBalance:    newBalance,
+	}, nil
+}
+
+// GetShareDailyCount 获取今日已分享次数 - 简化返回0
+func (store *MySQLStore) GetShareDailyCount(userID string) (int, error) {
+	return 0, nil
+}
+
+// GetPrizeCount 获取用户某系列某款式的数量
+func (store *MySQLStore) GetPrizeCount(userID, prizeID string) (int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var count int
+	err := store.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM user_inventories WHERE user_id = ? AND prize_id = ?`, userID, prizeID).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }

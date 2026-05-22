@@ -171,6 +171,7 @@ type BlindBoxDrawResult struct {
 	Draws            []SingleDrawResult `json:"draws"`             // 本次抽奖结果列表
 	RemainingChances int                `json:"remaining_chances"` // 剩余抽奖次数
 	PityStatus       *PityStatus        `json:"pity_status,omitempty"` // 当前保底状态
+	CollectionReward *CollectionReward  `json:"collection_reward,omitempty"` // 集齐奖励（如触发）
 }
 
 // SingleDrawResult 单次抽奖结果
@@ -282,6 +283,52 @@ type RedeemResult struct {
 	PrizeName  string `json:"prize_name"`
 	PointsCost int64  `json:"points_cost"`
 	Remaining  int64  `json:"remaining"`
+}
+
+// ============================================================
+// 集卡系统扩展模型
+// ============================================================
+
+// CheckInResult 每日签到结果
+type CheckInResult struct {
+	PointsAwarded int64 `json:"points_awarded"`  // 本次获得积分
+	StreakDays    int   `json:"streak_days"`      // 连续签到天数
+	IsBonus       bool  `json:"is_bonus"`         // 是否触发连续奖励
+	NewBalance    int64 `json:"new_balance"`      // 变动后余额
+}
+
+// CollectionReward 集齐系列奖励
+type CollectionReward struct {
+	CampaignID   string `json:"campaign_id"`
+	CampaignName string `json:"campaign_name"`
+	RewardType   string `json:"reward_type"`  // hidden_prize / title / points
+	RewardName   string `json:"reward_name"`
+	RewardPrizeID string `json:"reward_prize_id,omitempty"`
+	Description  string `json:"description"`
+}
+
+// LeaderboardEntry 排行榜条目
+type LeaderboardEntry struct {
+	Rank            int     `json:"rank"`
+	UserID          string  `json:"user_id"`
+	Nickname        string  `json:"nickname"`
+	CollectedCount  int     `json:"collected_count"`   // 已收集总款式数
+	TotalCount      int     `json:"total_count"`       // 总款式数
+	ProgressPercent float64 `json:"progress_percent"`  // 收集进度百分比
+	SeriesCompleted int     `json:"series_completed"`  // 完整集齐系列数
+}
+
+// HintMessage 摇盒提示文案
+type HintMessage struct {
+	Type    string `json:"type"`    // hot / social / luck
+	Content string `json:"content"` // 提示文案
+}
+
+// ShareRewardResult 分享奖励结果
+type ShareRewardResult struct {
+	PointsAwarded int64 `json:"points_awarded"`
+	DailyLeft     int   `json:"daily_left"`  // 今日还可分享次数
+	NewBalance    int64 `json:"new_balance"`
 }
 
 // DrawStatistics 抽奖统计

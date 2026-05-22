@@ -447,6 +447,48 @@ func New(cfg config.Config) (http.Handler, error) {
 		response.JSON(w, http.StatusOK, "ok", "draw statistics", stats)
 	})
 
+	// ============================================================
+	// 集卡系统新路由
+	// ============================================================
+
+	// 每日签到
+	mux.HandleFunc("POST /api/v1/blindbox/checkin", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		result, err := services.DailyCheckIn(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "checkin success", result)
+	})
+
+	// 摇盒提示
+	mux.HandleFunc("GET /api/v1/blindbox/hint/{campaignID}", func(w http.ResponseWriter, r *http.Request) {
+		hint := services.GetCampaignHint(r.PathValue("campaignID"))
+		response.JSON(w, http.StatusOK, "ok", "hint", hint)
+	})
+
+	// 分享奖励
+	mux.HandleFunc("POST /api/v1/blindbox/share-reward", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		result, err := services.ShareReward(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "share reward", result)
+	})
+
+	// 收集排行榜
+	mux.HandleFunc("GET /api/v1/blindbox/leaderboard", func(w http.ResponseWriter, _ *http.Request) {
+		entries, err := services.GetLeaderboard(20)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "leaderboard", entries)
+	})
+
 	return mux, nil
 }
 
@@ -480,6 +522,10 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		response.JSON(w, http.StatusConflict, "campaign_inactive", err.Error(), nil)
 	case errors.Is(err, store.ErrNoDrawChances):
 		response.JSON(w, http.StatusConflict, "no_draw_chances", err.Error(), nil)
+	case errors.Is(err, store.ErrInsufficientPoints):
+		response.JSON(w, http.StatusConflict, "insufficient_points", err.Error(), nil)
+	case errors.Is(err, store.ErrShareLimitReached):
+		response.JSON(w, http.StatusConflict, "share_limit_reached", err.Error(), nil)
 	default:
 		response.JSON(w, http.StatusInternalServerError, "internal_error", err.Error(), nil)
 	}

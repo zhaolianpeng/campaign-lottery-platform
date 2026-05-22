@@ -139,7 +139,21 @@ func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.Blind
 	}
 	isTenPull := drawCount >= 2
 
-	// 4. 构建概率引擎
+	// 4. 检查并扣减积分
+	member, err := s.store.GetUserMember(user.ID)
+	if err != nil {
+		return nil, err
+	}
+	// 单抽100分，十连950分（9.5折）
+	pointsCost := int64(drawCount * 100)
+	if isTenPull {
+		pointsCost = int64(drawCount * 95) // 95分/次 for ten-pull
+	}
+	if member.Points < pointsCost {
+		return nil, store.ErrInsufficientPoints
+	}
+
+	// 5. 构建概率引擎
 	prizes := s.store.PrizeList(campaign.ID)
 	pw := make([]probability.PrizeWeight, 0, len(prizes))
 	secretID := ""
@@ -167,7 +181,7 @@ func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.Blind
 	}
 	engine := probability.NewEngine(engineCfg, pw)
 
-	// 5. 执行抽奖
+	// 6. 执行抽奖
 	var drawResults []probability.DrawResult
 	if isTenPull {
 		drawResults = engine.DrawMultiple(drawCount, pityCfg, s.pityTracker, user.ID, campaign.ID)
@@ -176,15 +190,14 @@ func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.Blind
 		drawResults = []probability.DrawResult{r}
 	}
 
-	// 6. 持久化结果
+	// 7. 持久化结果
 	singleResults := make([]model.SingleDrawResult, 0, len(drawResults))
 	for _, d := range drawResults {
 		sr := model.SingleDrawResult{
-			IsWin:    d.PrizeID != "",
+			IsWin:     d.PrizeID != "",
 			IsHardPity: d.IsHardPity,
 		}
 		if d.PrizeID != "" {
-			// 通过 store 完成库存扣减和记录写入
 			rec, err := s.store.CreateDrawRecord(user.ID, campaign.ID, d.PrizeID, isTenPull)
 			if err != nil {
 				return nil, fmt.Errorf("save draw record: %w", err)
@@ -204,13 +217,30 @@ func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.Blind
 		singleResults = append(singleResults, sr)
 	}
 
-	// 7. 更新每日次数
+	// 8. 更新每日次数
 	newRemaining, err := s.store.DeductDrawQuota(user.ID, campaign.ID, drawCount)
 	if err != nil {
 		return nil, err
 	}
 
-	// 8. 获取保底状态
+	// 9. 扣减积分 + 更新消费记录（自动更新会员等级）
+	member.Points -= pointsCost
+	member.TotalSpent += pointsCost
+	member.TotalDraws += int64(drawCount)
+	// 自动计算会员等级
+	member.Level = s.calcMemberLevel(member.TotalSpent)
+	s.store.UpdateUserMember(member) // 需要在Store接口加
+
+	// 10. 检查集齐奖励
+	reward, _ := s.store.CheckCollectionCompletion(user.ID, campaign.ID)
+	var rewardInfo *model.CollectionReward
+	if reward != nil {
+		if err := s.store.GrantCollectionReward(user.ID, reward); err == nil {
+			rewardInfo = reward
+		}
+	}
+
+	// 11. 获取保底状态
 	state := s.pityTracker.Get(user.ID, campaign.ID)
 	ps := &model.PityStatus{
 		ConsecutiveMisses: state.ConsecutiveMisses,
@@ -231,6 +261,7 @@ func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.Blind
 		Draws:            singleResults,
 		RemainingChances: newRemaining,
 		PityStatus:       ps,
+		CollectionReward: rewardInfo,
 	}, nil
 }
 
@@ -470,4 +501,79 @@ func (s *Service) buildPityConfig(campaign model.Campaign) probability.PityConfi
 		PityFactor: 0.015,
 		HardPityN:  90,
 	}
+}
+
+// ============================================================
+// 会员等级 & 用户积分系统
+// ============================================================
+
+// calcMemberLevel 根据累计消费积分计算会员等级
+// Lv1青铜: 注册即得
+// Lv2白银: ≥500分
+// Lv3黄金: ≥2000分
+// Lv4铂金: ≥5000分
+// Lv5钻石: ≥15000分
+func (s *Service) calcMemberLevel(totalSpent int64) model.MemberLevel {
+	switch {
+	case totalSpent >= 15000:
+		return model.MemberDiamond
+	case totalSpent >= 5000:
+		return model.MemberDiamond
+	case totalSpent >= 2000:
+		return model.MemberGold
+	case totalSpent >= 500:
+		return model.MemberSilver
+	default:
+		return model.MemberNormal
+	}
+}
+
+// DailyCheckIn 每日签到
+// 验证token，基础+5分，连续签到≥7天额外+20分
+func (s *Service) DailyCheckIn(token string) (*model.CheckInResult, error) {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.store.DailyCheckIn(user.ID, 5)
+	if err != nil {
+		return nil, err
+	}
+	if result.StreakDays >= 7 {
+		bonusResult, err := s.store.DailyCheckIn(user.ID, 20)
+		if err != nil {
+			return nil, err
+		}
+		bonusResult.PointsAwarded = result.PointsAwarded + 20
+		bonusResult.IsBonus = true
+		return bonusResult, nil
+	}
+	return result, nil
+}
+
+// ShareReward 分享奖励
+// 每次+2分，每日上限10次
+func (s *Service) ShareReward(token string) (*model.ShareRewardResult, error) {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	count, err := s.store.GetShareDailyCount(user.ID)
+	if err != nil {
+		return nil, err
+	}
+	if count >= 10 {
+		return nil, store.ErrShareLimitReached
+	}
+	return s.store.ShareReward(user.ID, 2)
+}
+
+// GetLeaderboard 获取收集排行榜
+func (s *Service) GetLeaderboard(limit int) ([]model.LeaderboardEntry, error) {
+	return s.store.GetLeaderboard(limit)
+}
+
+// GetCampaignHint 获取盲盒摇盒提示文案
+func (s *Service) GetCampaignHint(campaignID string) *model.HintMessage {
+	return s.store.GetCampaignHint(campaignID)
 }
