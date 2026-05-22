@@ -7,11 +7,13 @@ import (
 	"fmt"
 	mathrand "math/rand/v2"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"campaign-lottery-platform/backend/internal/model"
+	"campaign-lottery-platform/backend/internal/store"
 )
 
 type MemoryStore struct {
@@ -37,6 +39,17 @@ type MemoryStore struct {
 	checkInDates   map[string]time.Time // userID -> last check-in date
 	checkInStreaks map[string]int       // userID -> streak days
 	shareCounts    map[string]int       // userID -> today's share count
+
+	// 🆕 月卡系统
+	monthCards   map[string]*model.MonthCard
+	freeDrawUsed map[string]int
+
+	// 🆕 战令系统
+	battlePassSeasons      map[int]model.BattlePassSeason
+	battlePasses           map[string]*model.BattlePass
+	battlePassTasks        []model.BattlePassTask
+	battlePassTaskProgress map[string]model.BattlePassTaskProgress
+	battlePassRewards      []model.BattlePassReward
 }
 
 func NewMemoryStore(adminUser string, adminPassword string) *MemoryStore {
@@ -58,13 +71,60 @@ func NewMemoryStore(adminUser string, adminPassword string) *MemoryStore {
 		checkInDates:   make(map[string]time.Time),
 		checkInStreaks: make(map[string]int),
 		shareCounts:    make(map[string]int),
+		monthCards:     make(map[string]*model.MonthCard),
+		freeDrawUsed:   make(map[string]int),
+		battlePassSeasons:      make(map[int]model.BattlePassSeason),
+		battlePasses:           make(map[string]*model.BattlePass),
+		battlePassTasks:        make([]model.BattlePassTask, 0),
+		battlePassTaskProgress: make(map[string]model.BattlePassTaskProgress),
+		battlePassRewards:      make([]model.BattlePassReward, 0),
 	}
 
 	store.seedDefaultCampaign()
+	store.seedBattlePass()
 	return store
 }
 
 func (s *MemoryStore) Seed() error { return nil }
+
+// 🆕 seedBattlePass 初始化默认战令赛季、任务和奖励
+func (s *MemoryStore) seedBattlePass() {
+	now := time.Now().UTC()
+	seasonID := 1
+	s.battlePassSeasons[seasonID] = model.BattlePassSeason{
+		ID: seasonID, Name: "S1 星辰之约",
+		MaxLevel: 50, XPPerLevel: 100,
+		StartAt: now.Add(-7 * 24 * time.Hour),
+		EndAt:   now.Add(21 * 24 * time.Hour),
+		Status:  "active",
+	}
+	// 每日任务
+	s.battlePassTasks = append(s.battlePassTasks,
+		model.BattlePassTask{ID: 1, SeasonID: seasonID, Type: "daily", Name: "每日签到", Description: "完成每日签到", XPReward: 20, TargetCount: 1},
+		model.BattlePassTask{ID: 2, SeasonID: seasonID, Type: "daily", Name: "单抽一次", Description: "进行一次单抽", XPReward: 30, TargetCount: 1},
+		model.BattlePassTask{ID: 3, SeasonID: seasonID, Type: "daily", Name: "分享开盒", Description: "分享开盒结果", XPReward: 10, TargetCount: 1},
+		model.BattlePassTask{ID: 4, SeasonID: seasonID, Type: "weekly", Name: "十连抽一次", Description: "进行一次十连抽", XPReward: 50, TargetCount: 1},
+		model.BattlePassTask{ID: 5, SeasonID: seasonID, Type: "weekly", Name: "合成一次", Description: "进行合成操作", XPReward: 40, TargetCount: 1},
+		model.BattlePassTask{ID: 6, SeasonID: seasonID, Type: "weekly", Name: "发起交换", Description: "发起一次交换", XPReward: 30, TargetCount: 1},
+		model.BattlePassTask{ID: 7, SeasonID: seasonID, Type: "season", Name: "集齐一个系列", Description: "完整集齐任意一个系列", XPReward: 200, TargetCount: 1},
+		model.BattlePassTask{ID: 8, SeasonID: seasonID, Type: "season", Name: "合成隐藏款", Description: "合成获得隐藏款", XPReward: 300, TargetCount: 1},
+	)
+	// 免费版奖励
+	for lvl := 5; lvl <= 50; lvl += 5 {
+		s.battlePassRewards = append(s.battlePassRewards,
+			model.BattlePassReward{Level: lvl, PassType: "free", RewardType: "points", RewardName: "积分", RewardQty: lvl * 10},
+		)
+	}
+	// 付费版额外奖励
+	for lvl := 2; lvl <= 50; lvl += 2 {
+		s.battlePassRewards = append(s.battlePassRewards,
+			model.BattlePassReward{Level: lvl, PassType: "paid", RewardType: "draw_ticket", RewardName: "单抽券", RewardQty: 1},
+		)
+	}
+	s.battlePassRewards = append(s.battlePassRewards,
+		model.BattlePassReward{Level: 50, PassType: "paid", RewardType: "prize", RewardName: "S1限定头像框", RewardQty: 1, RewardID: "bp_reward_001"},
+	)
+}
 
 func (s *MemoryStore) seedDefaultCampaign() {
 	now := time.Now().UTC()
@@ -1401,4 +1461,212 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// ─────────────────────────────────────────────────────────────
+// 🆕 月卡系统 MemoryStore 实现
+// ─────────────────────────────────────────────────────────────
+
+func (s *MemoryStore) GetMonthCard(userID string) (*model.MonthCard, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if card, ok := s.monthCards[userID]; ok && card.ExpiresAt.After(time.Now().UTC()) {
+		c := *card
+		return &c, nil
+	}
+	return nil, nil
+}
+
+func (s *MemoryStore) BuyMonthCard(userID string, cardType model.MonthCardType, pointsCost int64) (*model.MonthCard, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	var freeDraws int
+	var discount float64
+	var price int64
+	var duration time.Duration
+	switch cardType {
+	case model.MonthCardWeekly:
+		freeDraws, discount, price, duration = 1, 0.9, 990, 7*24*time.Hour
+	case model.MonthCardMonthly:
+		freeDraws, discount, price, duration = 2, 0.8, 2800, 30*24*time.Hour
+	case model.MonthCardSeason:
+		freeDraws, discount, price, duration = 3, 0.75, 6800, 90*24*time.Hour
+	default:
+		return nil, fmt.Errorf("invalid card type: %s", cardType)
+	}
+	s.monthCards[userID] = &model.MonthCard{
+		ID: "mcard_" + randomSuffix(12), UserID: userID, CardType: cardType,
+		Price: price, FreeDraws: freeDraws, DrawDiscount: discount,
+		StartedAt: now, ExpiresAt: now.Add(duration), CreatedAt: now,
+	}
+	c := *s.monthCards[userID]
+	return &c, nil
+}
+
+func (s *MemoryStore) UseFreeDraw(userID string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := "free:" + userID + ":" + time.Now().UTC().Format("2006-01-02")
+	s.freeDrawUsed[key]++
+	return s.freeDrawUsed[key], nil
+}
+
+func (s *MemoryStore) GetTodayFreeDrawUsed(userID string) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	key := "free:" + userID + ":" + time.Now().UTC().Format("2006-01-02")
+	return s.freeDrawUsed[key], nil
+}
+
+// ─────────────────────────────────────────────────────────────
+// 🆕 战令系统 MemoryStore 实现
+// ─────────────────────────────────────────────────────────────
+
+func (s *MemoryStore) GetActiveSeason() (*model.BattlePassSeason, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, season := range s.battlePassSeasons {
+		if season.Status == "active" {
+			s := season
+			return &s, nil
+		}
+	}
+	return nil, store.ErrNoActiveSeason
+}
+
+func (s *MemoryStore) GetUserBattlePass(userID string, seasonID int) (*model.BattlePass, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	key := userID + ":" + strconv.Itoa(seasonID)
+	if bp, ok := s.battlePasses[key]; ok {
+		b := *bp
+		return &b, nil
+	}
+	// 创建免费版战令
+	now := time.Now().UTC()
+	season, err := s.GetActiveSeason()
+	if err != nil {
+		return nil, err
+	}
+	bp := &model.BattlePass{
+		UserID: userID, SeasonID: seasonID, PassType: "free",
+		Level: 1, XP: 0, TotalXP: 0, ClaimedLevels: []int{}, UpdatedAt: now,
+	}
+	s.battlePasses[key] = bp
+	b := *bp
+	return &b, nil
+}
+
+func (s *MemoryStore) BuyBattlePass(userID string, seasonID int, pointsCost int64) (*model.BattlePass, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := userID + ":" + strconv.Itoa(seasonID)
+	bp, ok := s.battlePasses[key]
+	if !ok {
+		return nil, store.ErrCampaignNotFound
+	}
+	if bp.PassType == "paid" {
+		return nil, store.ErrAlreadyPurchased
+	}
+	now := time.Now().UTC()
+	bp.PassType = "paid"
+	bp.BoughtAt = now
+	bp.UpdatedAt = now
+	b := *bp
+	return &b, nil
+}
+
+func (s *MemoryStore) AddBattlePassXP(userID string, seasonID int, xp int) (*model.BattlePass, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := userID + ":" + strconv.Itoa(seasonID)
+	bp, ok := s.battlePasses[key]
+	if !ok {
+		return nil, store.ErrCampaignNotFound
+	}
+	season, err := s.GetActiveSeason()
+	if err != nil {
+		return nil, err
+	}
+	bp.XP += xp
+	bp.TotalXP += xp
+	for bp.Level < season.MaxLevel && bp.XP >= season.XPPerLevel {
+		bp.XP -= season.XPPerLevel
+		bp.Level++
+	}
+	bp.UpdatedAt = time.Now().UTC()
+	b := *bp
+	return &b, nil
+}
+
+func (s *MemoryStore) ClaimBattlePassReward(userID string, seasonID int, level int) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := userID + ":" + strconv.Itoa(seasonID)
+	bp, ok := s.battlePasses[key]
+	if !ok {
+		return false, store.ErrCampaignNotFound
+	}
+	if bp.Level < level {
+		return false, store.ErrNotEligible
+	}
+	for _, l := range bp.ClaimedLevels {
+		if l == level {
+			return false, nil // already claimed
+		}
+	}
+	bp.ClaimedLevels = append(bp.ClaimedLevels, level)
+	return true, nil
+}
+
+func (s *MemoryStore) GetBattlePassTasks(seasonID int) ([]model.BattlePassTask, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	tasks := make([]model.BattlePassTask, 0)
+	for _, t := range s.battlePassTasks {
+		if t.SeasonID == seasonID {
+			tasks = append(tasks, t)
+		}
+	}
+	return tasks, nil
+}
+
+func (s *MemoryStore) GetBattlePassTaskProgress(userID string, seasonID int) ([]model.BattlePassTaskProgress, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	progs := make([]model.BattlePassTaskProgress, 0)
+	for _, p := range s.battlePassTaskProgress {
+		if p.UserID == userID {
+			progs = append(progs, p)
+		}
+	}
+	return progs, nil
+}
+
+func (s *MemoryStore) UpdateTaskProgress(userID string, taskID int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := userID + ":" + strconv.Itoa(taskID)
+	prog, ok := s.battlePassTaskProgress[key]
+	if !ok {
+		s.battlePassTaskProgress[key] = model.BattlePassTaskProgress{
+			UserID: userID, TaskID: taskID, Progress: 1, Completed: false,
+		}
+		return nil
+	}
+	prog.Progress++
+	return nil
+}
+
+func (s *MemoryStore) GetBattlePassRewards(seasonID int) ([]model.BattlePassReward, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rewards := make([]model.BattlePassReward, 0)
+	for _, r := range s.battlePassRewards {
+		if r.Level <= seasonID/1000*1000+50 { // simplified filter
+			rewards = append(rewards, r)
+		}
+	}
+	return rewards, nil
 }

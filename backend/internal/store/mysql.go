@@ -1711,3 +1711,46 @@ func (store *MySQLStore) BlendPrizes(userID string, sourcePrizeID string, campai
 		RemainingSrc:    haveCount - recipe.NeedCount,
 	}, nil
 }
+
+// 🆕 ---- 月卡系统 MySQL Stubs（使用 MemoryStore）----
+func (store *MySQLStore) GetMonthCard(userID string) (*model.MonthCard, error) {
+	return nil, fmt.Errorf("mysql monthcard not implemented, use memory store")
+}
+func (store *MySQLStore) BuyMonthCard(userID string, cardType model.MonthCardType, pointsCost int64) (*model.MonthCard, error) {
+	return nil, fmt.Errorf("mysql monthcard not implemented, use memory store")
+}
+func (store *MySQLStore) UseFreeDraw(userID string) (int, error) {
+	return 0, fmt.Errorf("mysql monthcard not implemented, use memory store")
+}
+func (store *MySQLStore) GetTodayFreeDrawUsed(userID string) (int, error) {
+	return 0, fmt.Errorf("mysql monthcard not implemented, use memory store")
+}
+
+// 🆕 ---- 战令系统 MySQL Stubs（使用 MemoryStore）----
+func (store *MySQLStore) GetActiveSeason() (*model.BattlePassSeason, error) {
+	return nil, fmt.Errorf("mysql battlepass not implemented, use memory store")
+}
+func (store *MySQLStore) GetUserBattlePass(userID string, seasonID int) (*model.BattlePass, error) {
+	return nil, fmt.Errorf("mysql battlepass not implemented, use memory store")
+}
+func (store *MySQLStore) BuyBattlePass(userID string, seasonID int, pointsCost int64) (*model.BattlePass, error) {
+	return nil, fmt.Errorf("mysql battlepass not implemented, use memory store")
+}
+func (store *MySQLStore) AddBattlePassXP(userID string, seasonID int, xp int) (*model.BattlePass, error) {
+	return nil, fmt.Errorf("mysql battlepass not implemented, use memory store")
+}
+func (store *MySQLStore) ClaimBattlePassReward(userID string, seasonID int, level int) (bool, error) {
+	return false, fmt.Errorf("mysql battlepass not implemented, use memory store")
+}
+func (store *MySQLStore) GetBattlePassTasks(seasonID int) ([]model.BattlePassTask, error) {
+	return nil, fmt.Errorf("mysql battlepass not implemented, use memory store")
+}
+func (store *MySQLStore) GetBattlePassTaskProgress(userID string, seasonID int) ([]model.BattlePassTaskProgress, error) {
+	return nil, fmt.Errorf("mysql battlepass not implemented, use memory store")
+}
+func (store *MySQLStore) UpdateTaskProgress(userID string, taskID int) error {
+	return fmt.Errorf("mysql battlepass not implemented, use memory store")
+}
+func (store *MySQLStore) GetBattlePassRewards(seasonID int) ([]model.BattlePassReward, error) {
+	return nil, fmt.Errorf("mysql battlepass not implemented, use memory store")
+}

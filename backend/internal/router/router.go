@@ -554,6 +554,15 @@ func New(cfg config.Config) (http.Handler, error) {
 		response.JSON(w, http.StatusOK, "ok", "leaderboard", entries)
 	})
 
+	// 🆕 月卡系统路由
+	mux.Handle("GET /api/v1/month-card/status", monthCardStatusHandler(services))
+	mux.Handle("POST /api/v1/month-card/buy", buyMonthCardHandler(services))
+
+	// 🆕 战令系统路由
+	mux.Handle("GET /api/v1/battle-pass/info", battlePassInfoHandler(services))
+	mux.Handle("POST /api/v1/battle-pass/buy", buyBattlePassHandler(services))
+	mux.Handle("POST /api/v1/battle-pass/claim/{level}", claimBattlePassRewardHandler(services))
+
 	return mux, nil
 }
 
@@ -591,7 +600,89 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		response.JSON(w, http.StatusConflict, "insufficient_points", err.Error(), nil)
 	case errors.Is(err, store.ErrShareLimitReached):
 		response.JSON(w, http.StatusConflict, "share_limit_reached", err.Error(), nil)
+	case errors.Is(err, store.ErrNoActiveSeason):
+		response.JSON(w, http.StatusNotFound, "no_active_season", err.Error(), nil)
+	case errors.Is(err, store.ErrAlreadyPurchased):
+		response.JSON(w, http.StatusConflict, "already_purchased", err.Error(), nil)
+	case errors.Is(err, store.ErrNotEligible):
+		response.JSON(w, http.StatusConflict, "not_eligible", err.Error(), nil)
 	default:
 		response.JSON(w, http.StatusInternalServerError, "internal_error", err.Error(), nil)
+	}
+}
+
+// 🆕 ---- 月卡系统路由 ----
+
+// 查询月卡状态
+func monthCardStatusHandler(svc *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		status, err := svc.MonthCardStatus(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "month card status", status)
+	}
+}
+
+// 购买月卡
+func buyMonthCardHandler(svc *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		var input model.MonthCardPurchaseRequest
+		if err := decodeJSON(r, &input); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		result, err := svc.BuyMonthCard(token, input.CardType)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "month card purchased", result)
+	}
+}
+
+// 🆕 ---- 战令系统路由 ----
+
+// 查询战令信息
+func battlePassInfoHandler(svc *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		info, err := svc.BattlePassInfo(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "battle pass info", info)
+	}
+}
+
+// 购买付费战令
+func buyBattlePassHandler(svc *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		result, err := svc.BuyBattlePass(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "battle pass purchased", result)
+	}
+}
+
+// 领取战令奖励
+func claimBattlePassRewardHandler(svc *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		levelStr := r.PathValue("level")
+		level, _ := strconv.Atoi(levelStr)
+		claimed, err := svc.ClaimBattlePassReward(token, level)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "reward claimed", map[string]bool{"claimed": claimed})
 	}
 }

@@ -371,7 +371,117 @@ type DailyDrawStat struct {
 }
 
 // ============================================================
-// 合成系统模型
+// 月卡/战令系统模型 🆕
+// ============================================================
+
+// MonthCardType 月卡类型
+type MonthCardType string
+
+const (
+	MonthCardWeekly  MonthCardType = "weekly"  // 周卡 9.9元
+	MonthCardMonthly MonthCardType = "monthly" // 月卡 28元
+	MonthCardSeason  MonthCardType = "season"  // 季卡 68元
+)
+
+// MonthCard 用户月卡信息
+type MonthCard struct {
+	ID          string        `json:"id"`
+	UserID      string        `json:"user_id"`
+	CardType    MonthCardType `json:"card_type"`
+	Price       int64         `json:"price"`         // 购买价格（分）
+	FreeDraws   int           `json:"free_draws"`    // 每日免费抽次数
+	DrawDiscount float64      `json:"draw_discount"` // 折扣（0.8 = 8折）
+	StartedAt   time.Time     `json:"started_at"`
+	ExpiresAt   time.Time     `json:"expires_at"`
+	CreatedAt   time.Time     `json:"created_at"`
+}
+
+// MonthCardPurchaseRequest 购买月卡请求
+type MonthCardPurchaseRequest struct {
+	CardType MonthCardType `json:"card_type"` // weekly / monthly / season
+}
+
+// MonthCardPurchaseResult 购买月卡结果
+type MonthCardPurchaseResult struct {
+	Card      MonthCard `json:"card"`
+	NewPoints int64     `json:"new_points"`
+}
+
+// MonthCardStatus 月卡状态（给前端查询）
+type MonthCardStatus struct {
+	HasCard      bool      `json:"has_card"`
+	CardType     string    `json:"card_type,omitempty"`
+	FreeDraws    int       `json:"free_draws"`     // 每日免费抽次数
+	DrawDiscount float64   `json:"draw_discount"`  // 折扣比例
+	ExpiresAt    time.Time `json:"expires_at,omitempty"`
+	DaysLeft     int       `json:"days_left"`      // 剩余天数
+	TodayFreeUsed int      `json:"today_free_used"` // 今日已用免费抽
+}
+
+// BattlePassSeason 战令赛季
+type BattlePassSeason struct {
+	ID       int       `json:"id"`
+	Name     string    `json:"name"`
+	MaxLevel int       `json:"max_level"` // 满级（如 50）
+	XPPerLevel int     `json:"xp_per_level"` // 每级所需经验
+	StartAt  time.Time `json:"start_at"`
+	EndAt    time.Time `json:"end_at"`
+	Status   string    `json:"status"` // upcoming / active / ended
+}
+
+// BattlePass 用户战令进度
+type BattlePass struct {
+	UserID       string    `json:"user_id"`
+	SeasonID     int       `json:"season_id"`
+	PassType     string    `json:"pass_type"`     // free / paid
+	Level        int       `json:"level"`          // 当前等级
+	XP           int       `json:"xp"`             // 当前经验值
+	TotalXP      int       `json:"total_xp"`       // 累计获得经验
+	ClaimedLevels []int    `json:"claimed_levels"` // 已领取奖励的等级
+	BoughtAt     time.Time `json:"bought_at,omitempty"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// BattlePassTask 战令任务
+type BattlePassTask struct {
+	ID          int    `json:"id"`
+	SeasonID    int    `json:"season_id"`
+	Type        string `json:"type"`        // daily / weekly / season
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	XPReward    int    `json:"xp_reward"`   // 任务奖励经验
+	Condition   string `json:"condition"`   // 完成条件描述（如"单抽3次"）
+	TargetCount int    `json:"target_count"` // 目标次数
+}
+
+// BattlePassTaskProgress 用户任务进度
+type BattlePassTaskProgress struct {
+	UserID      string `json:"user_id"`
+	TaskID      int    `json:"task_id"`
+	Progress    int    `json:"progress"`     // 当前进度
+	Completed   bool   `json:"completed"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+}
+
+// BattlePassReward 战令奖励配置
+type BattlePassReward struct {
+	Level      int    `json:"level"`
+	PassType   string `json:"pass_type"` // free / paid
+	RewardType string `json:"reward_type"` // points / draw_ticket / prize / title
+	RewardName string `json:"reward_name"`
+	RewardQty  int    `json:"reward_qty"`
+	RewardID   string `json:"reward_id,omitempty"` // 奖品ID（如果reward_type=prize）
+}
+
+// BattlePassInfo 战令信息（前端查询用）
+type BattlePassInfo struct {
+	Season      *BattlePassSeason   `json:"season"`
+	UserPass    *BattlePass         `json:"user_pass,omitempty"`
+	Tasks       []BattlePassTask    `json:"tasks"`
+	TaskProgress []BattlePassTaskProgress `json:"task_progress,omitempty"`
+	Rewards     []BattlePassReward  `json:"rewards"`
+	LevelProgress int               `json:"level_progress"` // 当前等级经验进度
+}
 // ============================================================
 
 // BlendRecipe 合成配方

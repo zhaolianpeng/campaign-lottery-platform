@@ -16,6 +16,9 @@ var (
 	ErrAdminUnauthorized    = errors.New("admin unauthorized")
 	ErrInsufficientPoints   = errors.New("insufficient points")
 	ErrShareLimitReached    = errors.New("daily share limit reached")
+	ErrNoActiveSeason       = errors.New("no active battle pass season")
+	ErrAlreadyPurchased     = errors.New("already purchased")
+	ErrNotEligible          = errors.New("not eligible")
 )
 
 // Store defines the data access interface for the blind box lottery platform.
@@ -110,4 +113,34 @@ LogPoints(userID string, points int64, balance int64, reason, remark string) err
 	// sourcePrizeID 是要消耗的款式ID，campaignID 是系列ID
 	// 返回合成的结果
 	BlendPrizes(userID string, sourcePrizeID string, campaignID string) (*model.BlendResult, error)
+
+	// 🆕 ---- 月卡系统 ----
+	// GetMonthCard 获取用户月卡信息（nil = 无月卡）
+	GetMonthCard(userID string) (*model.MonthCard, error)
+	// BuyMonthCard 购买月卡，pointsCost 是积分扣减数
+	BuyMonthCard(userID string, cardType model.MonthCardType, pointsCost int64) (*model.MonthCard, error)
+	// UseFreeDraw 消耗一次今日免费抽，返回剩余免费抽次数
+	UseFreeDraw(userID string) (int, error)
+	// GetTodayFreeDrawUsed 获取今日已用免费抽次数
+	GetTodayFreeDrawUsed(userID string) (int, error)
+
+	// 🆕 ---- 战令系统 ----
+	// GetActiveSeason 获取当前活跃赛季
+	GetActiveSeason() (*model.BattlePassSeason, error)
+	// GetUserBattlePass 获取用户战令进度
+	GetUserBattlePass(userID string, seasonID int) (*model.BattlePass, error)
+	// BuyBattlePass 购买付费战令
+	BuyBattlePass(userID string, seasonID int, pointsCost int64) (*model.BattlePass, error)
+	// AddBattlePassXP 增加战令经验值，返回更新后的等级和xp
+	AddBattlePassXP(userID string, seasonID int, xp int) (*model.BattlePass, error)
+	// ClaimBattlePassReward 领取战令等级奖励
+	ClaimBattlePassReward(userID string, seasonID int, level int) (bool, error)
+	// GetBattlePassTasks 获取战令任务列表
+	GetBattlePassTasks(seasonID int) ([]model.BattlePassTask, error)
+	// GetBattlePassTaskProgress 获取用户任务进度
+	GetBattlePassTaskProgress(userID string, seasonID int) ([]model.BattlePassTaskProgress, error)
+	// UpdateTaskProgress 更新任务进度（增加1）
+	UpdateTaskProgress(userID string, taskID int) error
+	// GetBattlePassRewards 获取战令奖励配置
+	GetBattlePassRewards(seasonID int) ([]model.BattlePassReward, error)
 }
