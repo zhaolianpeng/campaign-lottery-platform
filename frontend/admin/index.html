@@ -1,59 +1,113 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Campaign Lottery Admin</title>
-    <link rel="stylesheet" href="./styles.css" />
-  </head>
-  <body>
-    <main class="layout">
-      <section class="sidebar">
-        <p class="kicker">Admin Console</p>
-        <h1>营销活动后台</h1>
-        <p>这是一个全新原创后台骨架，用于登录、查看活动概览、奖池库存和抽奖记录。</p>
-      </section>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BOX·MAGIC 管理端</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <span class="logo">⚙️ BOX·MAGIC 管理</span>
+      <span id="loginStatus" class="status-badge">未登录</span>
+    </header>
 
-      <section class="content">
-        <div class="panel form-grid">
-          <div>
-            <label for="apiBase">API 地址</label>
-            <input id="apiBase" value="http://localhost:18100" />
-          </div>
-          <div>
-            <label for="username">账号</label>
-            <input id="username" value="admin" />
-          </div>
-          <div>
-            <label for="password">密码</label>
-            <input id="password" type="password" value="change-me-now" />
-          </div>
-          <div class="button-cell">
-            <button id="loginBtn">后台登录</button>
-          </div>
-        </div>
+    <!-- 登录 -->
+    <div id="loginPanel" class="panel">
+      <h2>管理员登录</h2>
+      <input id="apiBaseInput" value="http://localhost:18100" placeholder="API地址" />
+      <input id="usernameInput" placeholder="用户名" />
+      <input id="passwordInput" type="password" placeholder="密码" />
+      <button class="btn-primary" onclick="adminLogin()">登录</button>
+      <div id="loginMsg" class="msg"></div>
+    </div>
 
-        <div class="panel actions">
-          <button id="overviewBtn">读取总览</button>
-          <button id="recordsBtn">读取抽奖记录</button>
-        </div>
+    <!-- 管理面板 -->
+    <div id="adminPanel" class="hidden">
+      <!-- 导航 -->
+      <nav id="adminTabs">
+        <button class="tab active" onclick="switchTab('overview')">📊 总览</button>
+        <button class="tab" onclick="switchTab('series')">📦 系列</button>
+        <button class="tab" onclick="switchTab('records')">📋 记录</button>
+        <button class="tab" onclick="switchTab('fulfill')">📮 发奖</button>
+      </nav>
 
-        <div class="panel">
-          <h2>登录状态</h2>
-          <pre id="authOutput">未登录</pre>
-        </div>
+      <!-- 总览 -->
+      <div id="tab-overview" class="tab-content active">
+        <div id="overviewContent"><div class="loading">加载中...</div></div>
+      </div>
 
-        <div class="panel">
-          <h2>总览数据</h2>
-          <pre id="overviewOutput">暂无数据</pre>
+      <!-- 系列管理 -->
+      <div id="tab-series" class="tab-content">
+        <div class="panel-head">
+          <h2>📦 系列管理</h2>
+          <button class="btn-sm" onclick="showCreateCampaign()">+ 新建系列</button>
         </div>
+        <div id="seriesContent"><div class="loading">加载中...</div></div>
+      </div>
 
-        <div class="panel">
-          <h2>抽奖记录</h2>
-          <pre id="recordOutput">暂无数据</pre>
-        </div>
-      </section>
-    </main>
-    <script src="./app.js"></script>
-  </body>
+      <!-- 抽奖记录 -->
+      <div id="tab-records" class="tab-content">
+        <div class="panel-head"><h2>📋 抽奖记录</h2></div>
+        <div id="recordsContent"><div class="loading">加载中...</div></div>
+      </div>
+
+      <!-- 发奖管理 -->
+      <div id="tab-fulfill" class="tab-content">
+        <div class="panel-head"><h2>📮 发奖任务</h2></div>
+        <div id="fulfillContent"><div class="loading">加载中...</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 创建/编辑系列弹窗 -->
+  <div id="seriesModal" class="modal hidden">
+    <div class="modal-bg" onclick="closeSeriesModal()"></div>
+    <div class="modal-content modal-lg">
+      <h3 id="seriesModalTitle">新建系列</h3>
+      <div class="form-grid">
+        <div><label>名称</label><input id="sName" /></div>
+        <div><label>Slug</label><input id="sSlug" /></div>
+        <div><label>状态</label><select id="sStatus"><option value="online">上线</option><option value="draft">草稿</option></select></div>
+        <div><label>每日次数</label><input id="sLimit" type="number" value="10" /></div>
+        <div><label>Miss权重</label><input id="sMissW" type="number" value="72" /></div>
+        <div><label>简介</label><input id="sSummary" /></div>
+      </div>
+      <h4 style="margin-top:14px;">🎯 保底配置（可选）</h4>
+      <div class="form-grid">
+        <div><label>启用保底</label><select id="pEnabled"><option value="false">关闭</option><option value="true">开启</option></select></div>
+        <div><label>软保底次数</label><input id="pSoft" type="number" value="60" /></div>
+        <div><label>硬保底次数</label><input id="pHard" type="number" value="90" /></div>
+        <div><label>递增因子</label><input id="pFactor" type="number" step="0.001" value="0.015" /></div>
+        <div><label>目标奖品ID</label><input id="pTarget" placeholder="可选" /></div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:14px;">
+        <button class="btn-primary" onclick="saveCampaign()">保存</button>
+        <button onclick="closeSeriesModal()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 奖品弹窗 -->
+  <div id="prizeModal" class="modal hidden">
+    <div class="modal-bg" onclick="closePrizeModal()"></div>
+    <div class="modal-content modal-sm">
+      <h3 id="prizeModalTitle">新建奖品</h3>
+      <label>名称</label><input id="pName" />
+      <label>级别</label><select id="pLevel">
+        <option value="common">普通</option><option value="rare">稀有</option>
+        <option value="secret">隐藏</option><option value="limited">限定</option>
+      </select>
+      <label>库存</label><input id="pStock" type="number" value="100" />
+      <label>概率权重</label><input id="pWeight" type="number" value="10" />
+      <div style="display:flex;gap:10px;margin-top:14px;">
+        <button class="btn-primary" onclick="savePrize()">保存</button>
+        <button onclick="closePrizeModal()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
 </html>

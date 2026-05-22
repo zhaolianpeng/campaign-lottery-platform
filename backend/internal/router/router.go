@@ -447,6 +447,21 @@ func New(cfg config.Config) (http.Handler, error) {
 		response.JSON(w, http.StatusOK, "ok", "draw statistics", stats)
 	})
 
+	// 管理端 - 更新活动保底配置
+	mux.HandleFunc("PUT /api/v1/admin/campaigns/{campaignID}/pity-config", func(w http.ResponseWriter, r *http.Request) {
+		var input model.PityConfig
+		if err := decodeJSON(r, &input); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		campaign, err := services.AdminUpdatePityConfig(bearerToken(r), r.PathValue("campaignID"), input)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "pity config updated", campaign)
+	})
+
 	// ============================================================
 	// 集卡系统新路由
 	// ============================================================

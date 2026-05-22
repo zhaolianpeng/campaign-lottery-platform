@@ -1110,6 +1110,7 @@ func (s *MemoryStore) CreateCampaign(token string, input model.CampaignMutation)
 		MissWeight:      input.MissWeight,
 		BannerImageURL:  input.BannerImageURL,
 		CampaignSummary: input.CampaignSummary,
+		PityConfig:      input.PityConfig,
 	}
 	s.campaigns[campaign.ID] = campaign
 	return campaign, nil
@@ -1129,6 +1130,7 @@ func (s *MemoryStore) UpdateCampaign(token string, campaignID string, input mode
 		ID: campaignID, Name: input.Name, Slug: input.Slug, Status: input.Status,
 		StartsAt: input.StartsAt, EndsAt: input.EndsAt, DailyDrawLimit: input.DailyDrawLimit,
 		MissWeight: input.MissWeight, BannerImageURL: input.BannerImageURL, CampaignSummary: input.CampaignSummary,
+		PityConfig: input.PityConfig,
 	}
 	s.campaigns[campaignID] = campaign
 	return campaign, nil

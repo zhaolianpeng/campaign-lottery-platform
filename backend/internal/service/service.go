@@ -455,6 +455,29 @@ func (s *Service) DrawStatistics(token string, campaignID string) (*model.DrawSt
 	return s.store.GetDrawStatistics(token, campaignID)
 }
 
+// AdminUpdatePityConfig 管理员更新活动的保底配置
+func (s *Service) AdminUpdatePityConfig(token string, campaignID string, cfg model.PityConfig) (*model.Campaign, error) {
+	// 先验证管理员身份
+	if _, err := s.store.AdminOverview(token); err != nil {
+		return nil, err
+	}
+	// 获取当前活动
+	campaign, err := s.store.GetCampaign(campaignID)
+	if err != nil {
+		return nil, err
+	}
+	campaign.PityConfig = cfg
+	// 转成 CampaignMutation 更新
+	mutation := model.CampaignMutation{
+		Name: campaign.Name, Slug: campaign.Slug, Status: campaign.Status,
+		StartsAt: campaign.StartsAt, EndsAt: campaign.EndsAt,
+		DailyDrawLimit: campaign.DailyDrawLimit, MissWeight: campaign.MissWeight,
+		BannerImageURL: campaign.BannerImageURL, CampaignSummary: campaign.CampaignSummary,
+		PityConfig: cfg,
+	}
+	return s.store.UpdateCampaign(token, campaignID, mutation)
+}
+
 // ============================================================
 // 原 Draw 兼容
 // ============================================================
@@ -500,12 +523,25 @@ func (s *Service) UserDrawRecords(token string) ([]model.DrawRecord, error) {
 
 // buildPityConfig 从 Campaign 构建概率引擎的保底配置
 func (s *Service) buildPityConfig(campaign model.Campaign) probability.PityConfig {
-	// 默认不启用保底
+	pc := campaign.PityConfig
+	if !pc.Enabled {
+		return probability.PityConfig{Enabled: false}
+	}
+	if pc.SoftPityN <= 0 {
+		pc.SoftPityN = 60
+	}
+	if pc.PityFactor <= 0 {
+		pc.PityFactor = 0.015
+	}
+	if pc.HardPityN <= 0 {
+		pc.HardPityN = 90
+	}
 	return probability.PityConfig{
-		Enabled:    false,
-		SoftPityN:  60,
-		PityFactor: 0.015,
-		HardPityN:  90,
+		Enabled:      true,
+		SoftPityN:    pc.SoftPityN,
+		PityFactor:   pc.PityFactor,
+		HardPityN:    pc.HardPityN,
+		TargetWeight: 0,
 	}
 }
 

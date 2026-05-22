@@ -29,6 +29,7 @@ type Campaign struct {
 	MissWeight      int       `json:"miss_weight"`
 	BannerImageURL  string    `json:"banner_image_url"`
 	CampaignSummary string    `json:"campaign_summary"`
+	PityConfig      PityConfig `json:"pity_config,omitempty"`
 }
 
 type Prize struct {
@@ -92,6 +93,7 @@ type CampaignMutation struct {
 	MissWeight      int       `json:"miss_weight"`
 	BannerImageURL  string    `json:"banner_image_url"`
 	CampaignSummary string    `json:"campaign_summary"`
+	PityConfig      PityConfig `json:"pity_config,omitempty"`
 }
 
 type PrizeMutation struct {
