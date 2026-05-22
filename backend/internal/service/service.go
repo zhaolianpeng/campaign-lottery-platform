@@ -91,7 +91,7 @@ func (s *Service) BlindBoxCampaignProbabilities(campaignID string) (map[string]a
 			"soft_pity_start":      pityCfg.SoftPityN,
 			"hard_pity_at":         pityCfg.HardPityN,
 			"pity_factor":          pityCfg.PityFactor,
-			"target_prize":         pityCfg.TargetPrize,
+			"target_prize":         campaign.TargetPrizeID,
 			"base_secret_prob":     fmt.Sprintf("%.4f%%", secretWeight/totalWeight*100),
 		}
 	}
@@ -143,7 +143,6 @@ func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.Blind
 	prizes := s.store.PrizeList(campaign.ID)
 	pw := make([]probability.PrizeWeight, 0, len(prizes))
 	secretID := ""
-	secretWeight := 0.0
 	for _, p := range prizes {
 		if p.Status != "active" || p.Stock <= 0 {
 			continue
@@ -155,7 +154,6 @@ func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.Blind
 		})
 		if p.Level == model.PrizeLevelSecret {
 			secretID = p.ID
-			secretWeight = float64(p.ProbabilityWeight)
 		}
 	}
 
@@ -205,9 +203,13 @@ func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.Blind
 	}
 
 	// 7. 更新每日次数
-	newRemaining, err := s.store.DeductDrawQuota(user.ID, campaign.ID, drawCount)
+	usedCount, err := s.store.DeductDrawQuota(user.ID, campaign.ID, drawCount)
 	if err != nil {
 		return nil, err
+	}
+	newRemaining := campaign.DailyDrawLimit - usedCount
+	if newRemaining < 0 {
+		newRemaining = 0
 	}
 
 	// 8. 获取保底状态
@@ -463,11 +465,10 @@ func (s *Service) UserDrawRecords(token string) ([]model.DrawRecord, error) {
 
 // buildPityConfig 从 Campaign 构建概率引擎的保底配置
 func (s *Service) buildPityConfig(campaign model.Campaign) probability.PityConfig {
-	// 默认不启用保底
 	return probability.PityConfig{
-		Enabled:    false,
-		SoftPityN:  60,
-		PityFactor: 0.015,
-		HardPityN:  90,
+		Enabled:    campaign.PityEnabled,
+		SoftPityN:  campaign.SoftPityN,
+		PityFactor: campaign.PityFactor,
+		HardPityN:  campaign.HardPityN,
 	}
 }

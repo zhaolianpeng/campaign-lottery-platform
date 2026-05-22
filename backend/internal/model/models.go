@@ -29,6 +29,13 @@ type Campaign struct {
 	MissWeight      int       `json:"miss_weight"`
 	BannerImageURL  string    `json:"banner_image_url"`
 	CampaignSummary string    `json:"campaign_summary"`
+
+	// 保底概率配置
+	PityEnabled    bool    `json:"pity_enabled"`
+	SoftPityN      int     `json:"soft_pity_n"`
+	PityFactor     float64 `json:"pity_factor"`
+	HardPityN      int     `json:"hard_pity_n"`
+	TargetPrizeID  string  `json:"target_prize_id,omitempty"`
 }
 
 type Prize struct {
@@ -92,6 +99,12 @@ type CampaignMutation struct {
 	MissWeight      int       `json:"miss_weight"`
 	BannerImageURL  string    `json:"banner_image_url"`
 	CampaignSummary string    `json:"campaign_summary"`
+
+	PityEnabled   bool    `json:"pity_enabled"`
+	SoftPityN     int     `json:"soft_pity_n"`
+	PityFactor    float64 `json:"pity_factor"`
+	HardPityN     int     `json:"hard_pity_n"`
+	TargetPrizeID string  `json:"target_prize_id,omitempty"`
 }
 
 type PrizeMutation struct {
