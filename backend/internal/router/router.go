@@ -306,6 +306,18 @@ func New(cfg config.Config) (http.Handler, error) {
 		response.JSON(w, http.StatusOK, "ok", "blend success", result)
 	})
 
+	// 🆕 UP池信息查询
+	mux.HandleFunc("GET /api/v1/blindbox/up-pool/{campaignID}", func(w http.ResponseWriter, r *http.Request) {
+		campaignID := r.PathValue("campaignID")
+		token := bearerToken(r)
+		info, err := services.UPPoolInfo(token, campaignID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "up pool info", info)
+	})
+
 	// ============================================================
 	// 管理端路由（保留原有）
 	// ============================================================

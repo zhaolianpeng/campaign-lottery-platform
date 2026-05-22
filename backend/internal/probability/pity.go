@@ -11,6 +11,7 @@ type PityState struct {
 	CampaignID         string
 	ConsecutiveMisses  int     // 连续未中次数
 	PityMultiplier     float64 // 当前概率倍数 (由 soft pity 计算得出)
+	HasUPPoolGuarantee bool    // 🆕 是否拥有50/50大保底（下次同等级必出UP）
 }
 
 // PityConfig defines the pity system parameters for a campaign/series.
@@ -32,6 +33,12 @@ type PityTracker interface {
 
 	// Reset resets the pity state for a user + campaign (when they win).
 	Reset(userID, campaignID string)
+
+	// 🆕 SetUPPoolGuarantee sets the 50/50 guarantee flag for the user+campaign
+	SetUPPoolGuarantee(userID, campaignID string, guaranteed bool)
+
+	// 🆕 GetUPPoolGuarantee returns whether the user has a 50/50 guarantee active
+	GetUPPoolGuarantee(userID, campaignID string) bool
 }
 
 // MemoryPityTracker is an in-memory implementation of PityTracker.
@@ -83,7 +90,48 @@ func (t *MemoryPityTracker) IncrementMiss(userID, campaignID string) *PityState 
 func (t *MemoryPityTracker) Reset(userID, campaignID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	delete(t.states, userID+":"+campaignID)
+	key := userID + ":" + campaignID
+	state, ok := t.states[key]
+	if ok {
+		// 保留UP池保底状态（不重置），只重置连续未中次数
+		hasGuarantee := state.HasUPPoolGuarantee
+		delete(t.states, key)
+		if hasGuarantee {
+			t.states[key] = &PityState{
+				UserID:             userID,
+				CampaignID:         campaignID,
+				HasUPPoolGuarantee: true,
+			}
+		}
+	}
+}
+
+// 🆕 SetUPPoolGuarantee sets the 50/50 guarantee flag for the user+campaign
+func (t *MemoryPityTracker) SetUPPoolGuarantee(userID, campaignID string, guaranteed bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	key := userID + ":" + campaignID
+	state, ok := t.states[key]
+	if !ok {
+		state = &PityState{
+			UserID:     userID,
+			CampaignID: campaignID,
+		}
+		t.states[key] = state
+	}
+	state.HasUPPoolGuarantee = guaranteed
+}
+
+// 🆕 GetUPPoolGuarantee returns whether the user has a 50/50 guarantee active
+func (t *MemoryPityTracker) GetUPPoolGuarantee(userID, campaignID string) bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	key := userID + ":" + campaignID
+	state := t.states[key]
+	if state == nil {
+		return false
+	}
+	return state.HasUPPoolGuarantee
 }
 
 // calcPityMultiplier computes the effective probability multiplier based on

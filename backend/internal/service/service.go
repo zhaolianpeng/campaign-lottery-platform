@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"time"
 
 	"campaign-lottery-platform/backend/internal/model"
@@ -221,12 +222,50 @@ func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.Blind
 		drawResults = []probability.DrawResult{r}
 	}
 
-	// 7. 持久化结果
+	// 🆕 7. UP池处理（50/50大小保底）
+	upPoolActive := isUPPoolActive(campaign)
+	upPrizeInfo := getUPPrizeInfo(upPoolActive, prizes)
+
+	// 7a. 检查大保底状态并强制执行
+	if upPoolActive {
+		hasGuarantee := s.pityTracker.GetUPPoolGuarantee(user.ID, campaign.ID)
+		if hasGuarantee {
+			// 大保底生效：第一次命中UP目标等级时强制改为UP款式
+			for i, d := range drawResults {
+				if d.PrizeID != "" && d.PrizeLevel == campaign.PityConfig.UPLevel {
+					drawResults[i].PrizeID = campaign.PityConfig.UPPrizeID
+					drawResults[i].PrizeLevel = campaign.PityConfig.UPLevel
+					drawResults[i].IsUPPoolWin = true
+					s.pityTracker.SetUPPoolGuarantee(user.ID, campaign.ID, false) // 消耗大保底
+					break // 一次抽奖只触发一次大保底
+				}
+			}
+		}
+	}
+
+	// 7b. 50/50判定：非大保底状态下命中目标等级
+	if upPoolActive {
+		for i, d := range drawResults {
+			if d.PrizeID != "" && d.PrizeLevel == campaign.PityConfig.UPLevel && !d.IsUPPoolWin {
+				// 50/50 判定
+				if rand.IntN(2) == 0 { // 50%概率不歪
+					drawResults[i].PrizeID = campaign.PityConfig.UPPrizeID
+					drawResults[i].IsUPPoolWin = true
+				} else {
+					// 歪了 → 设置大保底标记
+					s.pityTracker.SetUPPoolGuarantee(user.ID, campaign.ID, true)
+				}
+			}
+		}
+	}
+
+	// 8. 持久化结果
 	singleResults := make([]model.SingleDrawResult, 0, len(drawResults))
 	for _, d := range drawResults {
 		sr := model.SingleDrawResult{
-			IsWin:     d.PrizeID != "",
-			IsHardPity: d.IsHardPity,
+			IsWin:       d.PrizeID != "",
+			IsHardPity:  d.IsHardPity,
+			IsUPPoolWin: d.IsUPPoolWin, // 🆕 UP池中奖标记
 		}
 		if d.PrizeID != "" {
 			rec, err := s.store.CreateDrawRecord(user.ID, campaign.ID, d.PrizeID, isTenPull)
@@ -292,6 +331,10 @@ func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.Blind
 				ps.MissesToHardPity = 0
 			}
 		}
+	}
+	// 🆕 UP池保底状态
+	if upPoolActive {
+		ps.HasUPPoolGuarantee = s.pityTracker.GetUPPoolGuarantee(user.ID, campaign.ID)
 	}
 
 	return &model.BlindBoxDrawResult{
@@ -583,6 +626,76 @@ func (s *Service) buildPityConfig(campaign model.Campaign) probability.PityConfi
 		HardPityN:    pc.HardPityN,
 		TargetWeight: 0,
 	}
+}
+
+// 🆕 isUPPoolActive 检查UP池是否当前生效
+func isUPPoolActive(campaign model.Campaign) bool {
+	pc := campaign.PityConfig
+	if !pc.UPPoolEnabled || pc.UPPrizeID == "" || pc.UPLevel == "" {
+		return false
+	}
+	now := time.Now().UTC()
+	if now.Before(pc.UPStartAt) || now.After(pc.UPEndAt) {
+		return false
+	}
+	return true
+}
+
+// 🆕 getUPPrizeInfo 获取UP池目标奖品信息（用于前端展示）
+func getUPPrizeInfo(active bool, prizes []model.Prize) map[string]any {
+	if !active {
+		return nil
+	}
+	for _, p := range prizes {
+		if p.Status == "active" && p.Level == model.PrizeLevelSecret {
+			return map[string]any{
+				"name":  p.Name,
+				"level": p.Level,
+			}
+		}
+	}
+	return nil
+}
+
+// 🆕 IsUPPoolActive 外部可调用的UP池检查
+func (s *Service) IsUPPoolActive(campaignID string) (bool, error) {
+	campaign, err := s.store.GetCampaign(campaignID)
+	if err != nil {
+		return false, err
+	}
+	return isUPPoolActive(campaign), nil
+}
+
+// 🆕 UPPoolInfo 获取UP池信息
+func (s *Service) UPPoolInfo(token string, campaignID string) (map[string]any, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	campaign, err := s.store.GetCampaign(campaignID)
+	if err != nil {
+		return nil, err
+	}
+	active := isUPPoolActive(campaign)
+	prizes := s.store.PrizeList(campaignID)
+	upInfo := getUPPrizeInfo(active, prizes)
+
+	hasGuarantee := false
+	if active {
+		hasGuarantee = s.pityTracker.GetUPPoolGuarantee(user.ID, campaignID)
+	}
+
+	return map[string]any{
+		"active":         active,
+		"prize":          upInfo,
+		"has_guarantee":  hasGuarantee,
+		"up_prize_id":    campaign.PityConfig.UPPrizeID,
+		"up_multiplier":  campaign.PityConfig.UPMultiplier,
+		"up_level":       campaign.PityConfig.UPLevel,
+		"up_start_at":    campaign.PityConfig.UPStartAt,
+		"up_end_at":      campaign.PityConfig.UPEndAt,
+		"consecutive_misses": s.pityTracker.Get(user.ID, campaignID).ConsecutiveMisses,
+	}, nil
 }
 
 // ============================================================

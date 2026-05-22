@@ -25,6 +25,9 @@ type DrawResult struct {
 	ConsecutiveMisses int     // 当前连续未中次数
 	PityMultiplier    float64 // 当前 pity 概率倍数
 	IsHardPity        bool    // 是否硬保底触发
+
+	// 🆕 UP池相关
+	IsUPPoolWin bool // 是否是UP池中奖
 }
 
 // EngineConfig defines the overall configuration for a draw engine instance.

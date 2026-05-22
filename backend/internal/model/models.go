@@ -133,6 +133,14 @@ type PityConfig struct {
 	PityFactor   float64 `json:"pity_factor"`   // 概率递增因子 α
 	HardPityN    int     `json:"hard_pity_n"`   // 硬保底次数（必出）
 	TargetPrize  string  `json:"target_prize"`  // 保底目标奖品ID（通常是隐藏款）
+
+	// 🆕 UP池配置（限时概率提升 + 50/50 大小保底）
+	UPPoolEnabled bool      `json:"up_pool_enabled"`  // 是否启用UP池
+	UPPrizeID     string    `json:"up_prize_id"`      // UP目标奖品ID
+	UPMultiplier  float64   `json:"up_multiplier"`    // 概率提升倍数（如 5 = 5倍概率）
+	UPLevel       string    `json:"up_level"`         // UP目标等级（rare / secret / limited）
+	UPStartAt     time.Time `json:"up_start_at"`      // UP池开始时间
+	UPEndAt       time.Time `json:"up_end_at"`        // UP池结束时间
 }
 
 // BlindBoxCampaign 盲盒系列（扩展 Campaign）
@@ -166,6 +174,7 @@ type PityStatus struct {
 	SoftPityN         int     `json:"soft_pity_n"`         // 软保底触发次数
 	HardPityN         int     `json:"hard_pity_n"`         // 硬保底次数
 	MissesToHardPity  int     `json:"misses_to_hard_pity"` // 距离硬保底还差几次
+	HasUPPoolGuarantee bool   `json:"has_up_pool_guarantee,omitempty"` // 🆕 是否持有大保底
 }
 
 // BlindBoxDrawResult 盲盒抽奖结果
@@ -178,14 +187,15 @@ type BlindBoxDrawResult struct {
 
 // SingleDrawResult 单次抽奖结果
 type SingleDrawResult struct {
-	RecordID     string `json:"record_id"`
-	PrizeID      string `json:"prize_id,omitempty"`
-	PrizeName    string `json:"prize_name"`
-	PrizeLevel   string `json:"prize_level"`
+	RecordID      string `json:"record_id"`
+	PrizeID       string `json:"prize_id,omitempty"`
+	PrizeName     string `json:"prize_name"`
+	PrizeLevel    string `json:"prize_level"`
 	PrizeImageURL string `json:"prize_image_url,omitempty"`
-	IsWin        bool   `json:"is_win"`
-	IsHardPity   bool   `json:"is_hard_pity,omitempty"`
-	IsNew        bool   `json:"is_new,omitempty"`
+	IsWin         bool   `json:"is_win"`
+	IsHardPity    bool   `json:"is_hard_pity,omitempty"`
+	IsNew         bool   `json:"is_new,omitempty"`
+	IsUPPoolWin   bool   `json:"is_up_pool_win,omitempty"`  // 🆕 是否是UP池中奖
 }
 
 // SeriesProgress 用户系列收集进度

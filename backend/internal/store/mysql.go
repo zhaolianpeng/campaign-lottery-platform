@@ -1580,5 +1580,120 @@ func (store *MySQLStore) GetPrizeCount(userID, prizeID string) (int, error) {
 }
 
 func (store *MySQLStore) BlendPrizes(userID string, sourcePrizeID string, campaignID string) (*model.BlendResult, error) {
-	return nil, fmt.Errorf("mysql blend not implemented, use memory store")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// 1. 查找源款式信息
+	var sourcePrize model.Prize
+	var sourceCampaignID string
+	err := store.db.QueryRowContext(ctx,
+		`SELECT id, campaign_id, name, level, stock, probability_weight, status FROM prizes WHERE id = ? AND status = 'active'`,
+		sourcePrizeID,
+	).Scan(&sourcePrize.ID, &sourceCampaignID, &sourcePrize.Name, &sourcePrize.Level,
+		&sourcePrize.Stock, &sourcePrize.ProbabilityWeight, &sourcePrize.Status)
+	if err != nil {
+		return nil, fmt.Errorf("source prize not found: %w", err)
+	}
+	sourcePrize.CampaignID = sourceCampaignID
+
+	// 2. 查找合成配方
+	recipe, ok := model.BlendRecipes[sourcePrize.Level]
+	if !ok {
+		return nil, fmt.Errorf("no blend recipe for level: %s", sourcePrize.Level)
+	}
+
+	// 3. 检查用户拥有数量
+	var haveCount int
+	err = store.db.QueryRowContext(ctx,
+		`SELECT COUNT(1) FROM user_inventories WHERE user_id = ? AND prize_id = ?`,
+		userID, sourcePrizeID,
+	).Scan(&haveCount)
+	if err != nil {
+		return nil, err
+	}
+	if haveCount < recipe.NeedCount {
+		return nil, fmt.Errorf("need %d of %s, have %d", recipe.NeedCount, sourcePrize.Name, haveCount)
+	}
+
+	// 4. 查找目标级别的一个可用奖品（同系列同级随机选一个）
+	var resultPrize model.Prize
+	var resultCampaignID string
+	err = store.db.QueryRowContext(ctx,
+		`SELECT id, campaign_id, name, level, stock, probability_weight, status FROM prizes
+		 WHERE campaign_id = ? AND level = ? AND status = 'active' AND stock > 0
+		 AND id != ? ORDER BY RAND() LIMIT 1`,
+		campaignID, recipe.ResultLevel, sourcePrizeID,
+	).Scan(&resultPrize.ID, &resultCampaignID, &resultPrize.Name, &resultPrize.Level,
+		&resultPrize.Stock, &resultPrize.ProbabilityWeight, &resultPrize.Status)
+	if err != nil {
+		return nil, fmt.Errorf("no available prize of level %s to blend into: %w", recipe.ResultLevel, err)
+	}
+
+	// 5. 事务执行合成
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	// 5a. 删除 N 条源款式库存记录（按创建时间升序，消耗最早的）
+	resultDelete, err := tx.ExecContext(ctx,
+		`DELETE FROM user_inventories
+		 WHERE user_id = ? AND prize_id = ?
+		 ORDER BY created_at ASC
+		 LIMIT ?`,
+		userID, sourcePrizeID, recipe.NeedCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+	deleted, _ := resultDelete.RowsAffected()
+	if int(deleted) < recipe.NeedCount {
+		return nil, fmt.Errorf("concurrent blend detected: expected %d rows, deleted %d", recipe.NeedCount, deleted)
+	}
+
+	// 5b. 扣减库存
+	_, err = tx.ExecContext(ctx,
+		`UPDATE prizes SET stock = stock - 1 WHERE id = ? AND stock > 0`,
+		resultPrize.ID,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// 5c. 添加结果到用户库存
+	now := time.Now().UTC()
+	invID := "inv_" + randomSuffix(16)
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO user_inventories (id, user_id, prize_id, campaign_id, source, created_at)
+		 VALUES (?, ?, ?, ?, 'blend', ?)`,
+		invID, userID, resultPrize.ID, campaignID, now,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// 5d. 记录合成日志
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO lottery_logs (id, user_id, campaign_id, prize_id, result, chance_after, drawn_at)
+		 VALUES (?, ?, ?, ?, 'blend', 0, ?)`,
+		"blend_"+randomSuffix(16), userID, campaignID, resultPrize.ID, now,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return &model.BlendResult{
+		SourcePrizeID:   sourcePrizeID,
+		SourcePrizeName: sourcePrize.Name,
+		SourceLevel:     sourcePrize.Level,
+		ResultPrizeID:   resultPrize.ID,
+		ResultPrizeName: resultPrize.Name,
+		ResultLevel:     resultPrize.Level,
+		RemainingSrc:    haveCount - recipe.NeedCount,
+	}, nil
 }
