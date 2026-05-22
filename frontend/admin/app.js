@@ -1,453 +1,322 @@
-// ============================================================
-// BOX·MAGIC 管理端
-// ============================================================
+// API 基础地址 & Token
+let API = 'http://localhost:18100';
+let AdminToken = '';
 
-const state = {
-  apiBase: 'http://localhost:18100',
-  token: '',
-  campaigns: [],
-  editCampaignId: null,
-  editPrizeCampaignId: null,
-  editPrizeId: null,
-};
-
-// ============================================================
-// API 请求
-// ============================================================
-
-async function api(path, options = {}) {
-  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-  if (state.token) headers['Authorization'] = `Bearer ${state.token}`;
-  try {
-    const res = await fetch(state.apiBase + path, { ...options, headers });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
-    return data;
-  } catch (e) {
-    throw e;
-  }
+// ======================== 工具函数 ========================
+async function api(path, opts = {}) {
+  const url = API + path;
+  const headers = { 'Content-Type': 'application/json' };
+  if (AdminToken) headers['Authorization'] = 'Bearer ' + AdminToken;
+  const res = await fetch(url, { ...opts, headers });
+  const json = await res.json();
+  if (json.code !== 'ok' && json.code !== 0) throw new Error(json.message || '请求失败');
+  return json.data;
 }
 
-function showMsg(el, msg, isError = false) {
-  el.textContent = msg;
-  el.style.color = isError ? '#f87171' : '#34d399';
+function showMsg(id, text, type) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'msg ' + type;
 }
+function clearMsg(id) {
+  const el = document.getElementById(id);
+  if (el) el.className = 'msg';
+}
+function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 
-// ============================================================
-// 登录
-// ============================================================
-
+// ======================== 登录 ========================
 async function adminLogin() {
-  state.apiBase = document.getElementById('apiBaseInput').value.trim();
-  const username = document.getElementById('usernameInput').value.trim();
-  const password = document.getElementById('passwordInput').value;
-  const msg = document.getElementById('loginMsg');
+  API = document.getElementById('apiBaseInput').value.replace(/\/+$/, '');
+  const username = document.getElementById('usernameInput').value || 'admin';
+  const password = document.getElementById('passwordInput').value || 'admin123';
+  clearMsg('loginMsg');
   try {
-    const res = await api('/api/v1/admin/login', {
-      method: 'POST',
-      body: JSON.stringify({ username, password }),
+    const data = await api('/api/v1/admin/login', {
+      method: 'POST', body: JSON.stringify({ username, password })
     });
-    state.token = res.data.token;
+    AdminToken = data.token;
     document.getElementById('loginPanel').classList.add('hidden');
     document.getElementById('adminPanel').classList.remove('hidden');
     document.getElementById('loginStatus').textContent = '已登录';
-    document.getElementById('loginStatus').style.background = 'rgba(52,211,153,0.2)';
-    loadOverview();
-    loadCampaigns();
+    document.getElementById('logoutBtn').classList.remove('hidden');
+    switchTab('overview');
   } catch (e) {
-    showMsg(msg, '❌ ' + e.message, true);
+    showMsg('loginMsg', '登录失败: ' + e.message, 'error');
   }
 }
-
-// ============================================================
-// Tab 切换
-// ============================================================
-
-function switchTab(tab) {
-  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
-  document.getElementById('tab-' + tab)?.classList.add('active');
-  document.querySelector(`.tab[data-tab="${tab}"]`)?.classList.add('active');
-  switch (tab) {
-    case 'overview': loadOverview(); break;
-    case 'series': loadCampaigns(); break;
-    case 'records': loadRecords(); break;
-    case 'fulfill': loadFulfillment(); break;
-  }
+function adminLogout() {
+  AdminToken = '';
+  document.getElementById('adminPanel').classList.add('hidden');
+  document.getElementById('loginPanel').classList.remove('hidden');
+  document.getElementById('loginStatus').textContent = '未登录';
+  document.getElementById('logoutBtn').classList.add('hidden');
 }
 
-// ============================================================
-// 总览
-// ============================================================
+// ======================== 标签页切换 ========================
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+  const tabBtn = [...document.querySelectorAll('.tab')].find(b => b.textContent.includes(
+    { overview: '总览', campaigns: '活动', prizes: '礼品', pity: '概率', delivery: '发奖', records: '记录', monthcard: '月卡' }[name]
+  ));
+  if (tabBtn) tabBtn.classList.add('active');
+  const panel = document.getElementById('tab' + name.charAt(0).toUpperCase() + name.slice(1));
+  if (panel) panel.classList.remove('hidden');
+  
+  // 加载数据
+  const loaders = {
+    overview: loadOverview,
+    campaigns: loadCampaigns,
+    prizes: () => { populateCampaignSelect('prizeCampaignSelect'); loadPrizes(); },
+    pity: () => { populateCampaignSelect('pityCampaignSelect'); },
+    delivery: loadFulfillment,
+    records: loadDrawRecords,
+    monthcard: loadBattlePassStatus,
+  };
+  if (loaders[name]) loaders[name]();
+}
 
+// ======================== 总览 ========================
 async function loadOverview() {
-  const el = document.getElementById('overviewContent');
+  const el = document.getElementById('overviewStats');
   try {
-    const [overviewRes, statsRes] = await Promise.all([
-      api('/api/v1/admin/overview'),
-      api('/api/v1/admin/statistics'),
-    ]);
-    const ov = overviewRes.data;
-    const st = statsRes.data;
-
+    const data = await api('/api/v1/admin/overview');
     el.innerHTML = `
-      <div class="stats-grid">
-        <div class="stat-card"><div class="num">${ov.total_users || 0}</div><div class="label">用户数</div></div>
-        <div class="stat-card"><div class="num">${ov.total_draws || 0}</div><div class="label">总抽奖</div></div>
-        <div class="stat-card"><div class="num">${ov.total_wins || 0}</div><div class="label">中奖数</div></div>
-        <div class="stat-card"><div class="num">${st ? st.win_rate?.toFixed(1) : '0'}%</div><div class="label">中奖率</div></div>
-      </div>
-      <div class="panel">
-        <h2>🎯 奖品出货分布</h2>
-        ${st?.prize_breakdown?.length ? `
-          <table><tr><th>奖品</th><th>级别</th><th>出货</th><th>占比</th></tr>
-          ${st.prize_breakdown.map(p => `
-            <tr><td>${p.prize_name}</td><td><span class="prize-tag prize-${p.level}">${p.level}</span></td>
-            <td>${p.count}</td><td>${p.percent?.toFixed(1)}%</td></tr>
-          `).join('')}</table>
-        ` : '<div class="loading">暂无数据</div>'}
-      </div>
-      <div class="panel">
-        <h2>📈 最新抽奖记录</h2>
-        ${ov.recent_draws?.length ? `
-          <table><tr><th>用户</th><th>系列</th><th>结果</th><th>奖品</th><th>时间</th></tr>
-          ${ov.recent_draws.slice(0, 8).map(r => `
-            <tr><td>${(r.user_id || '').slice(0, 10)}...</td><td>${r.campaign_id}</td>
-            <td class="${r.result}">${r.result === 'win' ? '✅中奖' : '❌未中'}</td>
-            <td>${r.prize_name}</td>
-            <td style="font-size:11px;color:var(--muted)">${new Date(r.drawn_at).toLocaleString()}</td></tr>
-          `).join('')}</table>
-        ` : '<div class="loading">暂无记录</div>'}
-      </div>
+      <div class="stat-card"><div class="stat-value">${data.total_users}</div><div class="stat-label">用户数</div></div>
+      <div class="stat-card"><div class="stat-value">${data.total_draws}</div><div class="stat-label">抽奖次数</div></div>
+      <div class="stat-card"><div class="stat-value">${data.total_wins}</div><div class="stat-label">中奖次数</div></div>
+      <div class="stat-card"><div class="stat-value">${data.campaigns?.length || 0}</div><div class="stat-label">活动数</div></div>
     `;
-  } catch (e) {
-    el.innerHTML = `<div class="loading">❌ ${e.message}</div>`;
-  }
+    document.getElementById('overviewCampaigns').innerHTML = '<h3>活动列表</h3>' +
+      (data.campaigns || []).map(c => `<div class="data-card"><div class="data-row"><div class="data-info">
+        <span class="data-title">${c.name}</span>
+        <span class="tag ${c.status === 'online' ? 'tag-online' : 'tag-draft'}">${c.status}</span>
+        <div class="data-sub">${c.id} · 每日上限 ${c.daily_draw_limit} · 未中权重 ${c.miss_weight}</div>
+      </div></div></div>`).join('');
+    document.getElementById('overviewRecent').innerHTML = '<h3>最近抽奖</h3>' +
+      ((data.recent_draws || []).slice(0, 10).map(r => `<div class="data-card"><div class="data-row">
+        <div class="data-info"><span class="data-title">${r.prize_name}</span><span class="data-sub">${r.user_id?.slice(0,12)} · ${r.drawn_at?.slice(0,16) || ''}</span></div>
+        <span class="tag ${r.result === 'win' ? 'tag-online' : ''}">${r.result}</span>
+      </div></div>`).join('')) || '<p>暂无记录</p>';
+  } catch (e) { el.textContent = '加载失败: ' + e.message; }
 }
 
-// ============================================================
-// 系列管理
-// ============================================================
-
+// ======================== 活动管理 ========================
 async function loadCampaigns() {
-  const el = document.getElementById('seriesContent');
+  const el = document.getElementById('campaignList');
   try {
-    const res = await api('/api/v1/admin/campaigns');
-    state.campaigns = res.data || [];
-    renderCampaigns();
-  } catch (e) {
-    el.innerHTML = `<div class="loading">❌ ${e.message}</div>`;
-  }
-}
-
-function renderCampaigns() {
-  const el = document.getElementById('seriesContent');
-  if (!state.campaigns.length) {
-    el.innerHTML = '<div class="loading">暂无系列</div>';
-    return;
-  }
-  el.innerHTML = state.campaigns.map(c => {
-    const pity = c.pity_config;
-    const pityInfo = pity?.enabled ? `<span class="pity-badge">保底: ${pity.soft_pity_n || '-'}/${pity.hard_pity_n || '-'}</span>` : '';
-    return `
-      <div class="series-card">
-        <div class="head">
-          <h3>${c.name} ${pityInfo}</h3>
-          <span style="font-size:12px;color:var(--muted)">${c.status}</span>
+    const data = await api('/api/v1/admin/campaigns');
+    el.innerHTML = data.map(c => `<div class="data-card">
+      <div class="data-row">
+        <div class="data-info">
+          <div class="data-title">${c.name} <span class="tag ${c.status === 'online' ? 'tag-online' : c.status === 'draft' ? 'tag-draft' : 'tag-soldout'}">${c.status}</span></div>
+          <div class="data-sub">ID: ${c.id} · 每日上限 ${c.daily_draw_limit} · 未中权重 ${c.miss_weight}</div>
+          <div class="data-sub">${c.campaign_summary?.slice(0,60) || ''}</div>
         </div>
-        <div class="meta">
-          <span>Miss权重: ${c.miss_weight}</span>
-          <span>每日次数: ${c.daily_draw_limit}</span>
-          <span>${c.campaign_summary || ''}</span>
-        </div>
-        <div class="actions">
-          <button class="btn-sm" onclick="editCampaign('${c.id}')">✏️ 编辑</button>
-          <button class="btn-sm" onclick="togglePrizes('${c.id}')">🎁 奖品</button>
-          <button class="btn-sm" onclick="editPity('${c.id}')">🎯 保底</button>
+        <div class="data-actions">
+          <button class="btn-outline" onclick="switchTab('pity'); document.getElementById('pityCampaignSelect').value='${c.id}'; loadPityConfig();">⚙️概率</button>
+          <button class="btn-outline" onclick="switchTab('prizes'); document.getElementById('prizeCampaignSelect').value='${c.id}'; loadPrizes();">🏆礼品</button>
           <button class="btn-danger" onclick="deleteCampaign('${c.id}')">删除</button>
         </div>
-        <div id="prizes-${c.id}" class="hidden" style="margin-top:8px;border-top:1px solid rgba(255,255,255,0.06);padding-top:8px;">
-          <div id="prizeList-${c.id}"></div>
-          <button class="btn-sm" onclick="showCreatePrize('${c.id}')" style="margin-top:6px;">+ 添加奖品</button>
-        </div>
-      </div>`;
-  }).join('');
+      </div>
+    </div>`).join('');
+  } catch (e) { el.textContent = '加载失败: ' + e.message; }
 }
 
-async function showCreateCampaign() {
-  state.editCampaignId = null;
-  document.getElementById('seriesModalTitle').textContent = '新建系列';
-  document.getElementById('sName').value = '';
-  document.getElementById('sSlug').value = '';
-  document.getElementById('sStatus').value = 'online';
-  document.getElementById('sLimit').value = '10';
-  document.getElementById('sMissW').value = '72';
-  document.getElementById('sSummary').value = '';
-  document.getElementById('pEnabled').value = 'false';
-  document.getElementById('pSoft').value = '60';
-  document.getElementById('pHard').value = '90';
-  document.getElementById('pFactor').value = '0.015';
-  document.getElementById('pTarget').value = '';
-  document.getElementById('seriesModal').classList.remove('hidden');
+function showCreateCampaign() {
+  document.getElementById('createCampaignModal').classList.remove('hidden');
+  clearMsg('createCampaignMsg');
 }
-
-async function editCampaign(id) {
-  const c = state.campaigns.find(x => x.id === id);
-  if (!c) return;
-  state.editCampaignId = id;
-  document.getElementById('seriesModalTitle').textContent = '编辑系列';
-  document.getElementById('sName').value = c.name;
-  document.getElementById('sSlug').value = c.slug;
-  document.getElementById('sStatus').value = c.status;
-  document.getElementById('sLimit').value = c.daily_draw_limit;
-  document.getElementById('sMissW').value = c.miss_weight;
-  document.getElementById('sSummary').value = c.campaign_summary || '';
-  const pity = c.pity_config || {};
-  document.getElementById('pEnabled').value = pity.enabled ? 'true' : 'false';
-  document.getElementById('pSoft').value = pity.soft_pity_n || 60;
-  document.getElementById('pHard').value = pity.hard_pity_n || 90;
-  document.getElementById('pFactor').value = pity.pity_factor || 0.015;
-  document.getElementById('pTarget').value = pity.target_prize || '';
-  document.getElementById('seriesModal').classList.remove('hidden');
-}
-
-async function saveCampaign() {
-  const data = {
-    name: document.getElementById('sName').value,
-    slug: document.getElementById('sSlug').value,
-    status: document.getElementById('sStatus').value,
-    daily_draw_limit: parseInt(document.getElementById('sLimit').value) || 0,
-    miss_weight: parseInt(document.getElementById('sMissW').value) || 0,
-    campaign_summary: document.getElementById('sSummary').value,
-    pity_config: {
-      enabled: document.getElementById('pEnabled').value === 'true',
-      soft_pity_n: parseInt(document.getElementById('pSoft').value) || 0,
-      hard_pity_n: parseInt(document.getElementById('pHard').value) || 0,
-      pity_factor: parseFloat(document.getElementById('pFactor').value) || 0,
-      target_prize: document.getElementById('pTarget').value,
-    },
+async function createCampaign() {
+  const body = {
+    name: document.getElementById('newCampaignName').value,
+    slug: document.getElementById('newCampaignSlug').value || document.getElementById('newCampaignName').value.toLowerCase().replace(/\s+/g, '-'),
+    status: 'online',
+    starts_at: new Date(Date.now() - 86400000).toISOString(),
+    ends_at: new Date(Date.now() + 30*86400000).toISOString(),
+    daily_draw_limit: parseInt(document.getElementById('newCampaignDailyLimit').value) || 10,
+    miss_weight: parseInt(document.getElementById('newCampaignMissWeight').value) || 30,
+    campaign_summary: document.getElementById('newCampaignSummary').value || '',
   };
-  // 加上时间
-  data.starts_at = new Date(Date.now() - 86400000).toISOString();
-  data.ends_at = new Date(Date.now() + 30 * 86400000).toISOString();
-
   try {
-    if (state.editCampaignId) {
-      await api(`/api/v1/admin/campaigns/${state.editCampaignId}`, {
-        method: 'PUT', body: JSON.stringify(data),
-      });
-    } else {
-      await api('/api/v1/admin/campaigns', {
-        method: 'POST', body: JSON.stringify(data),
-      });
-    }
-    closeSeriesModal();
-    loadCampaigns();
-  } catch (e) {
-    alert('❌ ' + e.message);
-  }
+    await api('/api/v1/admin/campaigns', { method: 'POST', body: JSON.stringify(body) });
+    showMsg('createCampaignMsg', '创建成功', 'success');
+    setTimeout(() => { closeModal('createCampaignModal'); loadCampaigns(); }, 800);
+  } catch (e) { showMsg('createCampaignMsg', '创建失败: ' + e.message, 'error'); }
 }
-
-function closeSeriesModal() {
-  document.getElementById('seriesModal').classList.add('hidden');
-}
-
 async function deleteCampaign(id) {
-  if (!confirm('确定删除此系列？')) return;
+  if (!confirm('确定删除活动 ' + id + ' 吗？')) return;
   try {
-    await api(`/api/v1/admin/campaigns/${id}`, { method: 'DELETE' });
+    await api('/api/v1/admin/campaigns/' + id, { method: 'DELETE' });
     loadCampaigns();
-  } catch (e) {
-    alert('❌ ' + e.message);
-  }
+  } catch (e) { alert('删除失败: ' + e.message); }
 }
 
-// ============================================================
-// 奖品管理
-// ============================================================
-
-async function togglePrizes(campaignId) {
-  const el = document.getElementById('prizes-' + campaignId);
-  if (el.classList.contains('hidden')) {
-    el.classList.remove('hidden');
-    try {
-      const res = await api(`/api/v1/admin/campaigns/${campaignId}/prizes`);
-      const prizes = res.data || [];
-      document.getElementById('prizeList-' + campaignId).innerHTML = prizes.map(p => `
-        <span class="prize-tag prize-${p.level}">
-          ${p.name} (${p.level}) 库存${p.stock} 权重${p.probability_weight}
-          <button class="btn-sm" style="margin-left:4px;padding:2px 6px;font-size:10px;" onclick="editPrize('${campaignId}','${p.id}')">✏️</button>
-          <button style="background:var(--red);border:0;border-radius:4px;padding:2px 6px;color:white;font-size:10px;cursor:pointer;" onclick="deletePrize('${p.id}')">×</button>
-        </span>
-      `).join('');
-    } catch (e) {
-      document.getElementById('prizeList-' + campaignId).innerHTML = '❌ ' + e.message;
-    }
-  } else {
-    el.classList.add('hidden');
-  }
-}
-
-function showCreatePrize(campaignId) {
-  state.editPrizeCampaignId = campaignId;
-  state.editPrizeId = null;
-  document.getElementById('prizeModalTitle').textContent = '新建奖品';
-  document.getElementById('pName').value = '';
-  document.getElementById('pLevel').value = 'common';
-  document.getElementById('pStock').value = '100';
-  document.getElementById('pWeight').value = '10';
-  document.getElementById('prizeModal').classList.remove('hidden');
-}
-
-async function editPrize(campaignId, prizeId) {
-  state.editPrizeCampaignId = campaignId;
-  state.editPrizeId = prizeId;
-  document.getElementById('prizeModalTitle').textContent = '编辑奖品';
-  // 通过 API 获取当前奖品信息
+// ======================== 礼品管理 ========================
+async function populateCampaignSelect(elId) {
   try {
-    const res = await api(`/api/v1/admin/campaigns/${campaignId}/prizes`);
-    const prize = (res.data || []).find(p => p.id === prizeId);
-    if (prize) {
-      document.getElementById('pName').value = prize.name;
-      document.getElementById('pLevel').value = prize.level;
-      document.getElementById('pStock').value = prize.stock;
-      document.getElementById('pWeight').value = prize.probability_weight;
-      document.getElementById('prizeModal').classList.remove('hidden');
-    }
-  } catch (e) {
-    alert('❌ ' + e.message);
-  }
+    const data = await api('/api/v1/admin/campaigns');
+    const el = document.getElementById(elId);
+    el.innerHTML = '<option value="">-- 选择活动 --</option>' +
+      data.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+  } catch (e) {}
 }
 
-async function savePrize() {
-  const data = {
-    name: document.getElementById('pName').value,
-    level: document.getElementById('pLevel').value,
-    stock: parseInt(document.getElementById('pStock').value) || 0,
-    probability_weight: parseInt(document.getElementById('pWeight').value) || 0,
+async function loadPrizes() {
+  const campaignId = document.getElementById('prizeCampaignSelect').value;
+  const el = document.getElementById('prizeList');
+  if (!campaignId) { el.textContent = '请先选择一个活动'; return; }
+  try {
+    const data = await api(`/api/v1/admin/campaigns/${campaignId}/prizes`);
+    el.innerHTML = data.map(p => `<div class="data-card">
+      <div class="data-row">
+        <div class="data-info">
+          <div class="data-title">${p.name} <span class="tag tag-${p.level}">${p.level}</span></div>
+          <div class="data-sub">ID: ${p.id} · 库存 ${p.stock} · 权重 ${p.probability_weight} · ${p.status}</div>
+        </div>
+        <div class="data-actions">
+          <button class="btn-danger" onclick="deletePrize('${p.id}', '${campaignId}')">删除</button>
+        </div>
+      </div>
+    </div>`).join('');
+  } catch (e) { el.textContent = '加载失败: ' + e.message; }
+}
+
+function showCreatePrize() {
+  const campaignId = document.getElementById('prizeCampaignSelect').value;
+  if (!campaignId) { alert('请先选择活动'); return; }
+  document.getElementById('createPrizeModal').classList.remove('hidden');
+  clearMsg('createPrizeMsg');
+}
+async function createPrize() {
+  const campaignId = document.getElementById('prizeCampaignSelect').value;
+  const body = {
+    name: document.getElementById('newPrizeName').value,
+    level: document.getElementById('newPrizeLevel').value,
+    stock: parseInt(document.getElementById('newPrizeStock').value) || 100,
+    probability_weight: parseInt(document.getElementById('newPrizeWeight').value) || 10,
     status: 'active',
   };
-  const cid = state.editPrizeCampaignId;
   try {
-    if (state.editPrizeId) {
-      await api(`/api/v1/admin/prizes/${state.editPrizeId}`, {
-        method: 'PUT', body: JSON.stringify(data),
-      });
-    } else {
-      await api(`/api/v1/admin/campaigns/${cid}/prizes`, {
-        method: 'POST', body: JSON.stringify(data),
-      });
-    }
-    closePrizeModal();
-    loadCampaigns();
+    await api(`/api/v1/admin/campaigns/${campaignId}/prizes`, { method: 'POST', body: JSON.stringify(body) });
+    showMsg('createPrizeMsg', '创建成功', 'success');
+    setTimeout(() => { closeModal('createPrizeModal'); loadPrizes(); }, 800);
+  } catch (e) { showMsg('createPrizeMsg', '创建失败: ' + e.message, 'error'); }
+}
+async function deletePrize(id, campaignId) {
+  if (!confirm('确定删除礼品 ' + id + '？')) return;
+  try { await api(`/api/v1/admin/campaigns/${campaignId}/prizes/` + id, { method: 'DELETE' }); loadPrizes(); }
+  catch (e) { alert('删除失败: ' + e.message); }
+}
+
+// ======================== 概率/UP池配置 ========================
+async function loadPityConfig() {
+  const campaignId = document.getElementById('pityCampaignSelect').value;
+  const form = document.getElementById('pityConfigForm');
+  clearMsg('pityMsg');
+  if (!campaignId) { form.classList.add('hidden'); return; }
+  form.classList.remove('hidden');
+  try {
+    const cfg = await api(`/api/v1/admin/campaigns/${campaignId}/pity-config`);
+    document.getElementById('pityEnabled').checked = cfg.enabled || false;
+    document.getElementById('softPityN').value = cfg.soft_pity_n || 30;
+    document.getElementById('pityFactor').value = cfg.pity_factor || 0.015;
+    document.getElementById('hardPityN').value = cfg.hard_pity_n || 60;
+    document.getElementById('targetPrize').value = cfg.target_prize || '';
+    document.getElementById('upPoolEnabled').checked = cfg.up_pool_enabled || false;
+    document.getElementById('upPrizeId').value = cfg.up_prize_id || '';
+    document.getElementById('upMultiplier').value = cfg.up_multiplier || 5;
+    if (cfg.up_level) document.getElementById('upLevel').value = cfg.up_level;
+    // 时间字段格式化
+    if (cfg.up_start_at) document.getElementById('upStartAt').value = cfg.up_start_at.slice(0,16);
+    if (cfg.up_end_at) document.getElementById('upEndAt').value = cfg.up_end_at.slice(0,16);
   } catch (e) {
-    alert('❌ ' + e.message);
+    // 可能没有配置（新活动），使用默认值
   }
 }
 
-async function deletePrize(prizeId) {
-  if (!confirm('确定删除？')) return;
+async function savePityConfig() {
+  const campaignId = document.getElementById('pityCampaignSelect').value;
+  const toTime = (val) => val ? new Date(val).toISOString() : '';
+  const body = {
+    enabled: document.getElementById('pityEnabled').checked,
+    soft_pity_n: parseInt(document.getElementById('softPityN').value) || 30,
+    pity_factor: parseFloat(document.getElementById('pityFactor').value) || 0.015,
+    hard_pity_n: parseInt(document.getElementById('hardPityN').value) || 60,
+    target_prize: document.getElementById('targetPrize').value || '',
+    up_pool_enabled: document.getElementById('upPoolEnabled').checked,
+    up_prize_id: document.getElementById('upPrizeId').value || '',
+    up_multiplier: parseFloat(document.getElementById('upMultiplier').value) || 5,
+    up_level: document.getElementById('upLevel').value || 'secret',
+    up_start_at: toTime(document.getElementById('upStartAt').value),
+    up_end_at: toTime(document.getElementById('upEndAt').value),
+  };
   try {
-    await api(`/api/v1/admin/prizes/${prizeId}`, { method: 'DELETE' });
-    loadCampaigns();
-  } catch (e) {
-    alert('❌ ' + e.message);
-  }
+    await api(`/api/v1/admin/campaigns/${campaignId}/pity-config`, { method: 'PUT', body: JSON.stringify(body) });
+    showMsg('pityMsg', '配置保存成功', 'success');
+    setTimeout(() => clearMsg('pityMsg'), 2000);
+  } catch (e) { showMsg('pityMsg', '保存失败: ' + e.message, 'error'); }
 }
 
-function closePrizeModal() {
-  document.getElementById('prizeModal').classList.add('hidden');
-}
-
-// ============================================================
-// 保底配置快捷编辑
-// ============================================================
-
-async function editPity(campaignId) {
-  const enabled = prompt('启用保底? (true/false)', 'true');
-  if (enabled === null) return;
-  const soft = parseInt(prompt('软保底次数 (默认60)', '60')) || 60;
-  const hard = parseInt(prompt('硬保底次数 (默认90)', '90')) || 90;
-  const factor = parseFloat(prompt('递增因子 (默认0.015)', '0.015')) || 0.015;
-
-  try {
-    await api(`/api/v1/admin/campaigns/${campaignId}/pity-config`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        enabled: enabled === 'true',
-        soft_pity_n: soft,
-        hard_pity_n: hard,
-        pity_factor: factor,
-      }),
-    });
-    loadCampaigns();
-  } catch (e) {
-    alert('❌ ' + e.message);
-  }
-}
-
-// ============================================================
-// 抽奖记录
-// ============================================================
-
-async function loadRecords() {
-  const el = document.getElementById('recordsContent');
-  try {
-    const res = await api('/api/v1/admin/draw-records');
-    const records = res.data || [];
-    el.innerHTML = records.length ? `
-      <table><tr><th>用户</th><th>系列</th><th>结果</th><th>奖品</th><th>剩余次数</th><th>时间</th></tr>
-      ${records.slice(0, 50).map(r => `
-        <tr><td style="font-size:11px;">${(r.user_id || '').slice(0, 12)}..</td>
-        <td style="font-size:11px;">${(r.campaign_id || '').slice(0, 16)}</td>
-        <td class="${r.result}">${r.result === 'win' ? '✅' : '❌'}</td>
-        <td>${r.prize_name}</td>
-        <td>${r.chance_after !== undefined ? r.chance_after : '-'}</td>
-        <td style="font-size:11px;color:var(--muted)">${new Date(r.drawn_at).toLocaleString()}</td></tr>
-      `).join('')}</table>
-    ` : '<div class="loading">暂无记录</div>';
-  } catch (e) {
-    el.innerHTML = `<div class="loading">❌ ${e.message}</div>`;
-  }
-}
-
-// ============================================================
-// 发奖管理
-// ============================================================
-
+// ======================== 发奖管理 ========================
 async function loadFulfillment() {
-  const el = document.getElementById('fulfillContent');
+  const el = document.getElementById('fulfillmentList');
   try {
-    const res = await api('/api/v1/admin/fulfillment-tasks');
-    const tasks = res.data || [];
-    el.innerHTML = tasks.length ? `
-      <table><tr><th>ID</th><th>用户</th><th>奖品</th><th>状态</th><th>备注</th><th>操作</th></tr>
-      ${tasks.map(t => `
-        <tr><td style="font-size:11px;">${t.draw_record_id?.slice(0, 12) || t.id}</td>
-        <td style="font-size:11px;">${(t.user_id || '').slice(0, 12)}..</td>
-        <td>${t.prize_id?.slice(0, 10) || '-'}</td>
-        <td><span class="${t.status === 'fulfilled' ? 'win' : ''}">${t.status}</span></td>
-        <td style="font-size:11px;color:var(--muted);max-width:100px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${t.operator_note || '-'}</td>
-        <td>
-          <button class="btn-sm" onclick="fulfillTask(${t.id}, 'fulfilled')">✅ 完成</button>
-          <button class="btn-danger" onclick="fulfillTask(${t.id}, 'rejected')">驳回</button>
-        </td></tr>
-      `).join('')}</table>
-    ` : '<div class="loading">暂无发奖任务</div>';
-  } catch (e) {
-    el.innerHTML = `<div class="loading">❌ ${e.message}</div>`;
-  }
+    const data = await api('/api/v1/admin/delivery/pending');
+    el.innerHTML = data.length === 0 ? '<p>暂无待发奖记录</p>' :
+      data.map(t => `<div class="data-card"><div class="data-row">
+        <div class="data-info">
+          <div class="data-title">任务 #${t.id}</div>
+          <div class="data-sub">用户 ${t.user_id?.slice(0,12)} · 奖品 ${t.prize_id} · ${t.status}</div>
+        </div>
+        <div class="data-actions">
+          <button class="btn-primary" onclick="approveFulfillment(${t.id})">审核通过</button>
+        </div>
+      </div></div>`).join('');
+  } catch (e) { el.textContent = '加载失败: ' + e.message; }
 }
 
-async function fulfillTask(taskId, status) {
-  const note = prompt(status === 'rejected' ? '驳回原因：' : '备注（可选）：', '');
+async function approveFulfillment(id) {
   try {
-    await api(`/api/v1/admin/fulfillment-tasks/${taskId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status, operator_note: note || '' }),
-    });
+    await api('/api/v1/admin/delivery/approve', { method: 'POST', body: JSON.stringify({ task_ids: [id] }) });
     loadFulfillment();
-  } catch (e) {
-    alert('❌ ' + e.message);
-  }
+  } catch (e) { alert('操作失败: ' + e.message); }
 }
+
+// ======================== 抽奖记录 ========================
+async function loadDrawRecords() {
+  const el = document.getElementById('drawRecordsList');
+  try {
+    const data = await api('/api/v1/admin/lottery-logs');
+    el.innerHTML = data.length === 0 ? '<p>暂无记录</p>' :
+      '<div style="overflow-x:auto"><table><thead><tr><th>ID</th><th>用户</th><th>奖品</th><th>结果</th><th>时间</th></tr></thead><tbody>' +
+      data.slice(0, 50).map(r => `<tr><td>${r.id?.slice(0,12)}</td><td>${r.user_id?.slice(0,12)}</td><td>${r.prize_name}</td><td><span class="tag ${r.result === 'win' ? 'tag-online' : ''}">${r.result}</span></td>
+        <td>${r.drawn_at?.slice(0,16) || ''}</td></tr>`).join('') +
+      '</tbody></table></div>';
+  } catch (e) { el.textContent = '加载失败: ' + e.message; }
+}
+
+// ======================== 月卡/战令 ========================
+async function loadBattlePassStatus() {
+  const el = document.getElementById('bpSeasonStatus');
+  el.textContent = '加载中...';
+  try {
+    const data = await api('/api/v1/battle-pass/info');
+    const season = data.season;
+    el.innerHTML = `
+      <p><strong>${season.name}</strong> (赛季 #${season.id})</p>
+      <p>等级上限: ${season.max_level} · 每级经验: ${season.xp_per_level}</p>
+      <p>状态: ${season.status} · ${season.start_at?.slice(0,10) || ''} ~ ${season.end_at?.slice(0,10) || ''}</p>
+      <p>任务数: ${(data.tasks || []).length} · 奖励数: ${(data.rewards || []).length}</p>
+      ${data.user_pass ? `<p>你的进度: Lv.${data.user_pass.level} (${data.user_pass.xp}/${season.xp_per_level} XP) · ${data.user_pass.pass_type}</p>` : ''}
+    `;
+  } catch (e) { el.textContent = '获取失败: ' + e.message; }
+}
+
+// ======================== 初始化 ========================
+// 回车登录
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !document.getElementById('adminPanel').classList.contains('hidden')) return;
+  if (e.key === 'Enter') adminLogin();
+});
