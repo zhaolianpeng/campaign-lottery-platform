@@ -314,6 +314,51 @@ async function loadBattlePassStatus() {
   } catch (e) { el.textContent = '获取失败: ' + e.message; }
 }
 
+
+// ======================== 🆕 商店管理 ========================
+
+async function loadAdminShop() {
+  try {
+    const [shopRes, frRes] = await Promise.all([
+      api('/api/v1/shop/items'),
+      api('/api/v1/first-recharge/packs'),
+    ]);
+    renderAdminShopItems(shopRes.data || []);
+    renderAdminFirstRecharge(frRes.data || []);
+  } catch(e) {
+    document.getElementById('shopItemList').innerHTML = '<div class="msg error">❌ ' + e.message + '</div>';
+  }
+}
+
+function renderAdminShopItems(items) {
+  var el = document.getElementById('shopItemList');
+  if (!items.length) {
+    el.innerHTML = '<div class="msg">暂无商品，使用种子数据初始化</div>';
+    return;
+  }
+  var html = '<table class="data-table"><tr><th>ID</th><th>名称</th><th>积分价</th><th>分类</th><th>库存</th></tr>';
+  items.forEach(function(item) {
+    html += '<tr><td>' + item.id + '</td><td>' + item.name + '</td><td>💎' + item.price_points + '</td><td>' + item.category + '</td><td>' + (item.stock === -1 ? '∞' : item.stock) + '</td></tr>';
+  });
+  html += '</table>';
+  el.innerHTML = html;
+}
+
+function renderAdminFirstRecharge(packs) {
+  var el = document.getElementById('adminFirstRechargeList');
+  if (!packs || !packs.length) {
+    el.innerHTML = '<div class="msg">暂无首充礼包配置</div>';
+    return;
+  }
+  var html = '<table class="data-table"><tr><th>档位</th><th>价格</th><th>内容</th></tr>';
+  packs.forEach(function(pack) {
+    var items = (pack.items || []).map(function(i) { return i.name + '×' + i.qty; }).join(' + ');
+    html += '<tr><td>' + pack.name + '</td><td>💰¥' + (pack.cash_price/100).toFixed(0) + '</td><td>' + items + '</td></tr>';
+  });
+  html += '</table>';
+  el.innerHTML = html;
+}
+
 // ======================== 初始化 ========================
 // 回车登录
 document.addEventListener('keydown', e => {

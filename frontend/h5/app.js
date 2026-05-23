@@ -34,6 +34,44 @@ async function api(path, options = {}) {
   }
 }
 
+
+// ============================================================
+// 🆕 骨架屏 + 确认弹窗 + 动画 辅助
+// ============================================================
+
+// 确认弹窗（替换浏览器confirm）
+function showConfirm(title, desc, callback) {
+  document.getElementById('confirmTitle').textContent = title;
+  document.getElementById('confirmDesc').textContent = desc;
+  document.getElementById('confirmBtn').onclick = function() {
+    closeConfirmModal();
+    callback();
+  };
+  document.getElementById('confirmModal').classList.remove('hidden');
+}
+function closeConfirmModal() {
+  document.getElementById('confirmModal').classList.add('hidden');
+}
+
+// 积分飞入动画
+function showPointsAnim(text) {
+  var el = document.createElement('div');
+  el.className = 'points-anim';
+  el.textContent = text;
+  document.body.appendChild(el);
+  setTimeout(function() { el.remove(); }, 1000);
+}
+
+// 错误状态HTML
+function errorHTML(msg, retryFn) {
+  return '<div class="error-state"><div class="error-icon">❌</div><div class="error-msg">' + msg + '</div><button class="btn-sm" onclick="' + retryFn + '">🔄 重试</button></div>';
+}
+
+// 空状态HTML
+function emptyHTML(icon, title, desc, btn) {
+  return '<div class="empty-state"><div class="empty-icon">' + icon + '</div><div class="empty-title">' + title + '</div><div class="empty-desc">' + desc + '</div>' + (btn || '') + '</div>';
+}
+
 // ============================================================
 // Toast 提示
 // ============================================================
@@ -169,7 +207,7 @@ async function loadSeries() {
     renderSeries();
     loadActivityBanners();
   } catch (e) {
-    document.getElementById('seriesList').innerHTML = `<div class="loading">❌ ${e.message}</div>`;
+    document.getElementById('seriesList').innerHTML = errorHTML(e.message, 'loadSeries()');
   }
 }
 
@@ -292,6 +330,7 @@ async function doDraw(campaignId, count) {
 
 function showOpenBoxAnim() {
   document.getElementById('boxAnim').classList.remove('hidden');
+  document.getElementById('openBoxModal').querySelector('.modal-content').className = 'modal-content';
   document.getElementById('boxResult').classList.add('hidden');
   document.getElementById('openBoxModal').classList.remove('hidden');
 }
@@ -317,6 +356,8 @@ function showDrawResults(data, count) {
   const rarityLabels = { common: '普通款', rare: '稀有款 🔵', secret: '隐藏款 🟣', limited: '限定款 🌟' };
 
   document.getElementById('resultRarity').style.background = rarityColors[show.prize_level] || '#666';
+  var mc = document.getElementById('openBoxModal').querySelector('.modal-content');
+  mc.className = 'modal-content box-result ' + ('rarity-' + show.prize_level + '-bg');
   document.getElementById('resultRarity').textContent = rarityLabels[show.prize_level] || '普通款';
 
   const icons = { common: '🎁', rare: '✨', secret: '🌟', limited: '👑' };
@@ -380,14 +421,14 @@ async function loadInventory() {
     updatePoints();
     renderInventory();
   } catch (e) {
-    el.innerHTML = `<div class="loading">❌ ${e.message}</div>`;
+    el.innerHTML = errorHTML(e.message, 'loadInventory()');
   }
 }
 
 function renderInventory() {
   const el = document.getElementById('inventoryContent');
   if (!state.inventory.length) {
-    el.innerHTML = '<div class="loading">📭 还没有收集到任何盲盒款式，去抽盒吧！</div>';
+    el.innerHTML = emptyHTML('📦', '暂无收藏', '还没有收集到任何盲盒款式，去抽盒吧！', '<button class="btn-sm" onclick="switchTab(\'series\')">🎲 去抽盒</button>');
     return;
   }
 
@@ -655,7 +696,7 @@ function formatTime(t) {
 async function buyCard(cardType) {
   if (!state.token) { showToast('请先登录', true); return; }
   var names = { weekly: '周卡(990分)', monthly: '月卡(2800分)', season: '季卡(6800分)' };
-  if (!confirm('确定购买' + (names[cardType] || cardType) + '吗？')) return;
+  showConfirm('确认购买', '确定购买' + (names[cardType] || cardType) + '吗？', function() {
   try {
     var res = await api('/api/v1/blindbox/buy-card', {
       method: 'POST',
@@ -663,11 +704,12 @@ async function buyCard(cardType) {
     });
     var data = res.data;
     showToast('🎫 购买成功！有效期至 ' + data.expires_at);
+    showPointsAnim('🎫 +1');
     loadMember();
   } catch (e) {
     showToast('❌ ' + e.message, true);
   }
-}
+});
 
 // ============================================================
 // 初始化 - 检查是否已登录
@@ -706,7 +748,7 @@ async function loadShop() {
     renderUserItems(itemsRes.data || []);
     renderFirstRechargeBanner(frRes.data);
   } catch (e) {
-    document.getElementById('shopItems').innerHTML = `<div class="loading">❌ ${e.message}</div>`;
+    document.getElementById('shopItems').innerHTML = errorHTML(e.message, 'loadShop()');
   }
 }
 
@@ -750,6 +792,7 @@ async function buyShopItem(itemId) {
       body: JSON.stringify({ shop_item_id: itemId, quantity: 1 }),
     });
     showToast('✅ 购买成功！获得 ' + res.data.item_name);
+    showPointsAnim('💎 -' + res.data.points_cost);
     state.member.points = res.data.new_points;
     updatePoints();
     loadShop();
@@ -807,7 +850,7 @@ async function loadFirstRechargePacks() {
       `;
     }).join('');
   } catch (e) {
-    el.innerHTML = `<div class="loading">❌ ${e.message}</div>`;
+    el.innerHTML = errorHTML(e.message, 'loadInventory()');
   }
 }
 
@@ -819,6 +862,7 @@ async function claimFirstRecharge(packId) {
       body: JSON.stringify({ pack_id: packId }),
     });
     showToast('🎉 领取成功！获得 ' + (res.data.pack_name || '礼包'));
+    showPointsAnim('🎉 首充礼包');
     state.member.points = res.data.new_points;
     updatePoints();
     loadFirstRechargePacks();
@@ -922,7 +966,7 @@ async function loadAssistProgress() {
         </div>
       `;
     }).join('');
-  } catch(e) { document.getElementById('assistProgress').innerHTML = `<div class="loading">❌ ${e.message}</div>`; }
+  } catch(e) { document.getElementById('assistProgress').innerHTML = errorHTML(e.message, 'loadAssistProgress()'); }
 }
 
 async function claimAssistReward(type) {
@@ -1094,20 +1138,6 @@ async function receiveGift(giftId) {
   } catch(e) { showToast('❌ ' + e.message, true); }
 }
 
-// ---- 分享抽卡结果 ----
-
-async function shareDraw() {
-  if (!state.token) { showToast('请先登录', true); return; }
-  try {
-    const res = await api('/api/v1/share/card', {
-      method: 'POST', body: JSON.stringify({ card_type: 'draw_win', prize_name: '', prize_level: '' })
-    });
-    const card = res.data;
-    const shareText = card?.title + ' ' + card?.description + ' ' + (card?.invite_link || '');
-    await navigator.clipboard.writeText(shareText).catch(() => {});
-    showToast('📤 分享文案已复制！');
-  } catch(e) { showToast('❌ ' + e.message, true); }
-}
 
 // ============================================================
 // 🧩 拼图碎片功能
@@ -1150,7 +1180,7 @@ async function loadPuzzleTemplates() {
       </div>
     `).join('');
   } catch (e) {
-    el.innerHTML = `<div class="loading">❌ ${e.message}</div>`;
+    el.innerHTML = errorHTML(e.message, 'loadInventory()');
   }
 }
 
@@ -1312,7 +1342,7 @@ async function loadFlashSales() {
       `;
     }).join('');
   } catch (e) {
-    el.innerHTML = `<div class="loading">❌ ${e.message}</div>`;
+    el.innerHTML = errorHTML(e.message, 'loadInventory()');
   }
 }
 

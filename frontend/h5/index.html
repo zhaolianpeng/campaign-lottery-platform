@@ -48,8 +48,7 @@
       <div id="activityBanner" class="activity-banner" onclick="showActivityDetail()">
         <div class="activity-banner-scroll" id="activityBannerList"></div>
       </div>
-      <div id="seriesList" class="series-grid">
-        <div class="loading">加载中...</div>
+      <div id="seriesList" class="series-grid"><div class="skeleton-grid"><div class="sk-item"></div><div class="sk-item"></div><div class="sk-item"></div><div class="sk-item"></div></div>
       </div>
     </div>
 
@@ -62,7 +61,7 @@
     <!-- ===== 我的盲盒 Tab ===== -->
     <div id="tab-inventory" class="tab-content">
       <div class="panel-head"><h2>📦 我的收藏</h2></div>
-      <div id="inventoryContent" class="prize-grid"><div class="loading">加载中...</div></div>
+      <div id="inventoryContent" class="prize-grid"><div class="skeleton-grid"><div class="sk-item"></div><div class="sk-item"></div><div class="sk-item"></div><div class="sk-item"></div></div></div>
     </div>
 
     <!-- ===== 交换市场 Tab ===== -->
@@ -71,18 +70,18 @@
         <h2>🔄 交换市场</h2>
         <button class="btn-sm" onclick="showExchangeForm()">+ 发布</button>
       </div>
-      <div id="exchangeContent" class="exchange-list"><div class="loading">加载中...</div></div>
+      <div id="exchangeContent" class="exchange-list"><div class="skeleton skeleton-card" style="margin:8px 12px"></div><div class="skeleton skeleton-card" style="margin:8px 12px"></div><div class="skeleton skeleton-card" style="margin:8px 12px"></div></div>
     </div>
 
     <!-- ===== 排行榜 Tab ===== -->
     <div id="tab-rank" class="tab-content">
       <div class="panel-head"><h2>🏅 收集排行榜</h2></div>
-      <div id="rankContent" class="rank-list"><div class="loading">加载中...</div></div>
+      <div id="rankContent" class="rank-list"><div class="skeleton skeleton-card" style="margin:8px 12px"></div><div class="skeleton skeleton-card" style="margin:8px 12px"></div><div class="skeleton skeleton-card" style="margin:8px 12px"></div></div>
     </div>
 
     <!-- ===== 会员 Tab ===== -->
     <div id="tab-member" class="tab-content">
-      <div id="memberContent"><div class="loading">加载中...</div></div>
+      <div id="memberContent"><div class="skeleton skeleton-card" style="margin:8px 12px"></div><div class="skeleton skeleton-card" style="margin:8px 12px"></div><div class="skeleton skeleton-card" style="margin:8px 12px"></div></div>
     </div>
 
     <!-- ===== 🆕 商店 Tab ===== -->
@@ -100,7 +99,7 @@
         <span class="item-badge" id="item-see_through">👁️ 透卡: 0</span>
         <span class="item-badge" id="item-ten_draw_ticket">🎟️ 十连券: 0</span>
       </div>
-      <div id="shopItems" class="shop-grid"><div class="loading">加载中...</div></div>
+      <div id="shopItems" class="shop-grid"><div class="skeleton-grid"><div class="sk-item"></div><div class="sk-item"></div><div class="sk-item"></div><div class="sk-item"></div></div></div>
     </div>
 
     <!-- ===== 🆕 社交裂变 Tab ===== -->
@@ -265,6 +264,19 @@
       <h2 id="puzzleModalTitle">🧩 拼图</h2>
       <div id="puzzleModalBody"></div>
       <button class="btn-sm" onclick="closePuzzleModal()">关闭</button>
+    </div>
+  </div>
+
+  <!-- 🆕 确认弹窗 -->
+  <div id="confirmModal" class="modal hidden">
+    <div class="modal-bg" onclick="closeConfirmModal()"></div>
+    <div class="modal-content">
+      <div id="confirmTitle" class="confirm-title"></div>
+      <div id="confirmDesc" class="confirm-desc"></div>
+      <div class="confirm-btns">
+        <button class="btn-cancel" onclick="closeConfirmModal()">取消</button>
+        <button class="btn-primary" id="confirmBtn" onclick="closeConfirmModal()">确定</button>
+      </div>
     </div>
   </div>
 

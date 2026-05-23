@@ -65,3 +65,9 @@ th { color: #888; font-weight: 600; }
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
   .stat-value { font-size: 22px; }
 }
+
+/* 数据表格 */
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+.data-table th { background: rgba(255,255,255,0.08); padding: 8px 10px; text-align: left; font-weight: 600; }
+.data-table td { padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.data-table tr:hover td { background: rgba(255,255,255,0.03); }

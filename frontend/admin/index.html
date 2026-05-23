@@ -34,6 +34,7 @@
       <button class="tab" onclick="switchTab('delivery')">📮 发奖管理</button>
       <button class="tab" onclick="switchTab('records')">📝 抽奖记录</button>
       <button class="tab" onclick="switchTab('monthcard')">💳 月卡/战令</button>
+      <button class="tab" onclick="switchTab('shop')">🛒 商店管理</button>
     </nav>
 
     <div id="tabContent">
@@ -122,6 +123,19 @@
         <div class="config-section">
           <h3>当前赛季</h3>
           <div id="bpSeasonStatus">加载中...</div>
+        </div>
+      </div>
+
+      <!-- 🆕 商店管理 -->
+      <div id="tabShop" class="tab-panel hidden">
+        <h2>🛒 商店管理</h2>
+        <div class="config-section">
+          <h3>📋 当前商品列表</h3>
+          <div id="shopItemList" class="data-list">加载中...</div>
+        </div>
+        <div class="config-section">
+          <h3>🔥 首充礼包</h3>
+          <div id="adminFirstRechargeList" class="data-list">加载中...</div>
         </div>
       </div>
     </div>
