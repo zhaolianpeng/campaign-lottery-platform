@@ -11,6 +11,7 @@
     <!-- 顶部栏 -->
     <header id="topbar">
       <span class="logo">🎁 BOX·MAGIC</span>
+      <span id="userDisplay" class="user-badge hidden"></span>
       <span id="pointsDisplay" class="points-badge">💎 0</span>
       <button id="checkinBtn" class="btn-sm" onclick="dailyCheckIn()">📅 签到</button>
     </header>
@@ -19,7 +20,7 @@
     <div id="loginOverlay" class="overlay">
       <div class="login-card">
         <h1>🎁 BOX·MAGIC</h1>
-        <p>盲盒抽奖平台</p>
+        <p class="subtitle">盲盒抽奖平台 · 开启你的收藏之旅</p>
         <input id="nicknameInput" placeholder="输入昵称（留空随机）" />
         <input id="apiBaseInput" value="http://localhost:18100" placeholder="API地址" />
         <button class="btn-primary" onclick="guestLogin()">🚀 开始抽盒</button>
@@ -279,6 +280,9 @@
       </div>
     </div>
   </div>
+
+  <!-- confetti 彩带 -->
+  <canvas id="confettiCanvas"></canvas>
 
   <script src="./app.js"></script>
 </body>

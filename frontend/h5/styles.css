@@ -744,3 +744,213 @@ h2 { font-size: 18px; margin-bottom: 12px; }
   100% { transform: translateY(-40px) scale(1.5); opacity: 0; }
 }
 .points-anim { position: fixed; top: 50%; left: 50%; font-size: 24px; font-weight: 700; color: var(--accent); animation: points-fly 1s ease-out forwards; pointer-events: none; z-index: 999; }
+
+/* ============================================================
+   UI增强 v2.0
+   ============================================================ */
+
+/* 页面过渡动画 */
+.tab-content {
+  opacity: 0;
+  transform: translateY(12px);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+.tab-content.active {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Tab切换动画 */
+.tab-leaf-enter { animation: tabEnter 0.35s ease forwards; }
+@keyframes tabEnter {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 系列卡片入场动画 + 美化 */
+.series-card {
+  animation: cardFadeIn 0.4s ease backwards;
+}
+.series-card:nth-child(1) { animation-delay: 0.05s; }
+.series-card:nth-child(2) { animation-delay: 0.1s; }
+.series-card:nth-child(3) { animation-delay: 0.15s; }
+.series-card:nth-child(4) { animation-delay: 0.2s; }
+.series-card:nth-child(5) { animation-delay: 0.25s; }
+@keyframes cardFadeIn {
+  from { opacity: 0; transform: translateY(20px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.series-card:hover { border-color: var(--accent2); box-shadow: 0 0 20px rgba(167,139,250,0.15); }
+
+/* 弹窗从底部滑入 */
+.modal { animation: modalFadeIn 0.25s ease; }
+@keyframes modalFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.modal-content {
+  animation: modalSlideUp 0.3s ease;
+}
+@keyframes modalSlideUp {
+  from { opacity: 0; transform: translateY(40px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* 开盒稀有度光效背景 */
+.rarity-common-bg {
+  background: radial-gradient(circle at center, rgba(148,163,184,0.3), transparent 70%);
+}
+.rarity-rare-bg {
+  background: radial-gradient(circle at center, rgba(96,165,250,0.35), transparent 70%);
+}
+.rarity-secret-bg {
+  background: radial-gradient(circle at center, rgba(167,139,250,0.4), transparent 70%);
+}
+.rarity-limited-bg {
+  background: radial-gradient(circle at center, rgba(251,191,36,0.4), transparent 70%);
+}
+
+/* 稀有揭晓动画 */
+.result-reveal {
+  animation: resultReveal 0.6s ease forwards;
+}
+@keyframes resultReveal {
+  0% { transform: scale(0) rotate(-10deg); opacity: 0; }
+  50% { transform: scale(1.2) rotate(5deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+
+/* 稀有文字闪烁 */
+.rarity-text-glow {
+  animation: textGlow 1.5s ease-in-out infinite alternate;
+}
+@keyframes textGlow {
+  from { text-shadow: 0 0 8px currentColor; }
+  to { text-shadow: 0 0 20px currentColor, 0 0 40px currentColor; }
+}
+
+/* 结果名增强 */
+.result-name { margin: 8px 0; }
+.result-name.rare-name { font-size: 26px; }
+.result-name.secret-name { font-size: 30px; color: var(--accent2); }
+.result-name.limited-name { font-size: 30px; color: var(--gold); }
+
+/* 稀有徽章 */
+.rarity-badge.common { background: rgba(148,163,184,0.2); color: #94a3b8; }
+.rarity-badge.rare { background: rgba(96,165,250,0.2); color: #60a5fa; border: 1px solid rgba(96,165,250,0.3); }
+.rarity-badge.secret { background: rgba(167,139,250,0.25); color: #a78bfa; border: 1px solid rgba(167,139,250,0.4); animation: badgePulse 1.5s infinite; }
+.rarity-badge.limited { background: rgba(251,191,36,0.25); color: #fbbf24; border: 1px solid rgba(251,191,36,0.4); animation: badgePulse 1s infinite; }
+@keyframes badgePulse {
+  0%, 100% { box-shadow: 0 0 5px currentColor; }
+  50% { box-shadow: 0 0 15px currentColor; }
+}
+
+/* 盒子摇晃 + 展开动画 */
+@keyframes shakeBox {
+  0%,100% { transform: rotate(0deg) scale(1); }
+  20% { transform: rotate(-12deg) scale(1.08); }
+  40% { transform: rotate(8deg) scale(0.92); }
+  60% { transform: rotate(-6deg) scale(1.04); }
+  80% { transform: rotate(3deg) scale(0.98); }
+}
+@keyframes boxOpenReveal {
+  0% { transform: scale(0.3) rotateY(90deg); opacity: 0; }
+  60% { transform: scale(1.15) rotateY(-10deg); opacity: 1; }
+  100% { transform: scale(1) rotateY(0deg); opacity: 1; }
+}
+
+/* confetti彩带容器 */
+#confettiCanvas {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: 999;
+}
+
+/* Toast 增强 */
+.toast {
+  display: flex; align-items: center; gap: 8px;
+  min-width: 200px; max-width: 85vw;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+  animation: toastSlideIn 0.3s ease;
+}
+@keyframes toastSlideIn {
+  from { transform: translateX(-50%) translateY(-20px); opacity: 0; }
+  to { transform: translateX(-50%) translateY(0); opacity: 1; }
+}
+
+/* 底部导航增强 */
+#tabbar {
+  justify-content: space-around;
+  padding: 6px 4px;
+  padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+}
+.tab {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center;
+  gap: 2px; font-size: 11px;
+  padding: 6px 4px; border-radius: 10px;
+  position: relative;
+  transition: all 0.2s;
+}
+.tab::after {
+  content: '';
+  position: absolute; bottom: 2px; left: 50%;
+  width: 0; height: 2px;
+  background: var(--accent2);
+  border-radius: 1px;
+  transition: all 0.3s;
+  transform: translateX(-50%);
+}
+.tab.active::after {
+  width: 20px;
+}
+.tab .tab-icon { font-size: 18px; }
+.tab .tab-label { font-size: 10px; }
+
+/* 登录页美化 */
+.login-card h1 {
+  font-size: 32px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2), var(--gold));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.login-card .subtitle {
+  font-size: 13px; color: var(--muted); margin-bottom: 24px;
+}
+.login-card input:focus {
+  outline: 2px solid var(--accent2);
+  box-shadow: 0 0 12px rgba(167,139,250,0.3);
+}
+.login-card .btn-primary {
+  position: relative;
+  overflow: hidden;
+}
+.login-card .btn-primary::after {
+  content: '';
+  position: absolute; top: -50%; left: -50%;
+  width: 200%; height: 200%;
+  background: linear-gradient(45deg, transparent, rgba(255,255,255,0.1), transparent);
+  transform: translateX(-100%);
+  transition: transform 0.6s;
+}
+.login-card .btn-primary:hover::after {
+  transform: translateX(100%);
+}
+
+/* 会员卡片美化 */
+.member-card {
+  position: relative;
+  overflow: hidden;
+}
+.member-card::before {
+  content: '';
+  position: absolute; top: -50%; left: -50%;
+  width: 200%; height: 200%;
+  background: conic-gradient(from 0deg, transparent, var(--accent2), transparent, var(--accent), transparent);
+  animation: rotateBorder 4s linear infinite;
+  opacity: 0.1;
+}
+@keyframes rotateBorder {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

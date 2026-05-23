@@ -103,6 +103,13 @@ async function guestLogin() {
     });
     state.token = payload.data.session.token;
     state.user = payload.data.user;
+    if (state.user) {
+      const ud = document.getElementById('userDisplay');
+      if (ud) {
+        ud.textContent = '👤 ' + (state.user.nickname || '用户');
+        ud.classList.remove('hidden');
+      }
+    }
     document.getElementById('loginOverlay').style.display = 'none';
     showToast('🎉 欢迎来到盲盒世界！送你100积分体验金');
     refreshAll();
@@ -872,24 +879,38 @@ async function claimFirstRecharge(packId) {
   }
 }
 
-// switchTab: 覆盖原始函数以支持新增Tab
+// switchTab: 覆盖原始函数以支持平滑过渡
 const origSwitchTab = switchTab;
 switchTab = function(tab) {
-  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(el => {
+    el.classList.remove('active');
+  });
   document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
-  document.getElementById('tab-' + tab)?.classList.add('active');
+
+  const target = document.getElementById('tab-' + tab);
+  if (target) {
+    target.classList.remove('tab-leaf-enter');
+    // force reflow then add
+    void target.offsetWidth;
+    target.classList.add('active', 'tab-leaf-enter');
+  }
+
   document.querySelector(`.tab[data-tab="${tab}"]`)?.classList.add('active');
   if (!state.token) return;
-  switch (tab) {
-    case 'series': loadSeries(); break;
-    case 'inventory': loadInventory(); break;
-    case 'exchange': loadExchange(); break;
-    case 'rank': loadLeaderboard(); break;
-    case 'member': loadMember(); break;
-    case 'shop': loadShop(); break;
-    case 'social': loadSocial(); break;
-    case 'puzzle': loadPuzzle(); break;
-  }
+
+  // 延迟加载，让过渡动画先播放
+  setTimeout(() => {
+    switch (tab) {
+      case 'series': loadSeries(); break;
+      case 'inventory': loadInventory(); break;
+      case 'exchange': loadExchange(); break;
+      case 'rank': loadLeaderboard(); break;
+      case 'member': loadMember(); break;
+      case 'shop': loadShop(); break;
+      case 'social': loadSocial(); break;
+      case 'puzzle': loadPuzzle(); break;
+    }
+  }, 50);
 };
 
 function switchSocialTab(sub) {
@@ -1554,11 +1575,81 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 });
 
-// 增强 showDrawResults：稀有度背景
-const origShowDrawResults = showDrawResults;
-showDrawResults = function(data, count) {
-  origShowDrawResults(data, count);
+// ---- confetti 彩带特效 ----
+const canvas = document.getElementById('confettiCanvas');
+let ctx, animId, particles = [];
 
+function initConfetti() {
+  if (!canvas) return;
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  ctx = canvas.getContext('2d');
+}
+
+function fireConfetti(count = 60) {
+  initConfetti();
+  if (!ctx) return;
+  const colors = ['#f472b6', '#a78bfa', '#fbbf24', '#34d399', '#60a5fa', '#fb923c', '#fff'];
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x: canvas.width / 2 + (Math.random() - 0.5) * 200,
+      y: canvas.height / 2,
+      vx: (Math.random() - 0.5) * 12,
+      vy: -Math.random() * 14 - 4,
+      size: Math.random() * 8 + 4,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      rotation: Math.random() * 360,
+      rotSpeed: (Math.random() - 0.5) * 10,
+      gravity: 0.3,
+      opacity: 1,
+      decay: 0.008 + Math.random() * 0.01,
+      shape: Math.random() > 0.5 ? 'rect' : 'circle',
+    });
+  }
+  if (animId) cancelAnimationFrame(animId);
+  animateConfetti();
+}
+
+function animateConfetti() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  let alive = false;
+  for (const p of particles) {
+    p.x += p.vx;
+    p.vy += p.gravity;
+    p.y += p.vy;
+    p.rotation += p.rotSpeed;
+    p.opacity -= p.decay;
+    if (p.opacity <= 0) continue;
+    alive = true;
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(p.rotation * Math.PI / 180);
+    ctx.globalAlpha = Math.max(0, p.opacity);
+    ctx.fillStyle = p.color;
+    if (p.shape === 'rect') {
+      ctx.fillRect(-p.size/2, -p.size/4, p.size, p.size/2);
+    } else {
+      ctx.beginPath();
+      ctx.arc(0, 0, p.size/2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+  if (alive) {
+    animId = requestAnimationFrame(animateConfetti);
+  } else {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    particles = [];
+  }
+}
+
+window.addEventListener('resize', () => {
+  if (canvas) { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+});
+
+// showDrawResults 增强版
+const originalShowDrawResults = window.showDrawResults;
+showDrawResults = function(data, count) {
   const draws = data.draws || [];
   let show = draws[0] || {};
   const levels = { limited: 5, secret: 4, rare: 3, common: 1 };
@@ -1566,10 +1657,42 @@ showDrawResults = function(data, count) {
     if ((levels[d.prize_level] || 0) > (levels[show.prize_level] || 0)) show = d;
   }
 
-  const resultEl = document.getElementById('boxResult');
-  // Remove old rarity classes
-  resultEl.classList.remove('rarity-common-bg', 'rarity-rare-bg', 'rarity-secret-bg', 'rarity-limited-bg');
-  // Add new rarity class
-  const rarityClass = 'rarity-' + (show.prize_level || 'common') + '-bg';
-  resultEl.classList.add(rarityClass);
+  const level = show.prize_level || 'common';
+  const name = show.prize_name || '神秘盲盒';
+
+  // 先调用原始逻辑
+  if (typeof originalShowDrawResults === 'function') {
+    originalShowDrawResults(data, count);
+  } else if (origShowDrawResults) {
+    origShowDrawResults(data, count);
+  }
+
+  // 稀有度标签
+  const labels = { common: '普通款', rare: '稀有款', secret: '隐藏款', limited: '限定款' };
+  const emojis = { common: '🎁', rare: '🌟', secret: '💜', limited: '👑' };
+
+  document.getElementById('resultRarity').textContent = labels[level] || '普通款';
+  document.getElementById('resultRarity').className = 'rarity-badge ' + level;
+  document.getElementById('resultIcon').textContent = emojis[level] || '🎁';
+  document.getElementById('resultName').textContent = name;
+  document.getElementById('resultName').className = 'result-name' + (level !== 'common' ? ' ' + level + '-name' : '');
+
+  // 稀有度光效背景
+  document.getElementById('boxResult').className = 'box-result ' + level + '-bg';
+
+  // 稀有+彩带
+  if (level === 'rare') fireConfetti(30);
+  else if (level === 'secret') fireConfetti(80);
+  else if (level === 'limited') fireConfetti(120);
+
+  // 隐藏/限定光效文字
+  if (level === 'secret' || level === 'limited') {
+    document.getElementById('resultName').classList.add('rarity-text-glow');
+  }
+
+  // 动画揭晓（延迟触发）
+  document.getElementById('resultIcon').style.transform = 'scale(0)';
+  setTimeout(() => {
+    document.getElementById('resultIcon').classList.add('result-reveal');
+  }, 100);
 };
