@@ -48,11 +48,18 @@ type MemoryStore struct {
 	userCards map[string]model.UserCard
 
 	// 🆕 战令系统
-	battlePassSeasons      map[int]model.BattlePassSeason
-	battlePasses           map[string]*model.BattlePass
-	battlePassTasks        []model.BattlePassTask
-	battlePassTaskProgress map[string]model.BattlePassTaskProgress
-	battlePassRewards      []model.BattlePassReward
+	battlePasses          map[string]model.BattlePass           // key: userID:seasonID
+	battlePassSeasons     map[int]model.BattlePassSeason
+	battlePassTasks       []model.BattlePassTask
+	battlePassTaskProgress map[string]model.BattlePassTaskProgress // key: userID:taskID
+	battlePassRewards     []model.BattlePassReward
+	nextSeasonID          int
+	nextTaskIDCounter     int
+
+	// 🆕 商店 + 道具 + 首充
+	shopItems            []model.ShopItem
+	userItems            map[string]model.UserItem // key: userID:itemType
+	firstRechargeRecords map[string]model.UserFirstRecharge // key: userID
 }
 
 func NewMemoryStore(adminUser string, adminPassword string) *MemoryStore {
@@ -82,10 +89,14 @@ func NewMemoryStore(adminUser string, adminPassword string) *MemoryStore {
 		battlePassTasks:        make([]model.BattlePassTask, 0),
 		battlePassTaskProgress: make(map[string]model.BattlePassTaskProgress),
 		battlePassRewards:      make([]model.BattlePassReward, 0),
+		shopItems:              make([]model.ShopItem, 0),
+		userItems:              make(map[string]model.UserItem),
+		firstRechargeRecords:   make(map[string]model.UserFirstRecharge),
 	}
 
 	store.seedDefaultCampaign()
 	store.seedBattlePass()
+	store.seedShop()
 	return store
 }
 
@@ -1778,4 +1789,288 @@ func (s *MemoryStore) GetBattlePassRewards(seasonID int) ([]model.BattlePassRewa
 		}
 	}
 	return rewards, nil
+}
+
+// 🆕 seedShop 初始化商店商品和首充礼包
+func (s *MemoryStore) seedShop() {
+	now := time.Now().UTC()
+	s.shopItems = []model.ShopItem{
+		// 每日特价
+		{ID: "daily_special", Name: "每日特价", Description: "每日限购1次，随机获得好礼", PricePoints: 100, PriceCash: 0, ItemType: model.ItemFreeDraw, ItemQty: 1, Stock: -1, DailyLimit: 1, Category: "daily", IsActive: true, SortOrder: 1},
+		// 道具商店
+		{ID: "hint_card_1", Name: "提示卡", Description: "排除当前池中1个不想要的款式", PricePoints: 10, ItemType: model.ItemHintCard, ItemQty: 1, Stock: -1, Category: "item", IsActive: true, SortOrder: 10},
+		{ID: "hint_card_10", Name: "提示卡×10", Description: "十张提示卡打包优惠", PricePoints: 90, ItemType: model.ItemHintCard, ItemQty: 10, Stock: -1, Category: "item", IsActive: true, SortOrder: 11},
+		{ID: "see_through_1", Name: "透卡", Description: "预览当前1抽将出什么款（仅普通款）", PricePoints: 20, ItemType: model.ItemSeeThrough, ItemQty: 1, Stock: -1, Category: "item", IsActive: true, SortOrder: 20},
+		{ID: "see_through_5", Name: "透卡×5", Description: "五张透卡打包优惠", PricePoints: 90, ItemType: model.ItemSeeThrough, ItemQty: 5, Stock: -1, Category: "item", IsActive: true, SortOrder: 21},
+		{ID: "pity_inherit_1", Name: "保底继承券", Description: "保底计数可在同类型不同池间转移一次", PricePoints: 50, ItemType: model.ItemPityInherit, ItemQty: 1, Stock: -1, Category: "item", IsActive: true, SortOrder: 30},
+		{ID: "specify_voucher_1", Name: "指定款券", Description: "必得指定普通款（不可指定稀有+）", PricePoints: 200, ItemType: model.ItemSpecifyVoucher, ItemQty: 1, Stock: -1, Category: "item", IsActive: true, SortOrder: 40},
+		{ID: "ten_draw_ticket_1", Name: "十连券", Description: "直接进行十连抽，无需消耗积分", PricePoints: 950, ItemType: model.ItemTenDrawTicket, ItemQty: 1, Stock: -1, Category: "item", IsActive: true, SortOrder: 50},
+		// 周礼包
+		{ID: "weekly_pack", Name: "周礼包", Description: "含积分+十连券+限定时装", PricePoints: 1800, ItemType: model.ItemTenDrawTicket, ItemQty: 2, Stock: 100, DailyLimit: 1, Category: "weekly", IsActive: true, ExpiresAt: ptrTime(now.Add(7 * 24 * time.Hour)), SortOrder: 60},
+		// 节日礼包
+		{ID: "festival_pack_1", Name: "节日礼包·小", Description: "积分+十连券+限定头像框", PricePoints: 6800, ItemType: model.ItemTenDrawTicket, ItemQty: 5, Stock: 500, DailyLimit: 1, Category: "festival", IsActive: true, ExpiresAt: ptrTime(now.Add(14 * 24 * time.Hour)), SortOrder: 70},
+		{ID: "festival_pack_2", Name: "节日礼包·大", Description: "大量积分+十连券+稀有款自选", PricePoints: 19800, ItemType: model.ItemTenDrawTicket, ItemQty: 15, Stock: 100, DailyLimit: 1, Category: "festival", IsActive: true, ExpiresAt: ptrTime(now.Add(14 * 24 * time.Hour)), SortOrder: 71},
+	}
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }
+
+// ============================================================
+// 🆕 商店 + 道具 + 首充 MemoryStore 实现
+// ============================================================
+
+func (s *MemoryStore) GetShopItems() []model.ShopItem {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := make([]model.ShopItem, 0, len(s.shopItems))
+	for _, item := range s.shopItems {
+		if !item.IsActive {
+			continue
+		}
+		if item.ExpiresAt != nil && time.Now().UTC().After(*item.ExpiresAt) {
+			continue
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+func (s *MemoryStore) BuyShopItem(userID string, itemID string, quantity int) (*model.BuyShopItemResult, error) {
+	if quantity <= 0 {
+		quantity = 1
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 查找商品
+	var item *model.ShopItem
+	for i := range s.shopItems {
+		if s.shopItems[i].ID == itemID {
+			item = &s.shopItems[i]
+			break
+		}
+	}
+	if item == nil || !item.IsActive {
+		return nil, store.ErrCampaignNotFound
+	}
+
+	// 检查过期
+	if item.ExpiresAt != nil && time.Now().UTC().After(*item.ExpiresAt) {
+		return nil, fmt.Errorf("item expired")
+	}
+
+	// 检查库存
+	if item.Stock >= 0 && item.Stock < quantity {
+		return nil, fmt.Errorf("insufficient stock: only %d left", item.Stock)
+	}
+
+	// 检查用户积分
+	member, ok := s.members[userID]
+	if !ok {
+		return nil, store.ErrUnauthorized
+	}
+	totalCost := item.PricePoints * int64(quantity)
+	if member.Points < totalCost {
+		return nil, store.ErrInsufficientPoints
+	}
+
+	// 扣积分
+	member.Points -= totalCost
+	member.TotalSpent += totalCost
+	s.members[userID] = member
+
+	// 扣库存
+	if item.Stock >= 0 {
+		item.Stock -= quantity
+	}
+
+	// 添加道具
+	s.addUserItemLocked(userID, item.ItemType, item.ItemQty*quantity)
+
+	// 记录日志（简化）
+	s.pointsLog = append(s.pointsLog, model.UserPointsLog{
+		ID: s.nextTaskID, UserID: userID, Points: -totalCost,
+		Balance: member.Points, Reason: "shop", Remark: fmt.Sprintf("购买 %s x%d", item.Name, quantity),
+		CreatedAt: time.Now().UTC(),
+	})
+	s.nextTaskID++
+
+	newQty, _ := s.getUserItemQtyLocked(userID, item.ItemType)
+
+	return &model.BuyShopItemResult{
+		ItemType:   item.ItemType,
+		ItemName:   item.Name,
+		Quantity:   quantity,
+		PointsCost: totalCost,
+		NewPoints:  member.Points,
+		NewQty:     newQty,
+	}, nil
+}
+
+func (s *MemoryStore) addUserItemLocked(userID string, itemType model.ItemType, qty int) {
+	key := userID + ":" + string(itemType)
+	existing, ok := s.userItems[key]
+	if ok {
+		existing.Quantity += qty
+		s.userItems[key] = existing
+	} else {
+		s.userItems[key] = model.UserItem{UserID: userID, ItemType: itemType, Quantity: qty}
+	}
+}
+
+func (s *MemoryStore) getUserItemQtyLocked(userID string, itemType model.ItemType) (int, bool) {
+	key := userID + ":" + string(itemType)
+	existing, ok := s.userItems[key]
+	if !ok {
+		return 0, false
+	}
+	return existing.Quantity, true
+}
+
+func (s *MemoryStore) GetUserItemQty(userID string, itemType model.ItemType) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	qty, _ := s.getUserItemQtyLocked(userID, itemType)
+	return qty, nil
+}
+
+func (s *MemoryStore) AddUserItem(userID string, itemType model.ItemType, qty int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.addUserItemLocked(userID, itemType, qty)
+	return nil
+}
+
+func (s *MemoryStore) UseUserItem(userID string, itemType model.ItemType, qty int) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := userID + ":" + string(itemType)
+	existing, ok := s.userItems[key]
+	if !ok || existing.Quantity < qty {
+		return false, nil
+	}
+	existing.Quantity -= qty
+	if existing.Quantity <= 0 {
+		delete(s.userItems, key)
+	} else {
+		s.userItems[key] = existing
+	}
+	return true, nil
+}
+
+func (s *MemoryStore) GetUserItems(userID string) ([]model.UserItem, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	items := make([]model.UserItem, 0)
+	for _, v := range s.userItems {
+		if v.UserID == userID && v.Quantity > 0 {
+			items = append(items, v)
+		}
+	}
+	return items, nil
+}
+
+// 🆕 首充礼包
+
+func (s *MemoryStore) GetFirstRechargeStatus(userID string) (*model.UserFirstRecharge, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rec, ok := s.firstRechargeRecords[userID]
+	if !ok {
+		return &model.UserFirstRecharge{UserID: userID, Claimed: []string{}}, nil
+	}
+	cp := rec
+	return &cp, nil
+}
+
+func (s *MemoryStore) ClaimFirstRecharge(userID string, packID string) (*model.ClaimFirstRechargeResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 检查礼包是否有效
+	pack, ok := model.FirstRechargePacks[packID]
+	if !ok {
+		return nil, fmt.Errorf("invalid first recharge pack: %s", packID)
+	}
+
+	// 检查是否已经领取过
+	rec, exists := s.firstRechargeRecords[userID]
+	if exists {
+		for _, claimed := range rec.Claimed {
+			if claimed == packID {
+				return nil, fmt.Errorf("already claimed pack: %s", packID)
+			}
+		}
+	} else {
+		rec = model.UserFirstRecharge{UserID: userID, Claimed: []string{}}
+	}
+
+	// 检查积分是否足够
+	member, ok := s.members[userID]
+	if !ok {
+		return nil, store.ErrUnauthorized
+	}
+	if member.Points < pack.PricePoints {
+		return nil, store.ErrInsufficientPoints
+	}
+
+	// 扣积分
+	member.Points -= pack.PricePoints
+	member.TotalSpent += pack.PricePoints
+	s.members[userID] = member
+
+	// 发放礼包内容
+	for _, item := range pack.Items {
+		switch item.Type {
+		case "points":
+			// 已包含在礼包积分中，直接加到余额
+			member.Points += int64(item.Qty)
+			s.members[userID] = member
+		case "hint_card":
+			s.addUserItemLocked(userID, model.ItemHintCard, item.Qty)
+		case "see_through":
+			s.addUserItemLocked(userID, model.ItemSeeThrough, item.Qty)
+		case "ten_draw_ticket":
+			s.addUserItemLocked(userID, model.ItemTenDrawTicket, item.Qty)
+		case "free_draw":
+			s.addUserItemLocked(userID, model.ItemFreeDraw, item.Qty)
+		case "prize":
+			// 随机找一个该系列的稀有款发放（简化：直接给积分等价物）
+			// 实际应该发款式到用户库存，这里简化处理
+			pointsExtra := int64(item.Qty * 200) // 稀有款约200积分
+			member.Points += pointsExtra
+			s.members[userID] = member
+		case "month_card":
+			// 赠送月卡（一个月的monthly卡）
+			card := &model.MonthCard{
+				ID: userID + ":monthly:gift", UserID: userID,
+				CardType: model.MonthCardMonthly, Price: 0,
+				FreeDraws: 2, DrawDiscount: 0.8,
+				StartedAt: time.Now().UTC(),
+				ExpiresAt: time.Now().UTC().Add(30 * 24 * time.Hour),
+				CreatedAt: time.Now().UTC(),
+			}
+			s.monthCards[userID] = card
+		}
+	}
+
+	// 记录领取
+	member.Points += pack.PricePoints // 退回礼包价值作为积分（首充双倍等效）
+	s.members[userID] = member
+
+	rec.Claimed = append(rec.Claimed, packID)
+	s.firstRechargeRecords[userID] = rec
+
+	// 记录日志
+	s.pointsLog = append(s.pointsLog, model.UserPointsLog{
+		ID: s.nextTaskID, UserID: userID, Points: 0,
+		Balance: member.Points, Reason: "first_recharge", Remark: fmt.Sprintf("领取%s", pack.Name),
+		CreatedAt: time.Now().UTC(),
+	})
+	s.nextTaskID++
+
+	return &model.ClaimFirstRechargeResult{
+		PackID: packID, PackName: pack.Name,
+		Items: pack.Items, NewPoints: member.Points,
+	}, nil
 }

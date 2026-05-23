@@ -590,6 +590,105 @@ func New(cfg config.Config) (http.Handler, error) {
 	mux.Handle("POST /api/v1/battle-pass/buy", buyBattlePassHandler(services))
 	mux.Handle("POST /api/v1/battle-pass/claim/{level}", claimBattlePassRewardHandler(services))
 
+	// ============================================================
+	// 🆕 限时商店 + 付费道具 + 首充礼包 路由
+	// ============================================================
+
+	// 商店商品列表
+	mux.HandleFunc("GET /api/v1/shop/items", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		items, err := services.ShopItems(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "shop items", items)
+	})
+
+	// 购买商店商品
+	mux.HandleFunc("POST /api/v1/shop/buy", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		var input model.BuyShopItemRequest
+		if err := decodeJSON(r, &input); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		result, err := services.BuyShopItem(token, input)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "purchase success", result)
+	})
+
+	// 用户道具列表
+	mux.HandleFunc("GET /api/v1/shop/items/inventory", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		items, err := services.UserItems(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "user items", items)
+	})
+
+	// 使用道具
+	mux.HandleFunc("POST /api/v1/shop/items/use", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		var input model.UseItemRequest
+		if err := decodeJSON(r, &input); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		result, err := services.UseItem(token, input)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "item used", result)
+	})
+
+	// 首充礼包列表（获取所有可领取的首充礼包配置）
+	mux.HandleFunc("GET /api/v1/first-recharge/packs", func(w http.ResponseWriter, _ *http.Request) {
+		packs := services.FirstRechargePacks()
+		result := make([]map[string]any, 0, len(packs))
+		for _, p := range packs {
+			result = append(result, map[string]any{
+				"id": p.ID, "name": p.Name, "price_points": p.PricePoints,
+				"cash_price": p.CashPrice, "items": p.Items,
+				"description": p.Description, "sort_order": p.SortOrder,
+			})
+		}
+		response.JSON(w, http.StatusOK, "ok", "first recharge packs", result)
+	})
+
+	// 用户首充状态
+	mux.HandleFunc("GET /api/v1/first-recharge/status", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		status, err := services.FirstRechargeStatus(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "first recharge status", status)
+	})
+
+	// 领取首充礼包
+	mux.HandleFunc("POST /api/v1/first-recharge/claim", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		var input model.ClaimFirstRechargeRequest
+		if err := decodeJSON(r, &input); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		result, err := services.ClaimFirstRecharge(token, input)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "first recharge claimed", result)
+	})
+
 	return mux, nil
 }
 

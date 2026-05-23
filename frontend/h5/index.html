@@ -37,6 +37,7 @@
       <button class="tab" data-tab="exchange" onclick="switchTab('exchange')">🔄 交换</button>
       <button class="tab" data-tab="rank" onclick="switchTab('rank')">🏅 排行</button>
       <button class="tab" data-tab="member" onclick="switchTab('member')">👑 会员</button>
+      <button class="tab" data-tab="shop" onclick="switchTab('shop')">🛒 商店</button>
     </nav>
 
     <!-- ===== 系列列表 Tab ===== -->
@@ -76,6 +77,35 @@
     <!-- ===== 会员 Tab ===== -->
     <div id="tab-member" class="tab-content">
       <div id="memberContent"><div class="loading">加载中...</div></div>
+    </div>
+
+    <!-- ===== 🆕 商店 Tab ===== -->
+    <div id="tab-shop" class="tab-content">
+      <div class="panel-head"><h2>🛒 商店</h2></div>
+      <!-- 首充礼包横幅 -->
+      <div id="firstRechargeBanner" class="first-recharge-banner hidden" onclick="showFirstRecharge()">
+        <span class="fr-icon">🔥</span>
+        <span class="fr-text">首充礼包 · 限时双倍积分</span>
+        <span class="fr-arrow">▶</span>
+      </div>
+      <!-- 道具库存 -->
+      <div id="userItemsDisplay" class="user-items-bar">
+        <span class="item-badge" id="item-hint_card">💡 提示卡: 0</span>
+        <span class="item-badge" id="item-see_through">👁️ 透卡: 0</span>
+        <span class="item-badge" id="item-ten_draw_ticket">🎟️ 十连券: 0</span>
+      </div>
+      <div id="shopItems" class="shop-grid"><div class="loading">加载中...</div></div>
+    </div>
+  </div>
+
+  <!-- 首充礼包弹窗 -->
+  <div id="firstRechargeModal" class="modal hidden">
+    <div class="modal-bg" onclick="closeFirstRechargeModal()"></div>
+    <div class="modal-content modal-lg">
+      <h2>🔥 首充礼包</h2>
+      <p class="fr-subtitle">每位用户限领一次，首充享双倍积分！</p>
+      <div id="firstRechargePacks" class="fr-packs"></div>
+      <button class="btn-sm" onclick="closeFirstRechargeModal()">关闭</button>
     </div>
   </div>
 

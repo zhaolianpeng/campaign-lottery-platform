@@ -688,3 +688,159 @@ setInterval(() => {
     }).catch(() => {});
   }
 }, 30000);
+
+// ============================================================
+// 🆕 商店
+// ============================================================
+
+async function loadShop() {
+  if (!state.token) return;
+  try {
+    const [shopRes, itemsRes, frRes] = await Promise.all([
+      api('/api/v1/shop/items'),
+      api('/api/v1/shop/items/inventory'),
+      api('/api/v1/first-recharge/status'),
+    ]);
+    renderShopItems(shopRes.data || []);
+    renderUserItems(itemsRes.data || []);
+    renderFirstRechargeBanner(frRes.data);
+  } catch (e) {
+    document.getElementById('shopItems').innerHTML = `<div class="loading">❌ ${e.message}</div>`;
+  }
+}
+
+function renderShopItems(items) {
+  const el = document.getElementById('shopItems');
+  if (!items.length) {
+    el.innerHTML = '<div class="loading">暂无商品</div>';
+    return;
+  }
+  const categoryLabels = { daily: '每日特价', weekly: '周礼包', festival: '节日礼包', item: '道具' };
+  el.innerHTML = items.map(item => `
+    <div class="shop-item">
+      <span class="item-category">${categoryLabels[item.category] || item.category}</span>
+      <div class="item-name">${item.name}</div>
+      <div class="item-desc">${item.description || ''}</div>
+      <div class="item-price">💎 ${item.price_points} 积分${item.price_cash ? ` / 💰¥${(item.price_cash/100).toFixed(0)}` : ''}</div>
+      <button class="item-buy-btn" onclick="buyShopItem('${item.id}')">购买</button>
+    </div>
+  `).join('');
+}
+
+function renderUserItems(items) {
+  const map = {};
+  for (const item of items) map[item.item_type] = item.quantity;
+  const types = ['hint_card', 'see_through', 'ten_draw_ticket'];
+  for (const t of types) {
+    const el = document.getElementById('item-' + t);
+    if (el) el.textContent = {
+      hint_card: '💡 提示卡: ' + (map[t] || 0),
+      see_through: '👁️ 透卡: ' + (map[t] || 0),
+      ten_draw_ticket: '🎟️ 十连券: ' + (map[t] || 0),
+    }[t];
+  }
+}
+
+async function buyShopItem(itemId) {
+  if (!state.token) { showToast('请先登录', true); return; }
+  try {
+    const res = await api('/api/v1/shop/buy', {
+      method: 'POST',
+      body: JSON.stringify({ shop_item_id: itemId, quantity: 1 }),
+    });
+    showToast('✅ 购买成功！获得 ' + res.data.item_name);
+    state.member.points = res.data.new_points;
+    updatePoints();
+    loadShop();
+  } catch (e) {
+    showToast('❌ ' + e.message, true);
+  }
+}
+
+// ============================================================
+// 🆕 首充礼包
+// ============================================================
+
+function renderFirstRechargeBanner(status) {
+  const banner = document.getElementById('firstRechargeBanner');
+  if (!status || !status.claimed) { banner.classList.add('hidden'); return; }
+  const unclaimed = status.claimed.length < 3;
+  banner.classList.toggle('hidden', !unclaimed);
+}
+
+function showFirstRecharge() {
+  document.getElementById('firstRechargeModal').classList.remove('hidden');
+  loadFirstRechargePacks();
+}
+
+function closeFirstRechargeModal() {
+  document.getElementById('firstRechargeModal').classList.add('hidden');
+}
+
+async function loadFirstRechargePacks() {
+  const el = document.getElementById('firstRechargePacks');
+  try {
+    const [packsRes, statusRes] = await Promise.all([
+      api('/api/v1/first-recharge/packs'),
+      api('/api/v1/first-recharge/status'),
+    ]);
+    const packs = packsRes.data || [];
+    const claimed = (statusRes.data && statusRes.data.claimed) || [];
+    const itemTypeLabels = { points: '💎积分', draw_ticket: '🎟️抽奖券', prize: '🎁盲盒', month_card: '💳月卡', hint_card: '💡提示卡', see_through: '👁️透卡', ten_draw_ticket: '🎟️十连券', free_draw: '🎲免费抽' };
+    el.innerHTML = packs.sort((a,b) => a.sort_order - b.sort_order).map(pack => {
+      const isClaimed = claimed.includes(pack.id);
+      return `
+        <div class="fr-pack-card">
+          <div class="pack-header">
+            <span class="pack-name">${pack.name}</span>
+            <span class="pack-price">💰 ¥${(pack.cash_price/100).toFixed(0)}</span>
+          </div>
+          <div class="pack-desc">${pack.description}</div>
+          <div class="pack-items">
+            ${(pack.items || []).map(item => `<span class="pack-item-tag">${itemTypeLabels[item.type] || item.type} ×${item.qty}</span>`).join('')}
+          </div>
+          <button class="pack-claim-btn" ${isClaimed ? 'disabled' : ''} onclick="claimFirstRecharge('${pack.id}')">
+            ${isClaimed ? '✅ 已领取' : '🔥 立即领取'}
+          </button>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="loading">❌ ${e.message}</div>`;
+  }
+}
+
+async function claimFirstRecharge(packId) {
+  if (!state.token) { showToast('请先登录', true); return; }
+  try {
+    const res = await api('/api/v1/first-recharge/claim', {
+      method: 'POST',
+      body: JSON.stringify({ pack_id: packId }),
+    });
+    showToast('🎉 领取成功！获得 ' + (res.data.pack_name || '礼包'));
+    state.member.points = res.data.new_points;
+    updatePoints();
+    loadFirstRechargePacks();
+    renderFirstRechargeBanner({ claimed: ['dummy'] });
+  } catch (e) {
+    showToast('❌ ' + e.message, true);
+  }
+}
+
+// Extend switchTab to include shop
+const origSwitchTab = switchTab;
+switchTab = function(tab) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + tab)?.classList.add('active');
+  document.querySelector(`.tab[data-tab="${tab}"]`)?.classList.add('active');
+  if (!state.token) return;
+  switch (tab) {
+    case 'series': loadSeries(); break;
+    case 'inventory': loadInventory(); break;
+    case 'exchange': loadExchange(); break;
+    case 'rank': loadLeaderboard(); break;
+    case 'member': loadMember(); break;
+    case 'shop': loadShop(); break;
+  }
+};

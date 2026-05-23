@@ -153,4 +153,24 @@ LogPoints(userID string, points int64, balance int64, reason, remark string) err
 	UpdateTaskProgress(userID string, taskID int) error
 	// GetBattlePassRewards 获取战令奖励配置
 	GetBattlePassRewards(seasonID int) ([]model.BattlePassReward, error)
+
+	// 🆕 ---- 限时商店 + 付费道具 ----
+	// GetShopItems 获取商店商品列表
+	GetShopItems() []model.ShopItem
+	// BuyShopItem 购买商店商品，返回购买结果
+	BuyShopItem(userID string, itemID string, quantity int) (*model.BuyShopItemResult, error)
+	// GetUserItemQty 查询用户某种道具数量
+	GetUserItemQty(userID string, itemType model.ItemType) (int, error)
+	// AddUserItem 给用户添加道具
+	AddUserItem(userID string, itemType model.ItemType, qty int) error
+	// UseUserItem 消耗用户道具，返回是否成功
+	UseUserItem(userID string, itemType model.ItemType, qty int) (bool, error)
+	// GetUserItems 获取用户所有道具
+	GetUserItems(userID string) ([]model.UserItem, error)
+
+	// 🆕 ---- 首充礼包 ----
+	// GetFirstRechargeStatus 获取用户首充状态（哪些礼包已领）
+	GetFirstRechargeStatus(userID string) (*model.UserFirstRecharge, error)
+	// ClaimFirstRecharge 领取首充礼包
+	ClaimFirstRecharge(userID string, packID string) (*model.ClaimFirstRechargeResult, error)
 }
