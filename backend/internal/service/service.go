@@ -1486,3 +1486,225 @@ func (s *Service) GetSentGifts(token string) ([]model.GiftRecord, error) {
 func (s *Service) GetGiftDetail(giftID string) (*model.GiftRecord, error) {
 	return s.store.GetGift(giftID)
 }
+
+// ============================================================
+// 拼图系统
+// ============================================================
+
+// GetPuzzleTemplates 获取当前活跃的拼图模板列表
+func (s *Service) GetPuzzleTemplates(token string) ([]model.PuzzleTemplate, error) {
+	_, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.GetActivePuzzleTemplates(), nil
+}
+
+// GetPuzzleProgress 获取用户指定拼图进度
+func (s *Service) GetPuzzleProgress(token, templateID string) (*model.PuzzleInfo, error) {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.GetPuzzleInfo(user.ID, templateID)
+}
+
+// GetAllPuzzleProgress 获取用户所有拼图进度
+func (s *Service) GetAllPuzzleProgress(token string) ([]model.PuzzleInfo, error) {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.GetUserPuzzleProgresses(user.ID)
+}
+
+// AddPuzzlePiece 添加碎片
+func (s *Service) AddPuzzlePiece(token, templateID string, pieceIndex int) (*model.PuzzlePieceDrop, error) {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	template, err := s.store.GetPuzzleTemplate(templateID)
+	if err != nil {
+		return nil, err
+	}
+	if pieceIndex < 0 || pieceIndex >= template.TotalPieces {
+		return nil, fmt.Errorf("碎片索引超出范围：0-%d", template.TotalPieces-1)
+	}
+	isNew, err := s.store.AddPuzzlePiece(user.ID, templateID, pieceIndex)
+	if err != nil {
+		return nil, err
+	}
+	pieceName := ""
+	if pieceIndex >= 0 && pieceIndex < len(template.PieceNames) {
+		pieceName = template.PieceNames[pieceIndex]
+	}
+	return &model.PuzzlePieceDrop{
+		TemplateID: templateID,
+		PieceIndex: pieceIndex,
+		PieceName:  pieceName,
+		IsNew:      isNew,
+	}, nil
+}
+
+// ComposePuzzle 合成拼图
+func (s *Service) ComposePuzzle(token, templateID string) (*model.ComposePuzzleResult, error) {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.ComposePuzzle(user.ID, templateID)
+}
+
+// GetDrawPuzzleDrop 抽奖时概率掉落拼图碎片
+func (s *Service) GetDrawPuzzleDrop(token, campaignID string) (*model.PuzzlePieceDrop, error) {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	templates := s.store.GetActivePuzzleTemplates()
+	var matched *model.PuzzleTemplate
+	for i := range templates {
+		if templates[i].CampaignID == campaignID {
+			matched = &templates[i]
+			break
+		}
+	}
+	if matched == nil {
+		return nil, nil
+	}
+	// 30% 概率掉落
+	if rand.Float64() >= 0.3 {
+		return nil, nil
+	}
+	pieceIndex := rand.IntN(matched.TotalPieces)
+	isNew, err := s.store.AddPuzzlePiece(user.ID, matched.ID, pieceIndex)
+	if err != nil {
+		return nil, err
+	}
+	pieceName := ""
+	if pieceIndex >= 0 && pieceIndex < len(matched.PieceNames) {
+		pieceName = matched.PieceNames[pieceIndex]
+	}
+	return &model.PuzzlePieceDrop{
+		TemplateID: matched.ID,
+		PieceIndex: pieceIndex,
+		PieceName:  pieceName,
+		IsNew:      isNew,
+	}, nil
+}
+
+// CreatePuzzleTeam 创建拼图小队
+func (s *Service) CreatePuzzleTeam(token, templateID string) (*model.PuzzleTeam, error) {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.CreatePuzzleTeam(user.ID, templateID)
+}
+
+// JoinPuzzleTeam 加入拼图小队
+func (s *Service) JoinPuzzleTeam(token, teamID string) (*model.PuzzleTeam, error) {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.JoinPuzzleTeam(user.ID, teamID)
+}
+
+// GetMyPuzzleTeams 获取用户加入的拼图小队
+func (s *Service) GetMyPuzzleTeams(token string) ([]model.PuzzleTeam, error) {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.GetUserPuzzleTeams(user.ID)
+}
+
+// GetPuzzleTeamInfo 获取拼图小队信息
+func (s *Service) GetPuzzleTeamInfo(teamID string) (*model.PuzzleTeam, error) {
+	return s.store.GetPuzzleTeam(teamID)
+}
+
+// ============================================================
+// 抢购系统
+// ============================================================
+
+// levelOrder 会员等级排序（数字越大等级越高）
+var levelOrder = map[string]int{
+	"normal":  0,
+	"silver":  1,
+	"gold":    2,
+	"diamond": 3,
+}
+
+// meetsLevelRequirement 检查用户等级是否满足最低要求
+func meetsLevelRequirement(userLevel, minLevel string) bool {
+	u, ok1 := levelOrder[userLevel]
+	m, ok2 := levelOrder[minLevel]
+	if !ok1 || !ok2 {
+		return false
+	}
+	return u >= m
+}
+
+// GetFlashList 获取抢购活动列表（含订阅状态和资格）
+func (s *Service) GetFlashList(token string) ([]model.FlashListInfo, error) {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	flashes := s.store.GetFlashSales()
+	member, err := s.store.GetUserMember(user.ID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]model.FlashListInfo, 0, len(flashes))
+	for _, f := range flashes {
+		subscribed, _ := s.store.IsFlashSubscribed(user.ID, f.ID)
+		purchasable := meetsLevelRequirement(string(member.Level), f.MinVipLevel) &&
+			member.TotalDraws >= f.MinTotalDraws
+		result = append(result, model.FlashListInfo{
+			Flash:       &f,
+			Subscribed:  subscribed,
+			Purchasable: purchasable,
+		})
+	}
+	return result, nil
+}
+
+// SubscribeFlash 预约抢购
+func (s *Service) SubscribeFlash(token, flashID string) error {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return err
+	}
+	return s.store.SubscribeFlash(user.ID, flashID)
+}
+
+// UnsubscribeFlash 取消预约
+func (s *Service) UnsubscribeFlash(token, flashID string) error {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return err
+	}
+	return s.store.UnsubscribeFlash(user.ID, flashID)
+}
+
+// PurchaseFlash 执行抢购
+func (s *Service) PurchaseFlash(token, flashID string) (*model.FlashPurchaseResult, error) {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.PurchaseFlash(user.ID, flashID)
+}
+
+// GetMyFlashSubscriptions 获取我的预约列表
+func (s *Service) GetMyFlashSubscriptions(token string) ([]model.FlashSubscription, error) {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.GetUserFlashSubscriptions(user.ID)
+}

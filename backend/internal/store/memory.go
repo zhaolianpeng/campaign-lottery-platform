@@ -76,6 +76,17 @@ type MemoryStore struct {
 	shareCardIDSeq      int
 	teamRewards         map[string]model.TeamReward  // key: teamID
 	giftPrizeInfo       map[string]string            // giftID -> prizeName:prizeLevel
+
+	// 🆕 v1.6 碎片拼图
+	puzzleTemplates    []model.PuzzleTemplate
+	puzzleProgresses   map[string]*model.PuzzleProgress // key: userID:templateID
+	puzzleTeams        map[string]*model.PuzzleTeam     // key: teamID
+	puzzleTeamIDSeq    int
+
+	// 🆕 v1.6 预约抢购
+	flashSales         []model.FlashSale
+	flashSubscriptions []model.FlashSubscription
+	flashIDSeq         int
 }
 
 func NewMemoryStore(adminUser string, adminPassword string) *MemoryStore {
@@ -117,11 +128,19 @@ func NewMemoryStore(adminUser string, adminPassword string) *MemoryStore {
 		shareCards:             make(map[string][]model.ShareCard),
 		teamRewards:            make(map[string]model.TeamReward),
 		giftPrizeInfo:          make(map[string]string),
+		puzzleTemplates:        make([]model.PuzzleTemplate, 0),
+		puzzleProgresses:       make(map[string]*model.PuzzleProgress),
+		puzzleTeams:            make(map[string]*model.PuzzleTeam),
+		puzzleTeamIDSeq:        0,
+		flashSales:             make([]model.FlashSale, 0),
+		flashSubscriptions:     make([]model.FlashSubscription, 0),
+		flashIDSeq:             0,
 	}
 
 	store.seedDefaultCampaign()
 	store.seedBattlePass()
 	store.seedShop()
+	store.seedPuzzle()
 	return store
 }
 
@@ -1840,6 +1859,41 @@ func (s *MemoryStore) seedShop() {
 
 func ptrTime(t time.Time) *time.Time { return &t }
 
+// 🆕 seedPuzzle 初始化拼图模板
+func (s *MemoryStore) seedPuzzle() {
+	now := time.Now().UTC()
+	s.puzzleTemplates = []model.PuzzleTemplate{
+		{
+			ID:          "weekly_puzzle",
+			Name:        "每周拼图",
+			CampaignID:  "camp_launch_001",
+			TotalPieces: 6,
+			PieceNames:  []string{"碎片一", "碎片二", "碎片三", "碎片四", "碎片五", "碎片六"},
+			RewardType:  "prize",
+			RewardID:    "prize_001",
+			RewardQty:   1,
+			RewardName:  "88元红包",
+			PeriodType:  "weekly",
+			IsActive:    true,
+			CreatedAt:   now,
+		},
+		{
+			ID:          "monthly_puzzle",
+			Name:        "月度大拼图",
+			CampaignID:  "camp_launch_001",
+			TotalPieces: 24,
+			PieceNames:  []string{"碎1", "碎2", "碎3", "碎4", "碎5", "碎6", "碎7", "碎8", "碎9", "碎10", "碎11", "碎12", "碎13", "碎14", "碎15", "碎16", "碎17", "碎18", "碎19", "碎20", "碎21", "碎22", "碎23", "碎24"},
+			RewardType:  "prize",
+			RewardID:    "prize_003",
+			RewardQty:   1,
+			RewardName:  "品牌周边礼盒",
+			PeriodType:  "monthly",
+			IsActive:    true,
+			CreatedAt:   now,
+		},
+	}
+}
+
 // ============================================================
 // 🆕 商店 + 道具 + 首充 MemoryStore 实现
 // ============================================================
@@ -2835,4 +2889,625 @@ func (s *MemoryStore) GetShareCards(userID string) ([]model.ShareCard, error) {
 		return []model.ShareCard{}, nil
 	}
 	return cards, nil
+}
+
+// ============================================================
+// 🆕 v1.6 碎片拼图 MemoryStore 实现
+// ============================================================
+
+// GetActivePuzzleTemplates 获取当前活跃的拼图模板列表
+func (s *MemoryStore) GetActivePuzzleTemplates() []model.PuzzleTemplate {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var active []model.PuzzleTemplate
+	for _, t := range s.puzzleTemplates {
+		if t.IsActive {
+			active = append(active, t)
+		}
+	}
+	return active
+}
+
+// GetPuzzleTemplate 获取拼图模板详情
+func (s *MemoryStore) GetPuzzleTemplate(templateID string) (*model.PuzzleTemplate, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, t := range s.puzzleTemplates {
+		if t.ID == templateID {
+			return &t, nil
+		}
+	}
+	return nil, fmt.Errorf("puzzle template not found: %s", templateID)
+}
+
+// GetOrCreatePuzzleProgress 获取或创建用户拼图进度
+func (s *MemoryStore) GetOrCreatePuzzleProgress(userID, templateID string) (*model.PuzzleProgress, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := fmt.Sprintf("%s:%s", userID, templateID)
+	progress, ok := s.puzzleProgresses[key]
+	if ok {
+		return progress, nil
+	}
+
+	// Find template to get total pieces
+	var template *model.PuzzleTemplate
+	for i := range s.puzzleTemplates {
+		if s.puzzleTemplates[i].ID == templateID {
+			template = &s.puzzleTemplates[i]
+			break
+		}
+	}
+	if template == nil {
+		return nil, fmt.Errorf("puzzle template not found: %s", templateID)
+	}
+
+	progress = &model.PuzzleProgress{
+		UserID:      userID,
+		TemplateID:  templateID,
+		Collected:   []int{},
+		TotalPieces: template.TotalPieces,
+		IsCompleted: false,
+	}
+	s.puzzleProgresses[key] = progress
+	return progress, nil
+}
+
+// AddPuzzlePiece 收集碎片，返回是否是新收集
+func (s *MemoryStore) AddPuzzlePiece(userID, templateID string, pieceIndex int) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := fmt.Sprintf("%s:%s", userID, templateID)
+	progress, ok := s.puzzleProgresses[key]
+	if !ok {
+		return false, fmt.Errorf("puzzle progress not found for user=%s template=%s", userID, templateID)
+	}
+
+	// Check if already collected
+	for _, idx := range progress.Collected {
+		if idx == pieceIndex {
+			return false, nil
+		}
+	}
+
+	progress.Collected = append(progress.Collected, pieceIndex)
+	return true, nil
+}
+
+// ComposePuzzle 合成拼图（集齐所有碎片后兑换奖励）
+func (s *MemoryStore) ComposePuzzle(userID, templateID string) (*model.ComposePuzzleResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := fmt.Sprintf("%s:%s", userID, templateID)
+	progress, ok := s.puzzleProgresses[key]
+	if !ok {
+		return nil, fmt.Errorf("puzzle progress not found for user=%s template=%s", userID, templateID)
+	}
+
+	if progress.IsCompleted {
+		return nil, fmt.Errorf("puzzle already completed")
+	}
+
+	// Find template
+	var template *model.PuzzleTemplate
+	for i := range s.puzzleTemplates {
+		if s.puzzleTemplates[i].ID == templateID {
+			template = &s.puzzleTemplates[i]
+			break
+		}
+	}
+	if template == nil {
+		return nil, fmt.Errorf("puzzle template not found: %s", templateID)
+	}
+
+	// Check all pieces collected
+	if len(progress.Collected) < template.TotalPieces {
+		return nil, fmt.Errorf("not all pieces collected: have %d, need %d", len(progress.Collected), template.TotalPieces)
+	}
+
+	// Set completed
+	now := time.Now().UTC()
+	progress.IsCompleted = true
+	progress.CompletedAt = &now
+
+	result := &model.ComposePuzzleResult{
+		TemplateID:   templateID,
+		TemplateName: template.Name,
+		RewardType:   template.RewardType,
+		RewardName:   template.RewardName,
+		RewardQty:    template.RewardQty,
+	}
+
+	// Award reward
+	switch template.RewardType {
+	case "points":
+		member, ok := s.members[userID]
+		if !ok {
+			member = model.UserMember{UserID: userID, Level: model.MemberNormal, Points: 0, CreatedAt: now, UpdatedAt: now}
+		}
+		member.Points += int64(template.RewardQty)
+		member.UpdatedAt = now
+		s.members[userID] = member
+		s.pointsLog = append(s.pointsLog, model.UserPointsLog{
+			ID:        int64(len(s.pointsLog) + 1),
+			UserID:    userID,
+			Points:    int64(template.RewardQty),
+			Balance:   member.Points,
+			Reason:    "puzzle_compose",
+			Remark:    "拼图合成奖励: " + template.Name,
+			CreatedAt: now,
+		})
+	case "draw_ticket":
+		s.addUserItemLocked(userID, model.ItemFreeDraw, template.RewardQty)
+	case "prize":
+		s.inventory = append(s.inventory, model.UserInventory{
+			ID:         s.GenerateID(),
+			UserID:     userID,
+			PrizeID:    template.RewardID,
+			PrizeName:  template.RewardName,
+			PrizeLevel: "",
+			CampaignID: template.CampaignID,
+			Source:     "puzzle_compose",
+			CreatedAt:  now,
+		})
+	}
+
+	return result, nil
+}
+
+// GetPuzzleInfo 获取拼图详细信息（进度+模板）
+func (s *MemoryStore) GetPuzzleInfo(userID, templateID string) (*model.PuzzleInfo, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	key := fmt.Sprintf("%s:%s", userID, templateID)
+	progress, ok := s.puzzleProgresses[key]
+	if !ok {
+		return nil, fmt.Errorf("puzzle progress not found for user=%s template=%s", userID, templateID)
+	}
+
+	var template *model.PuzzleTemplate
+	for i := range s.puzzleTemplates {
+		if s.puzzleTemplates[i].ID == templateID {
+			template = &s.puzzleTemplates[i]
+			break
+		}
+	}
+	if template == nil {
+		return nil, fmt.Errorf("puzzle template not found: %s", templateID)
+	}
+
+	collectedSet := make(map[int]bool)
+	for _, idx := range progress.Collected {
+		collectedSet[idx] = true
+	}
+
+	var collectedNames []string
+	var missingNames []string
+	for i, name := range template.PieceNames {
+		if collectedSet[i] {
+			collectedNames = append(collectedNames, name)
+		} else {
+			missingNames = append(missingNames, name)
+		}
+	}
+
+	progressPercent := 0.0
+	if template.TotalPieces > 0 {
+		progressPercent = float64(len(progress.Collected)) / float64(template.TotalPieces) * 100
+	}
+
+	return &model.PuzzleInfo{
+		Template:        template,
+		Progress:        progress,
+		CollectedNames:  collectedNames,
+		MissingNames:    missingNames,
+		ProgressPercent: progressPercent,
+	}, nil
+}
+
+// CreatePuzzleTeam 创建拼图小队
+func (s *MemoryStore) CreatePuzzleTeam(captainID, templateID string) (*model.PuzzleTeam, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Verify template exists
+	var totalPieces int
+	found := false
+	for _, t := range s.puzzleTemplates {
+		if t.ID == templateID {
+			totalPieces = t.TotalPieces
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("puzzle template not found: %s", templateID)
+	}
+
+	s.puzzleTeamIDSeq++
+	now := time.Now().UTC()
+	team := &model.PuzzleTeam{
+		ID:          s.GenerateID(),
+		TemplateID:  templateID,
+		CaptainID:   captainID,
+		Members:     []string{captainID},
+		Shared:      []int{},
+		TotalPieces: totalPieces,
+		IsCompleted: false,
+		CreatedAt:   now,
+	}
+	s.puzzleTeams[team.ID] = team
+	return team, nil
+}
+
+// JoinPuzzleTeam 加入拼图小队
+func (s *MemoryStore) JoinPuzzleTeam(userID, teamID string) (*model.PuzzleTeam, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	team, ok := s.puzzleTeams[teamID]
+	if !ok {
+		return nil, fmt.Errorf("puzzle team not found: %s", teamID)
+	}
+
+	// Check if already a member
+	for _, m := range team.Members {
+		if m == userID {
+			return team, nil
+		}
+	}
+
+	team.Members = append(team.Members, userID)
+	return team, nil
+}
+
+// GetPuzzleTeam 获取拼图小队信息
+func (s *MemoryStore) GetPuzzleTeam(teamID string) (*model.PuzzleTeam, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	team, ok := s.puzzleTeams[teamID]
+	if !ok {
+		return nil, fmt.Errorf("puzzle team not found: %s", teamID)
+	}
+	return team, nil
+}
+
+// GetUserPuzzleTeams 获取用户加入的拼图小队
+func (s *MemoryStore) GetUserPuzzleTeams(userID string) ([]model.PuzzleTeam, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var teams []model.PuzzleTeam
+	for _, team := range s.puzzleTeams {
+		for _, m := range team.Members {
+			if m == userID {
+				teams = append(teams, *team)
+				break
+			}
+		}
+	}
+	return teams, nil
+}
+
+// GetUserPuzzleProgresses 获取用户所有拼图进度
+func (s *MemoryStore) GetUserPuzzleProgresses(userID string) ([]model.PuzzleInfo, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	prefix := userID + ":"
+	var infos []model.PuzzleInfo
+	for key, progress := range s.puzzleProgresses {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		// Find matching template
+		for _, t := range s.puzzleTemplates {
+			if t.ID == progress.TemplateID {
+				collectedSet := make(map[int]bool)
+				for _, idx := range progress.Collected {
+					collectedSet[idx] = true
+				}
+				var collectedNames, missingNames []string
+				for i, name := range t.PieceNames {
+					if collectedSet[i] {
+						collectedNames = append(collectedNames, name)
+					} else {
+						missingNames = append(missingNames, name)
+					}
+				}
+				progressPercent := 0.0
+				if t.TotalPieces > 0 {
+					progressPercent = float64(len(progress.Collected)) / float64(t.TotalPieces) * 100
+				}
+				infos = append(infos, model.PuzzleInfo{
+					Template:        &t,
+					Progress:        progress,
+					CollectedNames:  collectedNames,
+					MissingNames:    missingNames,
+					ProgressPercent: progressPercent,
+				})
+				break
+			}
+		}
+	}
+	return infos, nil
+}
+
+// SharePuzzlePiece 在拼图小队中共享碎片
+func (s *MemoryStore) SharePuzzlePiece(userID, teamID string, pieceIndex int) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	team, ok := s.puzzleTeams[teamID]
+	if !ok {
+		return false, fmt.Errorf("puzzle team not found: %s", teamID)
+	}
+
+	// Verify user is a member
+	isMember := false
+	for _, m := range team.Members {
+		if m == userID {
+			isMember = true
+			break
+		}
+	}
+	if !isMember {
+		return false, fmt.Errorf("user %s is not a member of team %s", userID, teamID)
+	}
+
+	// Check if piece already shared
+	for _, idx := range team.Shared {
+		if idx == pieceIndex {
+			return false, nil
+		}
+	}
+
+	team.Shared = append(team.Shared, pieceIndex)
+	return true, nil
+}
+
+// ============================================================
+// 🆕 v1.6 预约抢购 MemoryStore 实现
+// ============================================================
+
+// GetFlashSales 获取抢购活动列表
+func (s *MemoryStore) GetFlashSales() []model.FlashSale {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]model.FlashSale, len(s.flashSales))
+	copy(result, s.flashSales)
+	return result
+}
+
+// GetFlashSale 获取抢购活动详情
+func (s *MemoryStore) GetFlashSale(flashID string) (*model.FlashSale, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for i := range s.flashSales {
+		if s.flashSales[i].ID == flashID {
+			return &s.flashSales[i], nil
+		}
+	}
+	return nil, fmt.Errorf("flash sale not found: %s", flashID)
+}
+
+// SubscribeFlash 预约抢购活动
+func (s *MemoryStore) SubscribeFlash(userID, flashID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Verify flash exists
+	found := false
+	for _, f := range s.flashSales {
+		if f.ID == flashID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("flash sale not found: %s", flashID)
+	}
+
+	// Check if already subscribed
+	for _, sub := range s.flashSubscriptions {
+		if sub.UserID == userID && sub.FlashID == flashID {
+			return nil // already subscribed
+		}
+	}
+
+	s.flashSubscriptions = append(s.flashSubscriptions, model.FlashSubscription{
+		UserID:    userID,
+		FlashID:   flashID,
+		CreatedAt: time.Now().UTC(),
+	})
+	return nil
+}
+
+// UnsubscribeFlash 取消预约
+func (s *MemoryStore) UnsubscribeFlash(userID, flashID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i, sub := range s.flashSubscriptions {
+		if sub.UserID == userID && sub.FlashID == flashID {
+			s.flashSubscriptions = append(s.flashSubscriptions[:i], s.flashSubscriptions[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
+
+// IsFlashSubscribed 检查用户是否已预约
+func (s *MemoryStore) IsFlashSubscribed(userID, flashID string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, sub := range s.flashSubscriptions {
+		if sub.UserID == userID && sub.FlashID == flashID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// PurchaseFlash 执行抢购（扣积分减库存）
+func (s *MemoryStore) PurchaseFlash(userID, flashID string) (*model.FlashPurchaseResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Find flash sale
+	var flash *model.FlashSale
+	for i := range s.flashSales {
+		if s.flashSales[i].ID == flashID {
+			flash = &s.flashSales[i]
+			break
+		}
+	}
+	if flash == nil {
+		return &model.FlashPurchaseResult{
+			FlashID: flashID, Success: false, Message: "抢购活动不存在",
+		}, fmt.Errorf("flash sale not found: %s", flashID)
+	}
+
+	// Check stock
+	if flash.RemainingStock <= 0 {
+		return &model.FlashPurchaseResult{
+			FlashID: flashID, FlashName: flash.Name, Success: false, Message: "库存不足",
+		}, fmt.Errorf("flash sale out of stock: %s", flashID)
+	}
+
+	// Get or create member
+	member, ok := s.members[userID]
+	if !ok {
+		member = model.UserMember{
+			UserID:    userID,
+			Level:     model.MemberNormal,
+			Points:    0,
+			CreatedAt: time.Now().UTC(),
+			UpdatedAt: time.Now().UTC(),
+		}
+	}
+
+	// Check eligibility: member level >= MinVipLevel
+	if member.Level < model.MemberLevel(flash.MinVipLevel) && flash.MinVipLevel != "" {
+		return &model.FlashPurchaseResult{
+			FlashID: flashID, FlashName: flash.Name, Success: false, Message: "会员等级不足",
+		}, fmt.Errorf("insufficient vip level: need %s, have %s", flash.MinVipLevel, member.Level)
+	}
+
+	// Check total draws >= MinTotalDraws
+	if member.TotalDraws < flash.MinTotalDraws {
+		return &model.FlashPurchaseResult{
+			FlashID: flashID, FlashName: flash.Name, Success: false, Message: "抽奖次数不足",
+		}, fmt.Errorf("insufficient total draws: need %d, have %d", flash.MinTotalDraws, member.TotalDraws)
+	}
+
+	// Check points
+	if member.Points < flash.PricePoints {
+		return &model.FlashPurchaseResult{
+			FlashID: flashID, FlashName: flash.Name, Success: false, Message: "积分不足",
+		}, fmt.Errorf("insufficient points: need %d, have %d", flash.PricePoints, member.Points)
+	}
+
+	// Deduct points
+	now := time.Now().UTC()
+	member.Points -= flash.PricePoints
+	member.UpdatedAt = now
+	s.members[userID] = member
+
+	// Decrement stock
+	flash.RemainingStock--
+
+	// Log points
+	s.pointsLog = append(s.pointsLog, model.UserPointsLog{
+		ID:        int64(len(s.pointsLog) + 1),
+		UserID:    userID,
+		Points:    -flash.PricePoints,
+		Balance:   member.Points,
+		Reason:    "flash_purchase",
+		Remark:    "抢购: " + flash.Name,
+		CreatedAt: now,
+	})
+
+	// Add to inventory
+	s.inventory = append(s.inventory, model.UserInventory{
+		ID:         s.GenerateID(),
+		UserID:     userID,
+		PrizeID:    "",
+		PrizeName:  flash.Name,
+		PrizeLevel: "",
+		CampaignID: flash.CampaignID,
+		Source:     "flash",
+		CreatedAt:  now,
+	})
+
+	return &model.FlashPurchaseResult{
+		FlashID:   flashID,
+		FlashName: flash.Name,
+		Success:   true,
+		Message:   "抢购成功",
+	}, nil
+}
+
+// GetUserFlashSubscriptions 获取用户预约列表
+func (s *MemoryStore) GetUserFlashSubscriptions(userID string) ([]model.FlashSubscription, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var subs []model.FlashSubscription
+	for _, sub := range s.flashSubscriptions {
+		if sub.UserID == userID {
+			subs = append(subs, sub)
+		}
+	}
+	return subs, nil
+}
+
+// CreateFlashSale 创建抢购活动（管理端）
+func (s *MemoryStore) CreateFlashSale(input model.FlashSale) (*model.FlashSale, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.flashIDSeq++
+	now := time.Now().UTC()
+	flash := &model.FlashSale{
+		ID:             "flash_" + strconv.Itoa(s.flashIDSeq),
+		CampaignID:     input.CampaignID,
+		Name:           input.Name,
+		Description:    input.Description,
+		PricePoints:    input.PricePoints,
+		TotalStock:     input.TotalStock,
+		RemainingStock: input.TotalStock,
+		MinVipLevel:    input.MinVipLevel,
+		MinTotalDraws:  input.MinTotalDraws,
+		StartAt:        input.StartAt,
+		EndAt:          input.EndAt,
+		Status:         "upcoming",
+		CreatedAt:      now,
+	}
+	s.flashSales = append(s.flashSales, *flash)
+	return flash, nil
+}
+
+// UpdateFlashSaleStatus 更新抢购状态
+func (s *MemoryStore) UpdateFlashSaleStatus(flashID, status string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := range s.flashSales {
+		if s.flashSales[i].ID == flashID {
+			s.flashSales[i].Status = status
+			return nil
+		}
+	}
+	return fmt.Errorf("flash sale not found: %s", flashID)
 }

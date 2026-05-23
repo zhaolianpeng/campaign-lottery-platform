@@ -422,7 +422,7 @@ function renderInventory() {
             <div class="name ${'rarity-' + it.prize_level}">${it.prize_name}</div>
             <div style="font-size:11px;color:var(--muted);">${rarityNames[it.prize_level] || ''}</div>
             ${it.count > 1 ? `<div class="count-badge">×${it.count}</div>` : ''}
-            ${canBlend ? `<button class="btn-sm" style="margin-top:6px;font-size:11px;" onclick="blendPrize('${it.prize_id}','${campId}')">🔬 合成</button>` : ''}
+            ${canBlend ? `<button class="btn-sm" style="margin-top:6px;font-size:11px;" onclick="blendPrize('${it.prize_id}','${campId}')\">🔬 合成</button>` : ''}
           </div>`;
         }).join('')}
       </div>
@@ -434,7 +434,7 @@ function renderInventory() {
 async function blendPrize(prizeId, campaignId) {
   const recipe = { common: '3普通→1稀有', rare: '5稀有→1隐藏', secret: '3隐藏→1限定' };
   const prize = state.inventory.find(i => i.prize_id === prizeId);
-  if (!confirm(`确定合成吗？\n${recipe[prize?.prize_level] || ''}`)) return;
+  if (!confirm(`确定合成吗？\\n${recipe[prize?.prize_level] || ''}`)) return;
   try {
     const res = await api('/api/v1/blindbox/blend', {
       method: 'POST',
@@ -862,6 +862,7 @@ switchTab = function(tab) {
     case 'member': loadMember(); break;
     case 'shop': loadShop(); break;
     case 'social': loadSocial(); break;
+    case 'puzzle': loadPuzzle(); break;
   }
 };
 
@@ -1124,4 +1125,245 @@ async function shareDraw() {
     await navigator.clipboard.writeText(shareText).catch(() => {});
     showToast('📤 分享文案已复制！');
   } catch(e) { showToast('❌ ' + e.message, true); }
+}
+
+// ============================================================
+// 🧩 拼图碎片功能
+// ============================================================
+
+async function loadPuzzle() {
+  loadPuzzleTemplates();
+  loadFlashSales();
+}
+
+async function loadPuzzleTemplates() {
+  const el = document.getElementById('puzzleTemplates');
+  if (!el) return;
+  try {
+    const res = await api('/api/v1/puzzle/templates');
+    const templates = res.data || [];
+    if (!templates.length) {
+      el.innerHTML = '<div class="loading">暂无拼图活动</div>';
+      return;
+    }
+    el.innerHTML = templates.map(t => `
+      <div class="puzzle-card" onclick="showPuzzleDetail('${t.id}')">
+        <div class="puzzle-header">
+          <span class="puzzle-name">🧩 ${t.name}</span>
+        </div>
+        <div class="puzzle-meta">
+          <span>碎片 ${t.total_pieces}片</span>
+          <span>🏆 ${t.reward_name || '神秘奖励'}</span>
+        </div>
+        ${t.user_progress ? `
+          <div class="puzzle-progress">
+            <div class="progress-bar"><div class="progress-fill" style="width:${Math.min(100, (t.user_progress.collected / t.user_progress.total) * 100)}%"></div></div>
+            <span>${t.user_progress.collected}/${t.user_progress.total}</span>
+          </div>
+        ` : ''}
+        <div class="puzzle-actions">
+          <button class="btn-sm" onclick="event.stopPropagation();showPuzzleDetail('${t.id}')">查看详情</button>
+          <button class="btn-sm" onclick="event.stopPropagation();composePuzzle('${t.id}')">🔨 拼合</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="loading">❌ ${e.message}</div>`;
+  }
+}
+
+async function loadPuzzleProgress(templateId) {
+  try {
+    const res = await api('/api/v1/puzzle/progress/' + templateId);
+    return res.data;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function showPuzzleDetail(templateId) {
+  try {
+    const [templatesRes, progress] = await Promise.all([
+      api('/api/v1/puzzle/templates'),
+      loadPuzzleProgress(templateId),
+    ]);
+    const templates = templatesRes.data || [];
+    const tmpl = templates.find(t => t.id === templateId);
+    if (!tmpl) { showToast('拼图不存在', true); return; }
+
+    const total = tmpl.total_pieces || 1;
+    const collected = progress ? (progress.collected_pieces || []) : [];
+    const piecesHtml = Array.from({ length: total }, (_, i) => {
+      const idx = i + 1;
+      const isCollected = collected.includes(idx);
+      return `<div class="puzzle-piece ${isCollected ? 'collected' : 'missing'}">${isCollected ? '✅' : idx}</div>`;
+    }).join('');
+
+    document.getElementById('puzzleModalTitle').textContent = '🧩 ' + tmpl.name;
+    document.getElementById('puzzleModalBody').innerHTML = `
+      <p style="color:var(--muted);font-size:13px;margin-bottom:12px;">🏆 奖励: ${tmpl.reward_name || '神秘奖励'}</p>
+      <div class="puzzle-grid-visual">${piecesHtml}</div>
+      <p style="font-size:12px;color:var(--muted);margin-top:8px;">已收集 ${collected.length}/${total} 片</p>
+      ${collected.length >= total ? `
+        <div style="margin-top:12px;">
+          <button class="btn-primary" onclick="composePuzzle('${templateId}')">🔨 拼合领取奖励</button>
+        </div>
+      ` : ''}
+
+      <!-- 拼图队伍 -->
+      <div class="puzzle-team-section">
+        <h3 style="margin-top:16px;">👥 拼图队伍</h3>
+        <div id="puzzleTeamList-${templateId}">
+          <button class="btn-sm" onclick="loadMyPuzzleTeams('${templateId}')">查看我的队伍</button>
+          <button class="btn-sm" onclick="createPuzzleTeam('${templateId}')">创建队伍</button>
+        </div>
+      </div>
+    `;
+    document.getElementById('puzzleDetailModal').classList.remove('hidden');
+  } catch (e) {
+    showToast('❌ ' + e.message, true);
+  }
+}
+
+function closePuzzleModal() {
+  document.getElementById('puzzleDetailModal').classList.add('hidden');
+}
+
+async function composePuzzle(templateId) {
+  if (!state.token) { showToast('请先登录', true); return; }
+  try {
+    const res = await api('/api/v1/puzzle/compose', {
+      method: 'POST',
+      body: JSON.stringify({ template_id: templateId }),
+    });
+    showToast('🎉 拼图完成！获得: ' + (res.data.reward_name || '奖励'));
+    loadPuzzleTemplates();
+    closePuzzleModal();
+  } catch (e) {
+    showToast('❌ ' + e.message, true);
+  }
+}
+
+async function loadMyPuzzleTeams(templateId) {
+  const el = document.getElementById('puzzleTeamList-' + templateId);
+  if (!el) return;
+  try {
+    const res = await api('/api/v1/puzzle/team/my');
+    const teams = res.data || [];
+    if (!teams.length) {
+      el.innerHTML = '<p class="hint">暂无队伍</p>';
+      return;
+    }
+    el.innerHTML = teams.map(t => `
+      <div class="team-card" style="margin:4px 0;">
+        <div class="team-header"><span class="team-name">👥 ${t.name}</span></div>
+        <div class="team-info"><span>👤 ${t.member_count || '?'}人</span></div>
+        <button class="btn-sm" onclick="joinPuzzleTeam('${t.id}')">加入</button>
+      </div>
+    `).join('');
+  } catch (e) {
+    el.innerHTML = '<p class="hint">❌ ' + e.message + '</p>';
+  }
+}
+
+async function createPuzzleTeam(templateId) {
+  if (!state.token) { showToast('请先登录', true); return; }
+  try {
+    const res = await api('/api/v1/puzzle/team/create', {
+      method: 'POST',
+      body: JSON.stringify({ template_id: templateId, name: '拼图队' }),
+    });
+    showToast('✅ 队伍创建成功！');
+    loadMyPuzzleTeams(templateId);
+  } catch (e) {
+    showToast('❌ ' + e.message, true);
+  }
+}
+
+async function joinPuzzleTeam(teamId) {
+  if (!state.token) { showToast('请先登录', true); return; }
+  try {
+    await api('/api/v1/puzzle/team/join', {
+      method: 'POST',
+      body: JSON.stringify({ team_id: teamId }),
+    });
+    showToast('✅ 加入队伍成功！');
+  } catch (e) {
+    showToast('❌ ' + e.message, true);
+  }
+}
+
+// ============================================================
+// ⚡ 限时抢购
+// ============================================================
+
+async function loadFlashSales() {
+  const el = document.getElementById('flashList');
+  if (!el) return;
+  try {
+    const res = await api('/api/v1/flash/list');
+    const items = res.data || [];
+    if (!items.length) {
+      el.innerHTML = '<div class="loading">暂无抢购活动</div>';
+      return;
+    }
+    el.innerHTML = items.map(item => {
+      const remaining = item.remaining_stock || 0;
+      const totalStock = item.total_stock || 0;
+      const isExpired = item.expires_at && new Date(item.expires_at) < new Date();
+      const timeText = item.expires_at ? formatCountdown(item.expires_at) : '';
+      return `
+        <div class="flash-card ${isExpired ? 'expired' : ''}">
+          <div class="flash-header">
+            <span class="flash-name">⚡ ${item.name}</span>
+            <span class="flash-stock">${isExpired ? '已结束' : (remaining > 0 ? '剩余 ' + remaining + '/' + totalStock : '已售罄')}</span>
+          </div>
+          <div class="flash-time">${timeText}</div>
+          ${item.min_level ? `<div class="flash-eligibility">👑 等级要求: ${item.min_level}</div>` : ''}
+          <div class="flash-actions">
+            ${!isExpired && remaining > 0 ? `
+              <button class="btn-sm" onclick="subscribeFlash('${item.id}')">🔔 订阅</button>
+              <button class="btn-sm" onclick="purchaseFlash('${item.id}')">💰 购买</button>
+            ` : '<span style="color:var(--muted);font-size:12px;">已结束</span>'}
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="loading">❌ ${e.message}</div>`;
+  }
+}
+
+function formatCountdown(dateStr) {
+  if (!dateStr) return '';
+  const diff = new Date(dateStr) - new Date();
+  if (diff <= 0) return '⏰ 已结束';
+  const days = Math.floor(diff / 86400000);
+  const hours = Math.floor((diff % 86400000) / 3600000);
+  const mins = Math.floor((diff % 3600000) / 60000);
+  const secs = Math.floor((diff % 60000) / 1000);
+  if (days > 0) return `⏱️ 剩余 ${days}天${hours}小时`;
+  if (hours > 0) return `⏱️ 剩余 ${hours}时${mins}分`;
+  return `⏱️ 剩余 ${mins}分${secs}秒`;
+}
+
+async function subscribeFlash(flashId) {
+  if (!state.token) { showToast('请先登录', true); return; }
+  try {
+    await api('/api/v1/flash/' + flashId + '/subscribe', { method: 'POST' });
+    showToast('🔔 订阅成功！开售时将通知您');
+  } catch (e) {
+    showToast('❌ ' + e.message, true);
+  }
+}
+
+async function purchaseFlash(flashId) {
+  if (!state.token) { showToast('请先登录', true); return; }
+  try {
+    const res = await api('/api/v1/flash/' + flashId + '/purchase', { method: 'POST' });
+    showToast('🎉 抢购成功！' + (res.data?.item_name || ''));
+    loadFlashSales();
+  } catch (e) {
+    showToast('❌ ' + e.message, true);
+  }
 }

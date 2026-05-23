@@ -926,6 +926,151 @@ func New(cfg config.Config) (http.Handler, error) {
 		response.JSON(w, http.StatusOK, "ok", "sent gifts", gifts)
 	})
 
+	// 🆕 v1.6 碎片拼图路由
+
+	mux.HandleFunc("GET /api/v1/puzzle/templates", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		templates, err := services.GetPuzzleTemplates(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "puzzle templates", templates)
+	})
+
+	mux.HandleFunc("GET /api/v1/puzzle/progress/{template_id}", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		progress, err := services.GetPuzzleProgress(token, r.PathValue("template_id"))
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "puzzle progress", progress)
+	})
+
+	mux.HandleFunc("GET /api/v1/puzzle/my", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		progress, err := services.GetAllPuzzleProgress(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "all puzzle progress", progress)
+	})
+
+	mux.HandleFunc("POST /api/v1/puzzle/compose", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		var input struct {
+			TemplateID string `json:"template_id"`
+		}
+		if err := decodeJSON(r, &input); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		result, err := services.ComposePuzzle(token, input.TemplateID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "puzzle composed", result)
+	})
+
+	mux.HandleFunc("POST /api/v1/puzzle/team/create", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		var input struct {
+			TemplateID string `json:"template_id"`
+		}
+		if err := decodeJSON(r, &input); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		team, err := services.CreatePuzzleTeam(token, input.TemplateID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "puzzle team created", team)
+	})
+
+	mux.HandleFunc("POST /api/v1/puzzle/team/join", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		var input struct {
+			TeamID string `json:"team_id"`
+		}
+		if err := decodeJSON(r, &input); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		result, err := services.JoinPuzzleTeam(token, input.TeamID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "joined puzzle team", result)
+	})
+
+	mux.HandleFunc("GET /api/v1/puzzle/team/my", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		teams, err := services.GetMyPuzzleTeams(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "my puzzle teams", teams)
+	})
+
+	// 🆕 v1.6 预约抢购路由
+
+	mux.HandleFunc("GET /api/v1/flash/list", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		list, err := services.GetFlashList(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "flash list", list)
+	})
+
+	mux.HandleFunc("POST /api/v1/flash/{id}/subscribe", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		result, err := services.SubscribeFlash(token, r.PathValue("id"))
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "subscribed", result)
+	})
+
+	mux.HandleFunc("POST /api/v1/flash/{id}/unsubscribe", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		result, err := services.UnsubscribeFlash(token, r.PathValue("id"))
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "unsubscribed", result)
+	})
+
+	mux.HandleFunc("POST /api/v1/flash/{id}/purchase", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		result, err := services.PurchaseFlash(token, r.PathValue("id"))
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "purchased", result)
+	})
+
+	mux.HandleFunc("GET /api/v1/flash/my", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		subscriptions, err := services.GetMyFlashSubscriptions(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "my flash subscriptions", subscriptions)
+	})
+
 	return mux, nil
 }
 

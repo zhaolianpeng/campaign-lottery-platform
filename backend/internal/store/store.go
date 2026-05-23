@@ -239,4 +239,50 @@ LogPoints(userID string, points int64, balance int64, reason, remark string) err
 	GetFirstRechargeStatus(userID string) (*model.UserFirstRecharge, error)
 	// ClaimFirstRecharge 领取首充礼包
 	ClaimFirstRecharge(userID string, packID string) (*model.ClaimFirstRechargeResult, error)
+
+	// 🆕 ---- v1.6 碎片拼图 ----
+	// GetActivePuzzleTemplates 获取当前活跃的拼图模板列表
+	GetActivePuzzleTemplates() []model.PuzzleTemplate
+	// GetPuzzleTemplate 获取拼图模板详情
+	GetPuzzleTemplate(templateID string) (*model.PuzzleTemplate, error)
+	// GetOrCreatePuzzleProgress 获取或创建用户拼图进度
+	GetOrCreatePuzzleProgress(userID, templateID string) (*model.PuzzleProgress, error)
+	// AddPuzzlePiece 收集碎片（添加位置索引到用户进度），返回是否是新收集
+	AddPuzzlePiece(userID, templateID string, pieceIndex int) (bool, error)
+	// ComposePuzzle 合成拼图（集齐所有碎片后兑换奖励）
+	ComposePuzzle(userID, templateID string) (*model.ComposePuzzleResult, error)
+	// GetPuzzleInfo 获取拼图详细信息（进度+模板）
+	GetPuzzleInfo(userID, templateID string) (*model.PuzzleInfo, error)
+	// CreatePuzzleTeam 创建拼图小队
+	CreatePuzzleTeam(captainID, templateID string) (*model.PuzzleTeam, error)
+	// JoinPuzzleTeam 加入拼图小队
+	JoinPuzzleTeam(userID, teamID string) (*model.PuzzleTeam, error)
+	// GetPuzzleTeam 获取拼图小队信息
+	GetPuzzleTeam(teamID string) (*model.PuzzleTeam, error)
+	// GetUserPuzzleTeams 获取用户加入的拼图小队
+	GetUserPuzzleTeams(userID string) ([]model.PuzzleTeam, error)
+	// GetUserPuzzleProgresses 获取用户所有拼图进度
+	GetUserPuzzleProgresses(userID string) ([]model.PuzzleInfo, error)
+	// SharePuzzlePiece 在拼图小队中共享碎片
+	SharePuzzlePiece(userID, teamID string, pieceIndex int) (bool, error)
+
+	// 🆕 ---- v1.6 预约/抢购 ----
+	// GetFlashSales 获取抢购活动列表
+	GetFlashSales() []model.FlashSale
+	// GetFlashSale 获取抢购活动详情
+	GetFlashSale(flashID string) (*model.FlashSale, error)
+	// SubscribeFlash 预约抢购活动
+	SubscribeFlash(userID, flashID string) error
+	// UnsubscribeFlash 取消预约
+	UnsubscribeFlash(userID, flashID string) error
+	// IsFlashSubscribed 检查用户是否已预约
+	IsFlashSubscribed(userID, flashID string) (bool, error)
+	// PurchaseFlash 执行抢购（扣积分减库存）
+	PurchaseFlash(userID, flashID string) (*model.FlashPurchaseResult, error)
+	// GetUserFlashSubscriptions 获取用户预约列表
+	GetUserFlashSubscriptions(userID string) ([]model.FlashSubscription, error)
+	// CreateFlashSale 创建抢购活动（管理端）
+	CreateFlashSale(input model.FlashSale) (*model.FlashSale, error)
+	// UpdateFlashSaleStatus 更新抢购状态
+	UpdateFlashSaleStatus(flashID, status string) error
 }

@@ -39,6 +39,7 @@
       <button class="tab" data-tab="member" onclick="switchTab('member')">👑 会员</button>
       <button class="tab" data-tab="shop" onclick="switchTab('shop')">🛒 商店</button>
       <button class="tab" data-tab="social" onclick="switchTab('social')">🤝 社交</button>
+      <button class="tab" data-tab="puzzle" onclick="switchTab('puzzle')">🧩 拼图</button>
     </nav>
 
     <!-- ===== 系列列表 Tab ===== -->
@@ -137,6 +138,20 @@
         <div id="sentGifts" class="gift-list"></div>
       </div>
     </div>
+
+    <!-- ===== 🧩 拼图 Tab ===== -->
+    <div id="tab-puzzle" class="tab-content">
+      <div class="panel-head"><h2>🧩 碎片拼图</h2></div>
+      <div id="puzzleTemplates" class="puzzle-grid">
+        <div class="loading">加载中...</div>
+      </div>
+      <!-- ⚡ 限时抢购 -->
+      <div id="flashSection" class="flash-section">
+        <h3>⚡ 限时抢购</h3>
+        <div id="flashList" class="flash-grid"><div class="loading">加载中...</div></div>
+      </div>
+    </div>
+
   </div>
 
   <!-- 首充礼包弹窗 -->
@@ -225,6 +240,16 @@
       <p class="hint">⏰ 队伍有效48小时，全员达标后平分奖励</p>
       <button class="btn-primary" onclick="createTeam()">🚀 创建</button>
       <button onclick="closeCreateTeamModal()">取消</button>
+    </div>
+  </div>
+
+  <!-- 🧩 拼图详情弹窗 -->
+  <div id="puzzleDetailModal" class="modal hidden">
+    <div class="modal-bg" onclick="closePuzzleModal()"></div>
+    <div class="modal-content modal-lg">
+      <h2 id="puzzleModalTitle">🧩 拼图</h2>
+      <div id="puzzleModalBody"></div>
+      <button class="btn-sm" onclick="closePuzzleModal()">关闭</button>
     </div>
   </div>
 

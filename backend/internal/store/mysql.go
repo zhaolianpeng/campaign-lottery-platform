@@ -1884,3 +1884,66 @@ func (store *MySQLStore) CreateShareCard(userID string, cardType string, title, 
 func (store *MySQLStore) GetShareCards(userID string) ([]model.ShareCard, error) {
 	return nil, fmt.Errorf("mysql social not implemented, use memory store")
 }
+func (store *MySQLStore) GetActivePuzzleTemplates() []model.PuzzleTemplate {
+	return nil
+}
+func (store *MySQLStore) GetPuzzleTemplate(templateID string) (*model.PuzzleTemplate, error) {
+	return nil, fmt.Errorf("mysql puzzle not implemented, use memory store")
+}
+func (store *MySQLStore) GetOrCreatePuzzleProgress(userID, templateID string) (*model.PuzzleProgress, error) {
+	return nil, fmt.Errorf("mysql puzzle not implemented, use memory store")
+}
+func (store *MySQLStore) AddPuzzlePiece(userID, templateID string, pieceIndex int) (bool, error) {
+	return false, fmt.Errorf("mysql puzzle not implemented, use memory store")
+}
+func (store *MySQLStore) ComposePuzzle(userID, templateID string) (*model.ComposePuzzleResult, error) {
+	return nil, fmt.Errorf("mysql puzzle not implemented, use memory store")
+}
+func (store *MySQLStore) GetPuzzleInfo(userID, templateID string) (*model.PuzzleInfo, error) {
+	return nil, fmt.Errorf("mysql puzzle not implemented, use memory store")
+}
+func (store *MySQLStore) CreatePuzzleTeam(captainID, templateID string) (*model.PuzzleTeam, error) {
+	return nil, fmt.Errorf("mysql puzzle not implemented, use memory store")
+}
+func (store *MySQLStore) JoinPuzzleTeam(userID, teamID string) (*model.PuzzleTeam, error) {
+	return nil, fmt.Errorf("mysql puzzle not implemented, use memory store")
+}
+func (store *MySQLStore) GetPuzzleTeam(teamID string) (*model.PuzzleTeam, error) {
+	return nil, fmt.Errorf("mysql puzzle not implemented, use memory store")
+}
+func (store *MySQLStore) GetUserPuzzleTeams(userID string) ([]model.PuzzleTeam, error) {
+	return nil, fmt.Errorf("mysql puzzle not implemented, use memory store")
+}
+func (store *MySQLStore) GetUserPuzzleProgresses(userID string) ([]model.PuzzleInfo, error) {
+	return nil, fmt.Errorf("mysql puzzle not implemented, use memory store")
+}
+func (store *MySQLStore) SharePuzzlePiece(userID, teamID string, pieceIndex int) (bool, error) {
+	return false, fmt.Errorf("mysql puzzle not implemented, use memory store")
+}
+func (store *MySQLStore) GetFlashSales() []model.FlashSale {
+	return nil
+}
+func (store *MySQLStore) GetFlashSale(flashID string) (*model.FlashSale, error) {
+	return nil, fmt.Errorf("mysql flash not implemented, use memory store")
+}
+func (store *MySQLStore) SubscribeFlash(userID, flashID string) error {
+	return fmt.Errorf("mysql flash not implemented, use memory store")
+}
+func (store *MySQLStore) UnsubscribeFlash(userID, flashID string) error {
+	return fmt.Errorf("mysql flash not implemented, use memory store")
+}
+func (store *MySQLStore) IsFlashSubscribed(userID, flashID string) (bool, error) {
+	return false, fmt.Errorf("mysql flash not implemented, use memory store")
+}
+func (store *MySQLStore) PurchaseFlash(userID, flashID string) (*model.FlashPurchaseResult, error) {
+	return nil, fmt.Errorf("mysql flash not implemented, use memory store")
+}
+func (store *MySQLStore) GetUserFlashSubscriptions(userID string) ([]model.FlashSubscription, error) {
+	return nil, fmt.Errorf("mysql flash not implemented, use memory store")
+}
+func (store *MySQLStore) CreateFlashSale(input model.FlashSale) (*model.FlashSale, error) {
+	return nil, fmt.Errorf("mysql flash not implemented, use memory store")
+}
+func (store *MySQLStore) UpdateFlashSaleStatus(flashID, status string) error {
+	return fmt.Errorf("mysql flash not implemented, use memory store")
+}

@@ -470,3 +470,74 @@ h2 { font-size: 18px; margin-bottom: 12px; }
   border-radius: 12px; font-size: 13px; z-index: 999;
   transition: opacity 0.3s; max-width: 80vw; text-align: center; }
 .toast.error { border: 1px solid #ff4444; }
+
+/* ============================================================
+   🧩 拼图碎片 样式
+   ============================================================ */
+
+.puzzle-grid { display: flex; flex-direction: column; gap: 12px; }
+.puzzle-card {
+  background: linear-gradient(135deg, rgba(167,139,250,0.12), rgba(244,114,182,0.12));
+  border: 1px solid rgba(167,139,250,0.25);
+  border-radius: var(--radius);
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.puzzle-card:active { transform: scale(0.98); }
+.puzzle-header { margin-bottom: 8px; }
+.puzzle-name { font-size: 16px; font-weight: 700; }
+.puzzle-meta { display: flex; gap: 12px; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+.puzzle-progress { margin: 8px 0; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+.puzzle-progress .progress-bar { flex: 1; }
+.puzzle-actions { display: flex; gap: 8px; margin-top: 10px; }
+.puzzle-actions .btn-sm { font-size: 12px; }
+
+/* 拼图碎片网格（弹窗内） */
+.puzzle-grid-visual {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin: 12px 0;
+}
+.puzzle-piece {
+  aspect-ratio: 1;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.puzzle-piece.collected {
+  background: linear-gradient(135deg, rgba(52,211,153,0.3), rgba(16,185,129,0.3));
+  border: 1px solid rgba(52,211,153,0.5);
+  color: var(--green);
+}
+.puzzle-piece.missing {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: var(--muted);
+}
+.puzzle-team-section { margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.08); }
+.puzzle-team-section .btn-sm { margin: 4px; }
+
+/* ============================================================
+   ⚡ 限时抢购 样式
+   ============================================================ */
+
+.flash-section { margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.08); }
+.flash-section h3 { font-size: 18px; margin-bottom: 12px; }
+.flash-grid { display: flex; flex-direction: column; gap: 10px; }
+.flash-card {
+  background: linear-gradient(135deg, rgba(251,191,36,0.1), rgba(245,158,11,0.1));
+  border: 1px solid rgba(251,191,36,0.2);
+  border-radius: 12px;
+  padding: 14px;
+}
+.flash-card.expired { opacity: 0.6; }
+.flash-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.flash-name { font-size: 15px; font-weight: 700; }
+.flash-stock { font-size: 12px; color: var(--accent); font-weight: 600; }
+.flash-time { font-size: 12px; color: var(--gold); margin-bottom: 4px; }
+.flash-eligibility { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.flash-actions { display: flex; gap: 8px; margin-top: 8px; }
+.flash-actions .btn-sm { font-size: 12px; }

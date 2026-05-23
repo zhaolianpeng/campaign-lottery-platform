@@ -852,3 +852,126 @@ type InviteStats struct {
 	CompletedAssists int `json:"completed_assists"`
 	FreeDrawsEarned  int `json:"free_draws_earned"`
 }
+
+// ============================================================
+// 🆕 v1.6 碎片拼图 + 预约抢购 系统
+// ============================================================
+
+// PuzzleTemplate 拼图模板
+type PuzzleTemplate struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	CampaignID  string   `json:"campaign_id"`
+	TotalPieces int      `json:"total_pieces"`   // 6/12/24块
+	PieceNames  []string `json:"piece_names"`     // 每块碎片名称
+	RewardType  string   `json:"reward_type"`     // prize / points / draw_ticket
+	RewardID    string   `json:"reward_id,omitempty"`
+	RewardQty   int      `json:"reward_qty"`
+	RewardName  string   `json:"reward_name"`
+	PeriodType  string   `json:"period_type"` // weekly / monthly / festival
+	IsActive    bool     `json:"is_active"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// PuzzleProgress 用户拼图进度
+type PuzzleProgress struct {
+	UserID          string   `json:"user_id"`
+	TemplateID      string   `json:"template_id"`
+	Collected       []int    `json:"collected"`        // 已收集的碎片位置索引
+	TotalPieces     int      `json:"total_pieces"`
+	IsCompleted     bool     `json:"is_completed"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+	TeamID          string   `json:"team_id,omitempty"` // 社群拼图队伍ID
+}
+
+// PuzzleTeam 拼图小队
+type PuzzleTeam struct {
+	ID          string   `json:"id"`
+	TemplateID  string   `json:"template_id"`
+	CaptainID   string   `json:"captain_id"`
+	Members     []string `json:"members"`      // 成员userID列表
+	Shared      []int    `json:"shared"`       // 小队已共享的碎片位置
+	TotalPieces int      `json:"total_pieces"`
+	IsCompleted bool     `json:"is_completed"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// PuzzlePieceDrop 碎片掉落结果（抽奖时可能附带）
+type PuzzlePieceDrop struct {
+	TemplateID string `json:"template_id"`
+	PieceIndex int    `json:"piece_index"`
+	PieceName  string `json:"piece_name"`
+	IsNew      bool   `json:"is_new"` // 是否是新收集到的
+}
+
+// PuzzleInfo 拼图信息（给前端展示）
+type PuzzleInfo struct {
+	Template        *PuzzleTemplate         `json:"template"`
+	Progress        *PuzzleProgress         `json:"progress"`
+	CollectedNames  []string                `json:"collected_names"`
+	MissingNames    []string                `json:"missing_names"`
+	ProgressPercent float64                 `json:"progress_percent"`
+}
+
+// CreatePuzzleTeamRequest 创建拼图小队请求
+type CreatePuzzleTeamRequest struct {
+	TemplateID string `json:"template_id"`
+}
+
+// JoinPuzzleTeamRequest 加入拼图小队请求
+type JoinPuzzleTeamRequest struct {
+	TeamID string `json:"team_id"`
+}
+
+// ComposePuzzleRequest 合成拼图请求
+type ComposePuzzleRequest struct {
+	TemplateID string `json:"template_id"`
+}
+
+// ComposePuzzleResult 合成拼图结果
+type ComposePuzzleResult struct {
+	TemplateID  string `json:"template_id"`
+	TemplateName string `json:"template_name"`
+	RewardType  string `json:"reward_type"`
+	RewardName  string `json:"reward_name"`
+	RewardQty   int    `json:"reward_qty"`
+}
+
+// FlashSale 抢购活动
+type FlashSale struct {
+	ID             string    `json:"id"`
+	CampaignID     string    `json:"campaign_id"`
+	Name           string    `json:"name"`
+	Description    string    `json:"description"`
+	PricePoints    int64     `json:"price_points"`     // 抢购价格（积分）
+	TotalStock     int       `json:"total_stock"`      // 总库存
+	RemainingStock int       `json:"remaining_stock"`  // 剩余库存
+	MinVipLevel    string    `json:"min_vip_level"`    // 最低会员等级要求
+	MinTotalDraws  int64     `json:"min_total_draws"`  // 最少抽奖次数要求
+	StartAt        time.Time `json:"start_at"`
+	EndAt          time.Time `json:"end_at"`
+	Status         string    `json:"status"`           // upcoming / active / ended
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// FlashSubscription 用户抢购预约
+type FlashSubscription struct {
+	UserID    string    `json:"user_id"`
+	FlashID   string    `json:"flash_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// FlashPurchaseResult 抢购结果
+type FlashPurchaseResult struct {
+	FlashID   string `json:"flash_id"`
+	FlashName string `json:"flash_name"`
+	Success   bool   `json:"success"`
+	Message   string `json:"message"`
+}
+
+// FlashListInfo 抢购列表项（前端展示）
+type FlashListInfo struct {
+	Flash       *FlashSale        `json:"flash"`
+	Subscribed  bool              `json:"subscribed"`
+	Purchasable bool              `json:"purchasable"` // 是否符合资格
+}
