@@ -799,3 +799,34 @@ func scanDrawRecords(rows *sql.Rows) ([]model.DrawRecord, error) {
 func parseTaskID(raw string) (int64, error) {
 	return strconv.ParseInt(raw, 10, 64)
 }
+
+// 🆕 ---- v2.0 活动系统 MySQL stubs ----
+func (store *MySQLStore) GetActiveActivities() []model.Activity { return nil }
+func (store *MySQLStore) GetAllActivities() []model.Activity { return nil }
+func (store *MySQLStore) GetActivity(activityID string) (*model.Activity, error) {
+	return nil, fmt.Errorf("mysql activity not implemented, use memory store")
+}
+func (store *MySQLStore) CreateActivity(input model.ActivityCreateRequest) (*model.Activity, error) {
+	return nil, fmt.Errorf("mysql activity not implemented, use memory store")
+}
+func (store *MySQLStore) UpdateActivity(activityID string, input model.ActivityUpdateRequest) (*model.Activity, error) {
+	return nil, fmt.Errorf("mysql activity not implemented, use memory store")
+}
+func (store *MySQLStore) DeleteActivity(activityID string) error {
+	return fmt.Errorf("mysql activity not implemented, use memory store")
+}
+func (store *MySQLStore) GetActivityRewards(activityID string) ([]model.ActivityReward, error) {
+	return nil, fmt.Errorf("mysql activity not implemented, use memory store")
+}
+func (store *MySQLStore) JoinActivity(userID, activityID string) (*model.ActivityParticipation, error) {
+	return nil, fmt.Errorf("mysql activity not implemented, use memory store")
+}
+func (store *MySQLStore) GetUserActivityParticipation(userID, activityID string) (*model.ActivityParticipation, error) {
+	return nil, fmt.Errorf("mysql activity not implemented, use memory store")
+}
+func (store *MySQLStore) GetUserActivityParticipations(userID string) ([]model.ActivityParticipation, error) {
+	return nil, fmt.Errorf("mysql activity not implemented, use memory store")
+}
+func (store *MySQLStore) ClaimActivityReward(userID, activityID, rewardID string) (*model.ActivityReward, error) {
+	return nil, fmt.Errorf("mysql activity not implemented, use memory store")
+}
