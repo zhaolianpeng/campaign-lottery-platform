@@ -689,6 +689,243 @@ func New(cfg config.Config) (http.Handler, error) {
 		response.JSON(w, http.StatusOK, "ok", "first recharge claimed", result)
 	})
 
+	// ============================================================
+	// 🆕 v1.5 社交裂变路由
+	// ============================================================
+
+	// ---- 分享卡片 ----
+
+	// 生成分享卡片
+	mux.HandleFunc("POST /api/v1/share/card", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		var input struct {
+			CardType   string `json:"card_type"`
+			PrizeName  string `json:"prize_name,omitempty"`
+			PrizeLevel string `json:"prize_level,omitempty"`
+		}
+		if err := decodeJSON(r, &input); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		card, err := services.CreateShareCard(token, input.CardType, input.PrizeName, input.PrizeLevel)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "share card", card)
+	})
+
+	// 获取我的分享卡片
+	mux.HandleFunc("GET /api/v1/share/cards", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		cards, err := services.GetShareCards(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "my share cards", cards)
+	})
+
+	// ---- 邀请 ----
+
+	// 生成邀请链接
+	mux.HandleFunc("POST /api/v1/share/invite", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		card, err := services.GenerateInviteLink(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "invite link", card)
+	})
+
+	// 邀请记录（查询我邀请的人）
+	mux.HandleFunc("GET /api/v1/share/invitees", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		records, err := services.GetInviteRecords(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "invite records", records)
+	})
+
+	// 邀请统计
+	mux.HandleFunc("GET /api/v1/share/invite-stats", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		stats, err := services.GetInviteStats(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "invite stats", stats)
+	})
+
+	// ---- 好友助力 ----
+
+	// 查询助力进度
+	mux.HandleFunc("GET /api/v1/share/assist-progress", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		progress, err := services.GetAssistAllProgress(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "assist progress", progress)
+	})
+
+	// 好友助力
+	mux.HandleFunc("POST /api/v1/share/assist", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		var input struct {
+			AssistType string `json:"assist_type"`
+			HelperID   string `json:"helper_id"`
+		}
+		if err := decodeJSON(r, &input); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		progress, err := services.AssistAction(token, model.AssistType(input.AssistType), input.HelperID)
+		if err != nil {
+			response.JSON(w, http.StatusConflict, "assist_error", err.Error(), nil)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "assist recorded", progress)
+	})
+
+	// 领取助力奖励
+	mux.HandleFunc("POST /api/v1/share/assist-claim", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		var input struct {
+			AssistType string `json:"assist_type"`
+		}
+		if err := decodeJSON(r, &input); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		result, err := services.ClaimAssistReward(token, model.AssistType(input.AssistType))
+		if err != nil {
+			response.JSON(w, http.StatusConflict, "claim_error", err.Error(), nil)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "assist reward claimed", result)
+	})
+
+	// ---- 组队开盒 ----
+
+	// 创建队伍
+	mux.HandleFunc("POST /api/v1/team/create", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		var input model.CreateTeamRequest
+		if err := decodeJSON(r, &input); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		info, err := services.CreateTeam(token, input)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "team created", info)
+	})
+
+	// 加入队伍
+	mux.HandleFunc("POST /api/v1/team/join", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		var input struct {
+			TeamID string `json:"team_id"`
+		}
+		if err := decodeJSON(r, &input); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		info, err := services.JoinTeam(token, input.TeamID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "team joined", info)
+	})
+
+	// 我的队伍信息
+	mux.HandleFunc("GET /api/v1/team/my", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		info, err := services.GetMyTeam(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "my team", info)
+	})
+
+	// 离开队伍
+	mux.HandleFunc("POST /api/v1/team/leave", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		if err := services.LeaveTeam(token); err != nil {
+			response.JSON(w, http.StatusConflict, "leave_error", err.Error(), nil)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "team left", nil)
+	})
+
+	// ---- 礼物赠送 ----
+
+	// 赠送盲盒
+	mux.HandleFunc("POST /api/v1/share/gift", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		var input model.SendGiftRequest
+		if err := decodeJSON(r, &input); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		gift, err := services.SendGift(token, input)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "gift sent", gift)
+	})
+
+	// 接收礼物
+	mux.HandleFunc("POST /api/v1/share/gift/receive", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		var input struct {
+			GiftID string `json:"gift_id"`
+		}
+		if err := decodeJSON(r, &input); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		result, err := services.ReceiveGift(token, input.GiftID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "gift received", result)
+	})
+
+	// 我的待收礼物
+	mux.HandleFunc("GET /api/v1/share/gifts/incoming", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		gifts, err := services.GetMyGifts(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "incoming gifts", gifts)
+	})
+
+	// 我送出的礼物
+	mux.HandleFunc("GET /api/v1/share/gifts/sent", func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		gifts, err := services.GetSentGifts(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "sent gifts", gifts)
+	})
+
 	return mux, nil
 }
 

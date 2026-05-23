@@ -60,6 +60,22 @@ type MemoryStore struct {
 	shopItems            []model.ShopItem
 	userItems            map[string]model.UserItem // key: userID:itemType
 	firstRechargeRecords map[string]model.UserFirstRecharge // key: userID
+
+	// 🆕 v1.5 社交裂变
+	inviteRecords       []model.InviteRecord
+	assistProgress      map[string]model.AssistProgress // key: inviterID:assistType
+	assistActions       []model.AssistAction
+	teamIDSeq           int
+	teams               map[string]model.Team
+	teamMembers         map[string][]model.TeamMember // key: teamID
+	giftRecords         []model.GiftRecord
+	giftIDSeq           int
+	shareCards          map[string][]model.ShareCard // key: userID
+	inviteIDSeq         int
+	assistIDSeq         int
+	shareCardIDSeq      int
+	teamRewards         map[string]model.TeamReward  // key: teamID
+	giftPrizeInfo       map[string]string            // giftID -> prizeName:prizeLevel
 }
 
 func NewMemoryStore(adminUser string, adminPassword string) *MemoryStore {
@@ -92,6 +108,15 @@ func NewMemoryStore(adminUser string, adminPassword string) *MemoryStore {
 		shopItems:              make([]model.ShopItem, 0),
 		userItems:              make(map[string]model.UserItem),
 		firstRechargeRecords:   make(map[string]model.UserFirstRecharge),
+		inviteRecords:          make([]model.InviteRecord, 0),
+		assistProgress:         make(map[string]model.AssistProgress),
+		assistActions:          make([]model.AssistAction, 0),
+		teams:                  make(map[string]model.Team),
+		teamMembers:            make(map[string][]model.TeamMember),
+		giftRecords:            make([]model.GiftRecord, 0),
+		shareCards:             make(map[string][]model.ShareCard),
+		teamRewards:            make(map[string]model.TeamReward),
+		giftPrizeInfo:          make(map[string]string),
 	}
 
 	store.seedDefaultCampaign()
@@ -2073,4 +2098,741 @@ func (s *MemoryStore) ClaimFirstRecharge(userID string, packID string) (*model.C
 		PackID: packID, PackName: pack.Name,
 		Items: pack.Items, NewPoints: member.Points,
 	}, nil
+}
+
+// GenerateID generates a random hex ID using crypto/rand (8 bytes → 16 hex chars)
+func (s *MemoryStore) GenerateID() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// CreateInviteRecord creates a new invite record
+func (s *MemoryStore) CreateInviteRecord(inviterID, inviteeID string) *model.InviteRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.inviteIDSeq++
+	record := model.InviteRecord{
+		ID:        "inv_" + strconv.Itoa(s.inviteIDSeq),
+		InviterID: inviterID,
+		InviteeID: inviteeID,
+		CreatedAt: time.Now().UTC(),
+	}
+	s.inviteRecords = append(s.inviteRecords, record)
+	return &record
+}
+
+// GetInviteRecords returns all invite records where InviterID == userID
+func (s *MemoryStore) GetInviteRecords(userID string) []model.InviteRecord {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []model.InviteRecord
+	for _, r := range s.inviteRecords {
+		if r.InviterID == userID {
+			result = append(result, r)
+		}
+	}
+	return result
+}
+
+// GetInviteStats returns total invite count and total assist count for a user
+func (s *MemoryStore) GetInviteStats(userID string) (invites int, assists int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, r := range s.inviteRecords {
+		if r.InviterID == userID {
+			invites++
+		}
+	}
+	for _, a := range s.assistActions {
+		if a.InviterID == userID {
+			assists++
+		}
+	}
+	return
+}
+
+// GetOrCreateAssistProgress returns existing assist progress or creates a new one.
+// TargetCount: free_draw=3, pity_reduce=5, craft_boost=2. ExpiresAt = now+24h.
+func (s *MemoryStore) GetOrCreateAssistProgress(inviterID string, assistType model.AssistType) *model.AssistProgress {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := fmt.Sprintf("%s:%s", inviterID, assistType)
+	if p, ok := s.assistProgress[key]; ok {
+		return &p
+	}
+
+	var targetCount int
+	switch assistType {
+	case model.AssistFreeDraw:
+		targetCount = 3
+	case model.AssistPityReduce:
+		targetCount = 5
+	case model.AssistCraftBoost:
+		targetCount = 2
+	default:
+		targetCount = 3
+	}
+
+	created := time.Now().UTC()
+	progress := model.AssistProgress{
+		InviterID:   inviterID,
+		AssistType:  assistType,
+		TargetCount: targetCount,
+		Current:     0,
+		Claimed:     false,
+		ExpiresAt:   created.Add(24 * time.Hour),
+		CreatedAt:   created,
+	}
+	s.assistProgress[key] = progress
+	return &progress
+}
+
+// IsAssistActionRecorded checks if the same helper already assisted today for the given type
+func (s *MemoryStore) IsAssistActionRecorded(inviterID, helperID string, assistType model.AssistType) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	now := time.Now().UTC()
+	for _, a := range s.assistActions {
+		if a.InviterID == inviterID && a.HelperID == helperID && a.AssistType == assistType {
+			if a.CreatedAt.Year() == now.Year() && a.CreatedAt.YearDay() == now.YearDay() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// RecordAssistAction records a new assist action with a generated ID and current timestamp
+func (s *MemoryStore) RecordAssistAction(inviterID, helperID string, assistType model.AssistType) *model.AssistAction {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.assistIDSeq++
+	action := model.AssistAction{
+		ID:         "ast_" + strconv.Itoa(s.assistIDSeq),
+		InviterID:  inviterID,
+		HelperID:   helperID,
+		AssistType: assistType,
+		CreatedAt:  time.Now().UTC(),
+	}
+	s.assistActions = append(s.assistActions, action)
+	return &action
+}
+
+// ============================================================
+// 队伍社交 (Team Social)
+// ============================================================
+
+// CreateTeam creates a new team with the given captain and request.
+func (s *MemoryStore) CreateTeam(captainID string, input model.CreateTeamRequest) (*model.Team, error) {
+	if input.MaxMembers < 2 || input.MaxMembers > 5 {
+		return nil, errors.New("max_members must be between 2 and 5")
+	}
+	if input.GoalDraws <= 0 {
+		return nil, errors.New("goal_draws must be greater than 0")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Check user doesn't already have an active team
+	activeTeam := s.getUserActiveTeamLocked(captainID)
+	if activeTeam != nil {
+		return nil, errors.New("user already has an active team")
+	}
+
+	now := time.Now().UTC()
+	team := model.Team{
+		ID:           s.GenerateID(),
+		CaptainID:    captainID,
+		Name:         input.Name,
+		MaxMembers:   input.MaxMembers,
+		GoalDraws:    input.GoalDraws,
+		CurrentDraws: 0,
+		StartsAt:     now,
+		ExpiresAt:    now.Add(48 * time.Hour),
+		Status:       "recruiting",
+		CreatedAt:    now,
+	}
+
+	s.teams[team.ID] = team
+
+	// Add captain as first team member
+	member := model.TeamMember{
+		TeamID:   team.ID,
+		UserID:   captainID,
+		Draws:    0,
+		JoinedAt: now,
+	}
+	s.teamMembers[team.ID] = []model.TeamMember{member}
+
+	return &team, nil
+}
+
+// JoinTeam adds a user to an existing team.
+func (s *MemoryStore) JoinTeam(userID, teamID string) (*model.TeamMember, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	team, ok := s.teams[teamID]
+	if !ok {
+		return nil, errors.New("team not found")
+	}
+	if team.Status != "recruiting" {
+		return nil, errors.New("team is not recruiting")
+	}
+
+	members := s.teamMembers[teamID]
+	if len(members) >= team.MaxMembers {
+		return nil, errors.New("team is full")
+	}
+
+	// Check user not already in team
+	for _, m := range members {
+		if m.UserID == userID {
+			return nil, errors.New("user is already in this team")
+		}
+	}
+
+	now := time.Now().UTC()
+	member := model.TeamMember{
+		TeamID:   teamID,
+		UserID:   userID,
+		Draws:    0,
+		JoinedAt: now,
+	}
+	s.teamMembers[teamID] = append(members, member)
+
+	// If full, set status to active
+	if len(s.teamMembers[teamID]) >= team.MaxMembers {
+		team.Status = "active"
+		s.teams[teamID] = team
+	}
+
+	return &member, nil
+}
+
+// LeaveTeam removes a user from a team. If the captain leaves, the next oldest
+// member becomes captain. If no members remain, the team is disbanded.
+func (s *MemoryStore) LeaveTeam(userID, teamID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	team, ok := s.teams[teamID]
+	if !ok {
+		return errors.New("team not found")
+	}
+
+	members := s.teamMembers[teamID]
+	found := false
+	var idx int
+	for i, m := range members {
+		if m.UserID == userID {
+			found = true
+			idx = i
+			break
+		}
+	}
+	if !found {
+		return errors.New("user is not a member of this team")
+	}
+
+	// Remove the member
+	members = append(members[:idx], members[idx+1:]...)
+
+	if len(members) == 0 {
+		// No members left, disband the team
+		delete(s.teams, teamID)
+		delete(s.teamMembers, teamID)
+		return nil
+	}
+
+	s.teamMembers[teamID] = members
+
+	// If the leaving user was the captain, transfer captaincy to the next oldest member
+	if team.CaptainID == userID {
+		// First member in the slice is the oldest (they joined earliest)
+		team.CaptainID = members[0].UserID
+		s.teams[teamID] = team
+	}
+
+	return nil
+}
+
+// GetTeam returns a team by ID.
+func (s *MemoryStore) GetTeam(teamID string) (*model.Team, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	team, ok := s.teams[teamID]
+	if !ok {
+		return nil, errors.New("team not found")
+	}
+	return &team, nil
+}
+
+// GetTeamMembers returns all members of a team.
+func (s *MemoryStore) GetTeamMembers(teamID string) ([]model.TeamMember, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	members, ok := s.teamMembers[teamID]
+	if !ok {
+		return nil, errors.New("team not found")
+	}
+	return members, nil
+}
+
+// GetUserActiveTeam finds an active team (recruiting or active) for a user.
+func (s *MemoryStore) GetUserActiveTeam(userID string) (*model.Team, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	t := s.getUserActiveTeamLocked(userID)
+	if t == nil {
+		return nil, nil
+	}
+	return t, nil
+}
+
+// getUserActiveTeamLocked is an internal helper that assumes the read lock is held.
+func (s *MemoryStore) getUserActiveTeamLocked(userID string) *model.Team {
+	for _, team := range s.teams {
+		if team.Status != "recruiting" && team.Status != "active" {
+			continue
+		}
+		members := s.teamMembers[team.ID]
+		for _, m := range members {
+			if m.UserID == userID {
+				return &team
+			}
+		}
+	}
+	return nil
+}
+
+// AddTeamDraw increments the draw count for a team and its member.
+func (s *MemoryStore) AddTeamDraw(userID, teamID string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	team, ok := s.teams[teamID]
+	if !ok {
+		return 0, errors.New("team not found")
+	}
+
+	members := s.teamMembers[teamID]
+	found := false
+	for i, m := range members {
+		if m.UserID == userID {
+			m.Draws++
+			members[i] = m
+			found = true
+			break
+		}
+	}
+	if !found {
+		return 0, errors.New("user is not a member of this team")
+	}
+
+	s.teamMembers[teamID] = members
+	team.CurrentDraws++
+	s.teams[teamID] = team
+
+	return team.CurrentDraws, nil
+}
+
+// CompleteTeam marks a team as completed and creates a team reward.
+// Each member (including captain) gets GoalDraws * 10 points.
+// The captain gets an additional 5% bonus.
+func (s *MemoryStore) CompleteTeam(teamID string) (*model.TeamReward, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	team, ok := s.teams[teamID]
+	if !ok {
+		return nil, errors.New("team not found")
+	}
+
+	now := time.Now().UTC()
+	team.Status = "completed"
+	team.CompletedAt = &now
+	s.teams[teamID] = team
+
+	// Calculate rewards
+	basePoints := team.GoalDraws * 10
+	captainPoints := int(float64(basePoints) * 1.05)
+
+	// Award points to members (update user member balances)
+	members := s.teamMembers[teamID]
+	for _, m := range members {
+		pts := basePoints
+		if m.UserID == team.CaptainID {
+			pts = captainPoints
+		}
+		if member, ok := s.members[m.UserID]; ok {
+			member.Points += int64(pts)
+			s.members[m.UserID] = member
+		}
+		// Also log the points
+		s.pointsLog = append(s.pointsLog, model.UserPointsLog{
+			ID:       s.nextTaskID,
+			UserID:   m.UserID,
+			Points:   int64(pts),
+			Balance:  s.members[m.UserID].Points,
+			Reason:   "team_reward",
+			Remark:   fmt.Sprintf("组队奖励：完成 %d 次开盒", team.GoalDraws),
+			CreatedAt: now,
+		})
+		s.nextTaskID++
+	}
+
+	reward := model.TeamReward{
+		TeamID:      teamID,
+		CaptainID:   team.CaptainID,
+		RewardType:  "points",
+		RewardQty:   captainPoints + basePoints*(len(members)-1),
+		Description: fmt.Sprintf("组队完成 %d 次开盒，每位成员获得 %d 积分，队长获得 %d 积分", team.GoalDraws, basePoints, captainPoints),
+	}
+	s.teamRewards[teamID] = reward
+
+	return &reward, nil
+}
+
+// ExpireTeam sets a team's status to expired.
+func (s *MemoryStore) ExpireTeam(teamID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	team, ok := s.teams[teamID]
+	if !ok {
+		return errors.New("team not found")
+	}
+	team.Status = "expired"
+	s.teams[teamID] = team
+	return nil
+}
+
+// GetExpiredTeams returns all teams that have recruiting or active status
+// but have passed their expiration time.
+func (s *MemoryStore) GetExpiredTeams() []model.Team {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	now := time.Now().UTC()
+	var expired []model.Team
+	for _, team := range s.teams {
+		if (team.Status == "recruiting" || team.Status == "active") && team.ExpiresAt.Before(now) {
+			expired = append(expired, team)
+		}
+	}
+	return expired
+}
+
+// IncrementAssistProgress increments the current count by 1 and returns the updated progress
+func (s *MemoryStore) IncrementAssistProgress(inviterID string, assistType model.AssistType) *model.AssistProgress {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := fmt.Sprintf("%s:%s", inviterID, assistType)
+	p := s.assistProgress[key]
+	p.Current++
+	s.assistProgress[key] = p
+	return &p
+}
+
+// ClaimAssistReward marks the assist progress as claimed
+func (s *MemoryStore) ClaimAssistReward(inviterID string, assistType model.AssistType) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	key := fmt.Sprintf("%s:%s", inviterID, assistType)
+	p := s.assistProgress[key]
+	p.Claimed = true
+	s.assistProgress[key] = p
+}
+
+// GetAssistProgress returns the assist progress for the given inviter and type
+func (s *MemoryStore) GetAssistProgress(inviterID string, assistType model.AssistType) *model.AssistProgress {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	key := fmt.Sprintf("%s:%s", inviterID, assistType)
+	p, ok := s.assistProgress[key]
+	if !ok {
+		return nil
+	}
+	return &p
+}
+
+// ============================================================
+// 🆕 礼物赠送系统
+// ============================================================
+
+// CreateGift 创建礼物（赠送道具）
+func (s *MemoryStore) CreateGift(giverID, receiverID, prizeID, campaignID string) (*model.GiftRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 查找奖品信息
+	prizes, ok := s.prizes[campaignID]
+	if !ok {
+		return nil, fmt.Errorf("campaign not found: %s", campaignID)
+	}
+	var prizeName, prizeLevel string
+	for _, p := range prizes {
+		if p.ID == prizeID {
+			prizeName = p.Name
+			prizeLevel = p.Level
+			break
+		}
+	}
+	if prizeName == "" {
+		return nil, fmt.Errorf("prize not found: %s", prizeID)
+	}
+
+	// 查找赠送者的库存
+	invIdx := -1
+	for i, inv := range s.inventory {
+		if inv.UserID == giverID && inv.PrizeID == prizeID && inv.CampaignID == campaignID {
+			invIdx = i
+			break
+		}
+	}
+	if invIdx == -1 {
+		return nil, fmt.Errorf("giver does not own this prize in inventory")
+	}
+
+	// 稀有/隐藏/限定款收取包装费
+	feePoints := int64(0)
+	if prizeLevel == model.PrizeLevelRare || prizeLevel == model.PrizeLevelSecret || prizeLevel == model.PrizeLevelLimited {
+		feePoints = 500
+		member, ok := s.members[giverID]
+		if !ok {
+			member = model.UserMember{UserID: giverID, Level: model.MemberNormal, Points: 0}
+		}
+		if member.Points < feePoints {
+			return nil, store.ErrInsufficientPoints
+		}
+		member.Points -= feePoints
+		s.members[giverID] = member
+
+		s.pointsLog = append(s.pointsLog, model.UserPointsLog{
+			ID:        int64(len(s.pointsLog) + 1),
+			UserID:    giverID,
+			Points:    -feePoints,
+			Balance:   member.Points,
+			Reason:    "gift_fee",
+			Remark:    fmt.Sprintf("赠送%s包装费", prizeName),
+			CreatedAt: time.Now().UTC(),
+		})
+	}
+
+	// 从赠送者库存中删除该道具
+	s.inventory = append(s.inventory[:invIdx], s.inventory[invIdx+1:]...)
+
+	// 创建礼物记录
+	s.giftIDSeq++
+	now := time.Now().UTC()
+	gift := model.GiftRecord{
+		ID:         "gift_" + strconv.Itoa(s.giftIDSeq),
+		GiverID:    giverID,
+		ReceiverID: receiverID,
+		PrizeID:    prizeID,
+		PrizeName:  prizeName,
+		PrizeLevel: prizeLevel,
+		FeePoints:  feePoints,
+		Status:     "sent",
+		CreatedAt:  now,
+		ExpiresAt:  now.Add(24 * time.Hour),
+	}
+	s.giftRecords = append(s.giftRecords, gift)
+
+	// 缓存奖品映射信息
+	s.giftPrizeInfo[gift.ID] = prizeName + ":" + prizeLevel
+
+	return &gift, nil
+}
+
+// GetGift 查询礼物
+func (s *MemoryStore) GetGift(giftID string) (*model.GiftRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for i := range s.giftRecords {
+		if s.giftRecords[i].ID == giftID {
+			return &s.giftRecords[i], nil
+		}
+	}
+	return nil, fmt.Errorf("gift not found: %s", giftID)
+}
+
+// ReceiveGift 接收礼物（将道具添加到接收者库存）
+func (s *MemoryStore) ReceiveGift(giftID string) (*model.ReceiveGiftResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	idx := -1
+	for i := range s.giftRecords {
+		if s.giftRecords[i].ID == giftID {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return nil, fmt.Errorf("gift not found: %s", giftID)
+	}
+
+	gift := &s.giftRecords[idx]
+	if gift.Status != "sent" {
+		return nil, fmt.Errorf("gift status is %s, cannot receive", gift.Status)
+	}
+
+	// 标记为已接收
+	now := time.Now().UTC()
+	gift.Status = "received"
+	gift.ReceivedAt = &now
+
+	// 添加道具到接收者库存
+	newItem := model.UserInventory{
+		ID:         "inv_" + randomSuffix(12),
+		UserID:     gift.ReceiverID,
+		PrizeID:    gift.PrizeID,
+		PrizeName:  gift.PrizeName,
+		PrizeLevel: gift.PrizeLevel,
+		CampaignID: "",
+		Source:     "gift",
+		CreatedAt:  now,
+	}
+	s.inventory = append(s.inventory, newItem)
+
+	// 从缓存中获取奖品信息
+	info := s.giftPrizeInfo[giftID]
+	parts := strings.SplitN(info, ":", 2)
+	result := &model.ReceiveGiftResult{
+		GiftID:    giftID,
+		NewItemID: newItem.ID,
+	}
+	if len(parts) == 2 {
+		result.PrizeName = parts[0]
+		result.PrizeLevel = parts[1]
+	} else {
+		result.PrizeName = gift.PrizeName
+		result.PrizeLevel = gift.PrizeLevel
+	}
+
+	return result, nil
+}
+
+// GetUserGifts 获取用户收到的礼物列表
+func (s *MemoryStore) GetUserGifts(userID string) ([]model.GiftRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]model.GiftRecord, 0)
+	for _, g := range s.giftRecords {
+		if g.ReceiverID == userID && g.Status == "sent" {
+			result = append(result, g)
+		}
+	}
+	return result, nil
+}
+
+// GetUserSentGifts 获取用户送出的礼物列表
+func (s *MemoryStore) GetUserSentGifts(userID string) ([]model.GiftRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]model.GiftRecord, 0)
+	for _, g := range s.giftRecords {
+		if g.GiverID == userID {
+			result = append(result, g)
+		}
+	}
+	return result, nil
+}
+
+// ExpireGift 过期礼物（将道具退回赠送者库存）
+func (s *MemoryStore) ExpireGift(giftID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	idx := -1
+	for i := range s.giftRecords {
+		if s.giftRecords[i].ID == giftID {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return fmt.Errorf("gift not found: %s", giftID)
+	}
+
+	gift := &s.giftRecords[idx]
+	if gift.Status != "sent" {
+		return fmt.Errorf("gift status is %s, cannot expire", gift.Status)
+	}
+
+	// 标记为已过期
+	gift.Status = "expired"
+
+	// 退还道具到赠送者库存
+	s.inventory = append(s.inventory, model.UserInventory{
+		ID:         "inv_" + randomSuffix(12),
+		UserID:     gift.GiverID,
+		PrizeID:    gift.PrizeID,
+		PrizeName:  gift.PrizeName,
+		PrizeLevel: gift.PrizeLevel,
+		CampaignID: "",
+		Source:     "gift_return",
+		CreatedAt:  time.Now().UTC(),
+	})
+
+	return nil
+}
+
+// ============================================================
+// 🆕 分享卡片系统
+// ============================================================
+
+// CreateShareCard 创建分享卡片
+func (s *MemoryStore) CreateShareCard(userID, cardType, title, description, prizeName, prizeLevel, inviteLink string) (*model.ShareCard, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.shareCardIDSeq++
+	now := time.Now().UTC()
+
+	card := model.ShareCard{
+		ID:          "card_" + strconv.Itoa(s.shareCardIDSeq),
+		UserID:      userID,
+		CardType:    cardType,
+		Title:       title,
+		Description: description,
+		PrizeName:   prizeName,
+		PrizeLevel:  prizeLevel,
+		InviteLink:  inviteLink,
+		CreatedAt:   now,
+	}
+	s.shareCards[userID] = append(s.shareCards[userID], card)
+
+	return &card, nil
+}
+
+// GetShareCards 获取用户的分享卡片列表
+func (s *MemoryStore) GetShareCards(userID string) ([]model.ShareCard, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	cards := s.shareCards[userID]
+	if cards == nil {
+		return []model.ShareCard{}, nil
+	}
+	return cards, nil
 }

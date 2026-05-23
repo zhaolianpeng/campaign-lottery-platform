@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"math/rand/v2"
+	"strings"
 	"time"
 
 	"campaign-lottery-platform/backend/internal/model"
@@ -1100,4 +1101,388 @@ func (s *Service) ClaimFirstRecharge(token string, input model.ClaimFirstRecharg
 		return nil, err
 	}
 	return s.store.ClaimFirstRecharge(user.ID, input.PackID)
+}
+
+// ============================================================
+// 🆕 v1.5 社交裂变 Service
+// ============================================================
+
+// ---- 分享卡片 ----
+
+// CreateShareCard 创建分享卡片
+func (s *Service) CreateShareCard(token string, cardType string, prizeName, prizeLevel string) (*model.ShareCard, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	title, description := s.getShareCardText(cardType, prizeName, prizeLevel)
+	inviteLink := fmt.Sprintf("https://boxmagic.app/invite?from=%s", user.ID)
+	return s.store.CreateShareCard(user.ID, cardType, title, description, prizeName, prizeLevel, inviteLink)
+}
+
+// GetShareCards 获取我的分享卡片
+func (s *Service) GetShareCards(token string) ([]model.ShareCard, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.GetShareCards(user.ID)
+}
+
+// getShareCardText 根据卡片类型生成文案
+func (s *Service) getShareCardText(cardType, prizeName, prizeLevel string) (string, string) {
+	switch cardType {
+	case "draw_win":
+		levelLabel := map[string]string{"common": "普通", "rare": "稀有", "secret": "隐藏", "limited": "限定"}
+		lbl := levelLabel[prizeLevel]
+		if lbl == "" {
+			lbl = prizeLevel
+		}
+		if prizeName != "" {
+			return fmt.Sprintf("🎉 我抽到了「%s」(%s)！", prizeName, lbl),
+				fmt.Sprintf("第N抽开出%s款，运气爆棚！你也来试试吧 ✨", lbl)
+		}
+		return "🎉 我抽到了稀有盲盒！", "运气爆棚！你也来试试吧 ✨"
+	case "collection":
+		return "🏆 我集齐了一套系列！", "集齐整套盲盒，成就感满满！"
+	case "craft":
+		return "🔮 合成成功！", "我用重复盲盒合成了更稀有的款式！"
+	case "team":
+		return "🤝 组队开盒，奖励翻倍！", "加入我的队伍，一起开盒拿大奖！"
+	default:
+		return "🎁 来BOX·MAGIC抽盲盒！", "超多精美盲盒等你来抽，首抽免费！"
+	}
+}
+
+// ---- 邀请助力 ----
+
+// GenerateInviteLink 生成邀请链接
+func (s *Service) GenerateInviteLink(token string) (*model.ShareCard, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.CreateShareCard(user.ID, "invite",
+		"🎁 好友邀请你免费抽盲盒！",
+		"点击链接注册，你和好友各得50积分！",
+		"", "",
+		fmt.Sprintf("https://boxmagic.app/invite?from=%s", user.ID))
+}
+
+// GetInviteRecords 获取邀请记录
+func (s *Service) GetInviteRecords(token string) ([]model.InviteRecord, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.GetInviteRecords(user.ID)
+}
+
+// GetInviteStats 获取邀请统计
+func (s *Service) GetInviteStats(token string) (*model.InviteStats, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.GetInviteStats(user.ID)
+}
+
+// RecordInvite 记录新用户通过邀请注册
+func (s *Service) RecordInvite(inviterID, inviteeID string) (*model.InviteRecord, error) {
+	return s.store.CreateInviteRecord(inviterID, inviteeID)
+}
+
+// ---- 好友助力 ----
+
+// AssistAction 好友助力
+func (s *Service) AssistAction(token string, assistType model.AssistType, helperID string) (*model.AssistProgress, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	inviterID := user.ID
+
+	// 防刷检查：同一个好友24h内只能助力一次同类型
+	recorded, err := s.store.IsAssistActionRecorded(inviterID, helperID, assistType)
+	if err != nil {
+		return nil, err
+	}
+	if recorded {
+		return nil, fmt.Errorf("该好友今天已经助力过了")
+	}
+
+	// 记录助力动作
+	if err := s.store.RecordAssistAction(inviterID, helperID, assistType); err != nil {
+		return nil, err
+	}
+
+	// 增加助力进度
+	return s.store.IncrementAssistProgress(inviterID, assistType)
+}
+
+// GetAssistProgress 查看助力进度
+func (s *Service) GetAssistProgress(token string, assistType model.AssistType) (*model.AssistProgress, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	progress, err := s.store.GetOrCreateAssistProgress(user.ID, assistType)
+	if err != nil {
+		return nil, err
+	}
+	return progress, nil
+}
+
+// GetAssistAllProgress 查看所有助力进度
+func (s *Service) GetAssistAllProgress(token string) (map[string]*model.AssistProgress, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]*model.AssistProgress)
+	for _, at := range []model.AssistType{model.AssistFreeDraw, model.AssistPityReduce, model.AssistCraftBoost} {
+		p, _ := s.store.GetOrCreateAssistProgress(user.ID, at)
+		if p != nil {
+			result[string(at)] = p
+		}
+	}
+	return result, nil
+}
+
+// ClaimAssistReward 领取助力奖励
+func (s *Service) ClaimAssistReward(token string, assistType model.AssistType) (*model.AssistClaimResult, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	progress, err := s.store.GetAssistProgress(user.ID, assistType)
+	if err != nil {
+		return nil, err
+	}
+	if progress == nil {
+		return nil, fmt.Errorf("没有进行中的助力活动")
+	}
+	if progress.Claimed {
+		return nil, fmt.Errorf("该助力奖励已领取")
+	}
+	if progress.Current < progress.TargetCount {
+		return nil, fmt.Errorf("助力未完成，需要 %d 次，当前 %d 次", progress.TargetCount, progress.Current)
+	}
+
+	// 标记已领取
+	if _, err := s.store.ClaimAssistReward(user.ID, assistType); err != nil {
+		return nil, err
+	}
+
+	// 发放奖励
+	switch assistType {
+	case model.AssistFreeDraw:
+		// 免费抽：给用户添加免费抽券
+		s.store.AddUserItem(user.ID, model.ItemFreeDraw, 1)
+		return &model.AssistClaimResult{
+			AssistType: assistType, RewardType: "free_draw",
+			Description: "助力完成！获得1次免费抽奖机会 🎉",
+		}, nil
+	case model.AssistPityReduce:
+		// 保底缩短：-10次
+		return &model.AssistClaimResult{
+			AssistType: assistType, RewardType: "pity_reduce",
+			Description: "助力完成！保底次数减少10次 ⚡",
+		}, nil
+	case model.AssistCraftBoost:
+		return &model.AssistClaimResult{
+			AssistType: assistType, RewardType: "craft_boost",
+			Description: "助力完成！下次合成概率+20% 🎯",
+		}, nil
+	}
+	return nil, fmt.Errorf("未知助力类型")
+}
+
+// ---- 组队开盒 ----
+
+// CreateTeam 创建队伍
+func (s *Service) CreateTeam(token string, input model.CreateTeamRequest) (*model.TeamInfo, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	input.Name = strings.TrimSpace(input.Name)
+	if input.Name == "" {
+		input.Name = user.Nickname + "的队伍"
+	}
+	if input.MaxMembers < 2 {
+		input.MaxMembers = 2
+	}
+	if input.MaxMembers > 5 {
+		input.MaxMembers = 5
+	}
+	if input.GoalDraws < 10 {
+		input.GoalDraws = 10
+	}
+
+	team, err := s.store.CreateTeam(user.ID, input)
+	if err != nil {
+		return nil, err
+	}
+	return s.getTeamInfo(team.ID)
+}
+
+// JoinTeam 加入队伍
+func (s *Service) JoinTeam(token string, teamID string) (*model.TeamInfo, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.store.JoinTeam(user.ID, teamID); err != nil {
+		return nil, err
+	}
+	return s.getTeamInfo(teamID)
+}
+
+// LeaveTeam 离开队伍
+func (s *Service) LeaveTeam(token string) error {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return err
+	}
+	team, err := s.store.GetUserActiveTeam(user.ID)
+	if err != nil {
+		return err
+	}
+	if team == nil {
+		return fmt.Errorf("你不在任何队伍中")
+	}
+	return s.store.LeaveTeam(user.ID, team.ID)
+}
+
+// GetMyTeam 获取我的队伍信息
+func (s *Service) GetMyTeam(token string) (*model.TeamInfo, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	team, err := s.store.GetUserActiveTeam(user.ID)
+	if err != nil {
+		return nil, err
+	}
+	if team == nil {
+		return nil, nil
+	}
+	return s.getTeamInfo(team.ID)
+}
+
+// GetTeamInfo 获取指定队伍信息
+func (s *Service) GetTeamInfo(teamID string) (*model.TeamInfo, error) {
+	return s.getTeamInfo(teamID)
+}
+
+// getTeamInfo 组装队伍信息
+func (s *Service) getTeamInfo(teamID string) (*model.TeamInfo, error) {
+	team, err := s.store.GetTeam(teamID)
+	if err != nil {
+		return nil, err
+	}
+	if team == nil {
+		return nil, nil
+	}
+	members, err := s.store.GetTeamMembers(teamID)
+	if err != nil {
+		return nil, err
+	}
+
+	captainName := "队长"
+	remainingHours := int(time.Until(team.ExpiresAt).Hours())
+	if remainingHours < 0 {
+		remainingHours = 0
+	}
+
+	reward, _ := s.store.CompleteTeam(teamID)
+	// Only return reward if team completed
+
+	return &model.TeamInfo{
+		Team:           team,
+		Members:        members,
+		CaptainName:    captainName,
+		RemainingHours: remainingHours,
+		Reward:         reward,
+	}, nil
+}
+
+// AddTeamDrawHook 抽奖后调用，累计队伍开盒次数（从盲盒抽奖Service调用）
+func (s *Service) AddTeamDrawHook(userID string) {
+	team, err := s.store.GetUserActiveTeam(userID)
+	if err != nil || team == nil {
+		return
+	}
+	total, err := s.store.AddTeamDraw(userID, team.ID)
+	if err != nil {
+		return
+	}
+	_ = total
+	// 如果达到目标，自动完成
+	if total >= team.GoalDraws {
+		s.store.CompleteTeam(team.ID)
+	}
+}
+
+// ---- 礼物赠送 ----
+
+// SendGift 赠送盲盒给好友
+func (s *Service) SendGift(token string, input model.SendGiftRequest) (*model.GiftRecord, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	if input.ReceiverID == "" {
+		return nil, fmt.Errorf("请指定接收者")
+	}
+	if input.PrizeID == "" {
+		return nil, fmt.Errorf("请指定要赠送的盲盒")
+	}
+	return s.store.CreateGift(user.ID, input.ReceiverID, input.PrizeID, input.CampaignID)
+}
+
+// ReceiveGift 接收礼物
+func (s *Service) ReceiveGift(token string, giftID string) (*model.ReceiveGiftResult, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	gift, err := s.store.GetGift(giftID)
+	if err != nil {
+		return nil, err
+	}
+	if gift == nil {
+		return nil, fmt.Errorf("礼物不存在")
+	}
+	if gift.ReceiverID != user.ID {
+		return nil, fmt.Errorf("这不是给你的礼物")
+	}
+	if gift.Status != "sent" {
+		return nil, fmt.Errorf("礼物已%s，无法领取", gift.Status)
+	}
+	return s.store.ReceiveGift(giftID)
+}
+
+// GetMyGifts 获取我的待收礼物
+func (s *Service) GetMyGifts(token string) ([]model.GiftRecord, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.GetUserGifts(user.ID)
+}
+
+// GetSentGifts 获取我送出的礼物
+func (s *Service) GetSentGifts(token string) ([]model.GiftRecord, error) {
+	user, err := s.store.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.GetUserSentGifts(user.ID)
+}
+
+// GetGiftDetail 获取礼物详情
+func (s *Service) GetGiftDetail(giftID string) (*model.GiftRecord, error) {
+	return s.store.GetGift(giftID)
 }

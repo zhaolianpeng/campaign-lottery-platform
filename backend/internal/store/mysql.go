@@ -1794,3 +1794,93 @@ func (store *MySQLStore) GetFirstRechargeStatus(userID string) (*model.UserFirst
 func (store *MySQLStore) ClaimFirstRecharge(userID string, packID string) (*model.ClaimFirstRechargeResult, error) {
 	return nil, fmt.Errorf("mysql first recharge not implemented, use memory store")
 }
+
+// 🆕 ---- v1.5 社交裂变 stubs ----
+
+func (store *MySQLStore) GenerateID() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func (store *MySQLStore) CreateInviteRecord(inviterID, inviteeID string) (*model.InviteRecord, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) GetInviteRecords(userID string) ([]model.InviteRecord, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) GetInviteStats(userID string) (*model.InviteStats, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) GetOrCreateAssistProgress(inviterID string, assistType model.AssistType) (*model.AssistProgress, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) IsAssistActionRecorded(inviterID, helperID string, assistType model.AssistType) (bool, error) {
+	return false, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) RecordAssistAction(inviterID, helperID string, assistType model.AssistType) error {
+	return fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) IncrementAssistProgress(inviterID string, assistType model.AssistType) (*model.AssistProgress, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) ClaimAssistReward(inviterID string, assistType model.AssistType) (*model.AssistProgress, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) GetAssistProgress(inviterID string, assistType model.AssistType) (*model.AssistProgress, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) CreateTeam(captainID string, input model.CreateTeamRequest) (*model.Team, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) JoinTeam(userID string, teamID string) (*model.TeamMember, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) LeaveTeam(userID, teamID string) error {
+	return fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) GetTeam(teamID string) (*model.Team, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) GetTeamMembers(teamID string) ([]model.TeamMember, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) GetUserActiveTeam(userID string) (*model.Team, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) AddTeamDraw(userID, teamID string) (int, error) {
+	return 0, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) CompleteTeam(teamID string) (*model.TeamReward, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) ExpireTeam(teamID string) error {
+	return fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) GetExpiredTeams() ([]model.Team, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) CreateGift(giverID, receiverID, prizeID, campaignID string) (*model.GiftRecord, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) GetGift(giftID string) (*model.GiftRecord, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) ReceiveGift(giftID string) (*model.ReceiveGiftResult, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) GetUserGifts(userID string) ([]model.GiftRecord, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) GetUserSentGifts(userID string) ([]model.GiftRecord, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) ExpireGift(giftID string) error {
+	return fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) CreateShareCard(userID string, cardType string, title, description string, prizeName, prizeLevel, inviteLink string) (*model.ShareCard, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}
+func (store *MySQLStore) GetShareCards(userID string) ([]model.ShareCard, error) {
+	return nil, fmt.Errorf("mysql social not implemented, use memory store")
+}

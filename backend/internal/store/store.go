@@ -154,6 +154,72 @@ LogPoints(userID string, points int64, balance int64, reason, remark string) err
 	// GetBattlePassRewards 获取战令奖励配置
 	GetBattlePassRewards(seasonID int) ([]model.BattlePassReward, error)
 
+	// 🆕 ---- 社交裂变 辅助方法 ----
+	// GenerateID 生成唯一ID
+	GenerateID() string
+
+	// 🆕 ---- 社交裂变：邀请助力 ----
+	// CreateInviteRecord 记录邀请关系
+	CreateInviteRecord(inviterID, inviteeID string) (*model.InviteRecord, error)
+	// GetInviteRecords 获取用户的邀请记录
+	GetInviteRecords(userID string) ([]model.InviteRecord, error)
+	// GetInviteStats 获取邀请统计
+	GetInviteStats(userID string) (*model.InviteStats, error)
+	// GetOrCreateAssistProgress 获取或创建助力进度
+	GetOrCreateAssistProgress(inviterID string, assistType model.AssistType) (*model.AssistProgress, error)
+	// IsAssistActionRecorded 检查某个好友今天是否已助力过（防刷）
+	IsAssistActionRecorded(inviterID, helperID string, assistType model.AssistType) (bool, error)
+	// RecordAssistAction 记录好友助力动作
+	RecordAssistAction(inviterID, helperID string, assistType model.AssistType) error
+	// IncrementAssistProgress 增加助力进度（+1），返回更新后的进度
+	IncrementAssistProgress(inviterID string, assistType model.AssistType) (*model.AssistProgress, error)
+	// ClaimAssistReward 领取助力奖励（标记已领取）
+	ClaimAssistReward(inviterID string, assistType model.AssistType) (*model.AssistProgress, error)
+	// GetAssistProgress 查询助力进度
+	GetAssistProgress(inviterID string, assistType model.AssistType) (*model.AssistProgress, error)
+
+	// 🆕 ---- 社交裂变：组队开盒 ----
+	// CreateTeam 创建队伍
+	CreateTeam(captainID string, input model.CreateTeamRequest) (*model.Team, error)
+	// JoinTeam 加入队伍
+	JoinTeam(userID string, teamID string) (*model.TeamMember, error)
+	// LeaveTeam 离开队伍
+	LeaveTeam(userID, teamID string) error
+	// GetTeam 获取队伍信息
+	GetTeam(teamID string) (*model.Team, error)
+	// GetTeamMembers 获取队伍成员列表
+	GetTeamMembers(teamID string) ([]model.TeamMember, error)
+	// GetUserActiveTeam 获取用户当前活跃队伍
+	GetUserActiveTeam(userID string) (*model.Team, error)
+	// AddTeamDraw 队伍开盒次数+1
+	AddTeamDraw(userID, teamID string) (int, error) // 返回队伍总次数
+	// CompleteTeam 完成队伍目标，发放奖励
+	CompleteTeam(teamID string) (*model.TeamReward, error)
+	// ExpireTeam 过期队伍
+	ExpireTeam(teamID string) error
+	// GetExpiredTeams 获取已过期但未处理的队伍
+	GetExpiredTeams() ([]model.Team, error)
+
+	// 🆕 ---- 社交裂变：礼物赠送 ----
+	// CreateGift 创建礼物赠送记录
+	CreateGift(giverID, receiverID, prizeID, campaignID string) (*model.GiftRecord, error)
+	// GetGift 获取礼物详情
+	GetGift(giftID string) (*model.GiftRecord, error)
+	// ReceiveGift 接收礼物
+	ReceiveGift(giftID string) (*model.ReceiveGiftResult, error)
+	// GetUserGifts 获取用户收到的待领取礼物
+	GetUserGifts(userID string) ([]model.GiftRecord, error)
+	// GetUserSentGifts 获取用户发送的礼物
+	GetUserSentGifts(userID string) ([]model.GiftRecord, error)
+	// ExpireGift 过期未领取的礼物
+	ExpireGift(giftID string) error
+
+	// 🆕 ---- 社交裂变：分享卡片 ----
+	// CreateShareCard 创建分享卡片
+	CreateShareCard(userID string, cardType string, title, description string, prizeName, prizeLevel, inviteLink string) (*model.ShareCard, error)
+	// GetShareCards 获取用户分享卡片
+	GetShareCards(userID string) ([]model.ShareCard, error)
+
 	// 🆕 ---- 限时商店 + 付费道具 ----
 	// GetShopItems 获取商店商品列表
 	GetShopItems() []model.ShopItem

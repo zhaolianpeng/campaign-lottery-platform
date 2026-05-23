@@ -842,5 +842,286 @@ switchTab = function(tab) {
     case 'rank': loadLeaderboard(); break;
     case 'member': loadMember(); break;
     case 'shop': loadShop(); break;
+    case 'social': loadSocial(); break;
   }
 };
+
+// Extend switchTab to include shop AND social
+const origSwitchTab = switchTab;
+switchTab = function(tab) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + tab)?.classList.add('active');
+  document.querySelector(`.tab[data-tab="${tab}"]`)?.classList.add('active');
+  if (!state.token) return;
+  switch (tab) {
+    case 'series': loadSeries(); break;
+    case 'inventory': loadInventory(); break;
+    case 'exchange': loadExchange(); break;
+    case 'rank': loadLeaderboard(); break;
+    case 'member': loadMember(); break;
+    case 'shop': loadShop(); break;
+    case 'social': loadSocial(); break;
+  }
+};
+
+function switchSocialTab(sub) {
+  document.querySelectorAll('.social-panel').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.sub-tab').forEach(el => el.classList.remove('active'));
+  document.getElementById('social-' + sub)?.classList.add('active');
+  document.querySelector(`.sub-tab[onclick*="'${sub}'"]`)?.classList.add('active');
+  if (sub === 'invite') { loadAssistProgress(); loadInviteRecords(); }
+  else if (sub === 'team') loadTeamSection();
+  else if (sub === 'gift') { loadIncomingGifts(); loadSentGifts(); }
+}
+
+async function loadSocial() {
+  loadAssistProgress();
+  loadInviteRecords();
+  loadTeamSection();
+  loadIncomingGifts();
+  loadSentGifts();
+  loadInviteStats();
+}
+
+async function loadInviteStats() {
+  try {
+    const res = await api('/api/v1/share/invite-stats');
+    const stats = res.data;
+    document.getElementById('inviteStats').innerHTML = `
+      <div class="stat-row">
+        <span>📋 已邀请 <strong>${stats.total_invites || 0}</strong> 人</span>
+        <span>✋ 收到助力 <strong>${stats.total_assists || 0}</strong> 次</span>
+        <span>🎯 已完成 <strong>${stats.completed_assists || 0}</strong> 项</span>
+      </div>
+    `;
+  } catch(e) { /* ignore */ }
+}
+
+async function generateInviteLink() {
+  if (!state.token) { showToast('请先登录', true); return; }
+  try {
+    const res = await api('/api/v1/share/invite', { method: 'POST' });
+    const link = res.data?.invite_link || '链接生成失败';
+    await navigator.clipboard.writeText(link).catch(() => {});
+    showToast('📤 邀请链接已复制: ' + link);
+    loadInviteStats();
+  } catch(e) { showToast('❌ ' + e.message, true); }
+}
+
+async function loadAssistProgress() {
+  try {
+    const res = await api('/api/v1/share/assist-progress');
+    const data = res.data || {};
+    const types = [
+      { key: 'free_draw', emoji: '🎲', name: '免费抽', target: 3, desc: '邀请3人助力→免费抽1次' },
+      { key: 'pity_reduce', emoji: '⚡', name: '保底缩短', target: 5, desc: '邀请5人助力→保底-10' },
+      { key: 'craft_boost', emoji: '🔮', name: '合成加成', target: 2, desc: '邀请2人助力→合成+20%' },
+    ];
+    document.getElementById('assistProgress').innerHTML = types.map(t => {
+      const p = data[t.key];
+      const current = p?.current || 0;
+      const claimed = p?.claimed || false;
+      const target = p?.target_count || t.target;
+      const pct = Math.min(100, (current / target) * 100);
+      return `
+        <div class="assist-card ${claimed ? 'claimed' : ''}">
+          <div class="assist-header">
+            <span class="assist-emoji">${t.emoji}</span>
+            <span class="assist-name">${t.name}</span>
+            <span class="assist-count">${current}/${target}</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+          <p class="assist-desc">${t.desc}</p>
+          ${claimed ? '<span class="assist-claimed">✅ 已领取</span>' :
+            current >= target ? `<button class="btn-sm" onclick="claimAssistReward('${t.key}')">🎁 领取奖励</button>` :
+            ''}
+        </div>
+      `;
+    }).join('');
+  } catch(e) { document.getElementById('assistProgress').innerHTML = `<div class="loading">❌ ${e.message}</div>`; }
+}
+
+async function claimAssistReward(type) {
+  try {
+    const res = await api('/api/v1/share/assist-claim', {
+      method: 'POST', body: JSON.stringify({ assist_type: type })
+    });
+    showToast('🎉 ' + (res.data?.description || '领取成功！'));
+    loadAssistProgress();
+    updatePoints();
+  } catch(e) { showToast('❌ ' + e.message, true); }
+}
+
+async function loadInviteRecords() {
+  try {
+    const res = await api('/api/v1/share/invitees');
+    const records = res.data || [];
+    document.getElementById('inviteRecords').innerHTML = records.length ?
+      '<h4>📋 邀请记录</h4>' + records.map(r =>
+        `<div class="invite-record"><span>👤 ${r.invitee_id?.substring(0,8)}...</span><span class="time">${new Date(r.created_at).toLocaleDateString()}</span></div>`
+      ).join('') : '<p class="hint">还没有邀请记录</p>';
+  } catch(e) { /* ignore */ }
+}
+
+// ---- 组队 ----
+
+async function loadTeamSection() {
+  try {
+    const res = await api('/api/v1/team/my');
+    const info = res.data;
+    const el = document.getElementById('teamSection');
+    if (!info || !info.team) {
+      el.innerHTML = `
+        <div class="team-empty">
+          <p>👥 你还没有队伍</p>
+          <p class="hint">组队开盒，全员达标平分奖励！</p>
+          <button class="btn-primary" onclick="showCreateTeam()">🚀 创建队伍</button>
+        </div>
+      `;
+      return;
+    }
+    const t = info.team;
+    const members = info.members || [];
+    const remaining = info.remaining_hours || 0;
+    const pct = Math.min(100, (t.current_draws / t.goal_draws) * 100);
+    el.innerHTML = `
+      <div class="team-card">
+        <div class="team-header"><span class="team-name">👥 ${t.name}</span><span class="team-status">${t.status}</span></div>
+        <div class="team-info"><span>⏱️ 剩余 ${remaining}h</span><span>👤 ${members.length}/${t.max_members}</span></div>
+        <div class="team-progress">
+          <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+          <span>🎯 开盒 ${t.current_draws}/${t.goal_draws}</span>
+        </div>
+        <div class="team-members">
+          <h4>队员 (${members.length})</h4>
+          ${members.map(m => `<div class="member-row"><span>👤 ${m.nickname || m.user_id?.substring(0,8)}</span><span>🎲 ${m.draws}次</span></div>`).join('')}
+        </div>
+        <button class="btn-sm" onclick="leaveTeam()">🚪 离开队伍</button>
+      </div>
+    `;
+  } catch(e) { document.getElementById('teamSection').innerHTML = `<div class="loading">❌ ${e.message}</div>`; }
+}
+
+function showCreateTeam() { document.getElementById('createTeamModal').classList.remove('hidden'); }
+function closeCreateTeamModal() { document.getElementById('createTeamModal').classList.add('hidden'); }
+
+async function createTeam() {
+  const name = document.getElementById('teamNameInput').value || '我的队伍';
+  const maxMembers = parseInt(document.getElementById('teamMaxMembers').value);
+  const goalDraws = parseInt(document.getElementById('teamGoalDraws').value);
+  try {
+    const res = await api('/api/v1/team/create', {
+      method: 'POST', body: JSON.stringify({ name, max_members: maxMembers, goal_draws: goalDraws })
+    });
+    showToast('🎉 队伍创建成功！');
+    closeCreateTeamModal();
+    loadTeamSection();
+  } catch(e) { showToast('❌ ' + e.message, true); }
+}
+
+async function joinTeam(teamId) {
+  try {
+    await api('/api/v1/team/join', { method: 'POST', body: JSON.stringify({ team_id: teamId }) });
+    showToast('🎉 加入队伍成功！');
+    loadTeamSection();
+  } catch(e) { showToast('❌ ' + e.message, true); }
+}
+
+async function leaveTeam() {
+  if (!confirm('确定离开队伍？')) return;
+  try {
+    await api('/api/v1/team/leave', { method: 'POST' });
+    showToast('已离开队伍');
+    loadTeamSection();
+  } catch(e) { showToast('❌ ' + e.message, true); }
+}
+
+// ---- 礼物 ----
+
+async function loadIncomingGifts() {
+  try {
+    const res = await api('/api/v1/share/gifts/incoming');
+    const gifts = res.data || [];
+    document.getElementById('incomingGifts').innerHTML = gifts.length ?
+      gifts.map(g => `
+        <div class="gift-card">
+          <span>🎁 ${g.prize_name || '盲盒'}</span>
+          <span class="gift-from">来自 ${g.giver_id?.substring(0,8)}</span>
+          <button class="btn-sm" onclick="receiveGift('${g.id}')">📥 领取</button>
+        </div>
+      `).join('') : '<p class="hint">暂无待收礼物</p>';
+  } catch(e) { document.getElementById('incomingGifts').innerHTML = `<div class="loading">❌ ${e.message}</div>`; }
+}
+
+async function loadSentGifts() {
+  try {
+    const res = await api('/api/v1/share/gifts/sent');
+    const gifts = res.data || [];
+    document.getElementById('sentGifts').innerHTML = gifts.length ?
+      gifts.map(g => `
+        <div class="gift-card">
+          <span>🎁 ${g.prize_name || '盲盒'}</span>
+          <span>→ ${g.receiver_id?.substring(0,8)}</span>
+          <span class="gift-status">${g.status}</span>
+        </div>
+      `).join('') : '<p class="hint">还没有送出的礼物</p>';
+  } catch(e) { /* ignore */ }
+}
+
+function showSendGift() {
+  document.getElementById('sendGiftModal').classList.remove('hidden');
+  loadGiftPrizeSelect();
+}
+function closeSendGiftModal() { document.getElementById('sendGiftModal').classList.add('hidden'); }
+
+async function loadGiftPrizeSelect() {
+  try {
+    const res = await api('/api/v1/inventory');
+    const inv = res.data || [];
+    const select = document.getElementById('giftPrizeSelect');
+    select.innerHTML = inv.map(i =>
+      `<option value="${i.prize_id}">${i.prize_name} (${i.prize_level || 'common'})</option>`
+    ).join('') || '<option value="">没有可赠送的盲盒</option>';
+  } catch(e) { /* ignore */ }
+}
+
+async function sendGift() {
+  const prizeId = document.getElementById('giftPrizeSelect').value;
+  const receiverId = document.getElementById('giftReceiverInput').value.trim();
+  if (!prizeId || !receiverId) { showToast('请选择盲盒和输入接收者ID', true); return; }
+  try {
+    const res = await api('/api/v1/share/gift', {
+      method: 'POST', body: JSON.stringify({ receiver_id: receiverId, prize_id: prizeId, campaign_id: '' })
+    });
+    showToast('🎁 赠送成功！');
+    closeSendGiftModal();
+    loadSentGifts();
+  } catch(e) { showToast('❌ ' + e.message, true); }
+}
+
+async function receiveGift(giftId) {
+  try {
+    const res = await api('/api/v1/share/gift/receive', {
+      method: 'POST', body: JSON.stringify({ gift_id: giftId })
+    });
+    showToast('🎉 收到 ' + (res.data?.prize_name || '礼物') + '！');
+    loadIncomingGifts();
+    updatePoints();
+  } catch(e) { showToast('❌ ' + e.message, true); }
+}
+
+// ---- 分享抽卡结果 ----
+
+async function shareDraw() {
+  if (!state.token) { showToast('请先登录', true); return; }
+  try {
+    const res = await api('/api/v1/share/card', {
+      method: 'POST', body: JSON.stringify({ card_type: 'draw_win', prize_name: '', prize_level: '' })
+    });
+    const card = res.data;
+    const shareText = card?.title + ' ' + card?.description + ' ' + (card?.invite_link || '');
+    await navigator.clipboard.writeText(shareText).catch(() => {});
+    showToast('📤 分享文案已复制！');
+  } catch(e) { showToast('❌ ' + e.message, true); }
+}

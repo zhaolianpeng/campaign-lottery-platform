@@ -38,6 +38,7 @@
       <button class="tab" data-tab="rank" onclick="switchTab('rank')">🏅 排行</button>
       <button class="tab" data-tab="member" onclick="switchTab('member')">👑 会员</button>
       <button class="tab" data-tab="shop" onclick="switchTab('shop')">🛒 商店</button>
+      <button class="tab" data-tab="social" onclick="switchTab('social')">🤝 社交</button>
     </nav>
 
     <!-- ===== 系列列表 Tab ===== -->
@@ -96,6 +97,46 @@
       </div>
       <div id="shopItems" class="shop-grid"><div class="loading">加载中...</div></div>
     </div>
+
+    <!-- ===== 🆕 社交裂变 Tab ===== -->
+    <div id="tab-social" class="tab-content">
+      <div class="panel-head"><h2>🤝 社交中心</h2></div>
+      <div id="socialTabs" class="social-sub-tabs">
+        <button class="sub-tab active" onclick="switchSocialTab('invite')">🎯 邀请助力</button>
+        <button class="sub-tab" onclick="switchSocialTab('team')">👥 组队开盒</button>
+        <button class="sub-tab" onclick="switchSocialTab('gift')">🎁 礼物</button>
+      </div>
+
+      <!-- 邀请助力 -->
+      <div id="social-invite" class="social-panel active">
+        <div class="invite-card">
+          <h3>🎯 邀请好友助力</h3>
+          <p class="invite-desc">邀请好友点击链接，每助力一次解锁进度！</p>
+          <button class="btn-primary" onclick="generateInviteLink()">📤 生成邀请链接</button>
+          <div id="inviteStats" class="invite-stats"></div>
+        </div>
+        <div id="assistProgress" class="assist-grid"></div>
+        <div id="inviteRecords" class="invite-records"></div>
+      </div>
+
+      <!-- 组队开盒 -->
+      <div id="social-team" class="social-panel hidden">
+        <div id="teamSection">
+          <div class="loading">加载中...</div>
+        </div>
+      </div>
+
+      <!-- 礼物 -->
+      <div id="social-gift" class="social-panel hidden">
+        <div class="gift-actions">
+          <button class="btn-sm" onclick="showSendGift()">🎁 赠送盲盒</button>
+        </div>
+        <h3>📬 待收礼物</h3>
+        <div id="incomingGifts" class="gift-list"><div class="loading">加载中...</div></div>
+        <h3>📤 我送出的</h3>
+        <div id="sentGifts" class="gift-list"></div>
+      </div>
+    </div>
   </div>
 
   <!-- 首充礼包弹窗 -->
@@ -142,6 +183,48 @@
       <select id="wantPrizeSelect"></select>
       <button class="btn-primary" onclick="publishExchange()">📤 发布</button>
       <button onclick="closeExchangeModal()">取消</button>
+    </div>
+  </div>
+
+  <!-- 🆕 赠送礼物弹窗 -->
+  <div id="sendGiftModal" class="modal hidden">
+    <div class="modal-bg" onclick="closeSendGiftModal()"></div>
+    <div class="modal-content modal-sm">
+      <h3>🎁 赠送盲盒</h3>
+      <label>选择要赠送的款式：</label>
+      <select id="giftPrizeSelect"></select>
+      <label>接收者ID：</label>
+      <input id="giftReceiverInput" placeholder="输入好友的用户ID" />
+      <div class="gift-fee-note" id="giftFeeNote"></div>
+      <button class="btn-primary" onclick="sendGift()">🎁 赠送</button>
+      <button onclick="closeSendGiftModal()">取消</button>
+    </div>
+  </div>
+
+  <!-- 🆕 创建队伍弹窗 -->
+  <div id="createTeamModal" class="modal hidden">
+    <div class="modal-bg" onclick="closeCreateTeamModal()"></div>
+    <div class="modal-content modal-sm">
+      <h3>👥 创建队伍</h3>
+      <label>队伍名称：</label>
+      <input id="teamNameInput" value="" placeholder="我的队伍" />
+      <label>队员人数：</label>
+      <select id="teamMaxMembers">
+        <option value="2">2人</option>
+        <option value="3" selected>3人</option>
+        <option value="4">4人</option>
+        <option value="5">5人</option>
+      </select>
+      <label>开盒目标次数：</label>
+      <select id="teamGoalDraws">
+        <option value="10">10次</option>
+        <option value="20">20次</option>
+        <option value="30">30次</option>
+        <option value="50">50次</option>
+      </select>
+      <p class="hint">⏰ 队伍有效48小时，全员达标后平分奖励</p>
+      <button class="btn-primary" onclick="createTeam()">🚀 创建</button>
+      <button onclick="closeCreateTeamModal()">取消</button>
     </div>
   </div>
 
