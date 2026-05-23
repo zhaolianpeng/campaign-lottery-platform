@@ -13,7 +13,7 @@ import (
 // ============================================================
 
 // CreateInviteRecord creates a new invite record
-func (s *MemoryStore) CreateInviteRecord(inviterID, inviteeID string) *model.InviteRecord {
+func (s *MemoryStore) CreateInviteRecord(inviterID, inviteeID string) (*model.InviteRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -25,11 +25,11 @@ func (s *MemoryStore) CreateInviteRecord(inviterID, inviteeID string) *model.Inv
 		CreatedAt: time.Now().UTC(),
 	}
 	s.inviteRecords = append(s.inviteRecords, record)
-	return &record
+	return &record, nil
 }
 
 // GetInviteRecords returns all invite records where InviterID == userID
-func (s *MemoryStore) GetInviteRecords(userID string) []model.InviteRecord {
+func (s *MemoryStore) GetInviteRecords(userID string) ([]model.InviteRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -39,14 +39,15 @@ func (s *MemoryStore) GetInviteRecords(userID string) []model.InviteRecord {
 			result = append(result, r)
 		}
 	}
-	return result
+	return result, nil
 }
 
 // GetInviteStats returns total invite count and total assist count for a user
-func (s *MemoryStore) GetInviteStats(userID string) (invites int, assists int) {
+func (s *MemoryStore) GetInviteStats(userID string) (*model.InviteStats, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	var invites, assists int
 	for _, r := range s.inviteRecords {
 		if r.InviterID == userID {
 			invites++
@@ -57,17 +58,17 @@ func (s *MemoryStore) GetInviteStats(userID string) (invites int, assists int) {
 			assists++
 		}
 	}
-	return
+	return &model.InviteStats{TotalInvites: invites, TotalAssists: assists}, nil
 }
 
 // GetOrCreateAssistProgress returns existing assist progress or creates a new one.
-func (s *MemoryStore) GetOrCreateAssistProgress(inviterID string, assistType model.AssistType) *model.AssistProgress {
+func (s *MemoryStore) GetOrCreateAssistProgress(inviterID string, assistType model.AssistType) (*model.AssistProgress, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	key := fmt.Sprintf("%s:%s", inviterID, assistType)
 	if p, ok := s.assistProgress[key]; ok {
-		return &p
+		return &p, nil
 	}
 
 	var targetCount int
@@ -93,11 +94,11 @@ func (s *MemoryStore) GetOrCreateAssistProgress(inviterID string, assistType mod
 		CreatedAt:   created,
 	}
 	s.assistProgress[key] = progress
-	return &progress
+	return &progress, nil
 }
 
 // IsAssistActionRecorded checks if the same helper already assisted today for the given type
-func (s *MemoryStore) IsAssistActionRecorded(inviterID, helperID string, assistType model.AssistType) bool {
+func (s *MemoryStore) IsAssistActionRecorded(inviterID, helperID string, assistType model.AssistType) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -113,7 +114,7 @@ func (s *MemoryStore) IsAssistActionRecorded(inviterID, helperID string, assistT
 }
 
 // RecordAssistAction records a new assist action
-func (s *MemoryStore) RecordAssistAction(inviterID, helperID string, assistType model.AssistType) *model.AssistAction {
+func (s *MemoryStore) RecordAssistAction(inviterID, helperID string, assistType model.AssistType) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -126,11 +127,11 @@ func (s *MemoryStore) RecordAssistAction(inviterID, helperID string, assistType 
 		CreatedAt:  time.Now().UTC(),
 	}
 	s.assistActions = append(s.assistActions, action)
-	return &action
+	return nil
 }
 
 // IncrementAssistProgress increments the current count by 1
-func (s *MemoryStore) IncrementAssistProgress(inviterID string, assistType model.AssistType) *model.AssistProgress {
+func (s *MemoryStore) IncrementAssistProgress(inviterID string, assistType model.AssistType) (*model.AssistProgress, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -142,7 +143,7 @@ func (s *MemoryStore) IncrementAssistProgress(inviterID string, assistType model
 }
 
 // ClaimAssistReward marks the assist progress as claimed
-func (s *MemoryStore) ClaimAssistReward(inviterID string, assistType model.AssistType) {
+func (s *MemoryStore) ClaimAssistReward(inviterID string, assistType model.AssistType) (*model.AssistProgress, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -153,16 +154,16 @@ func (s *MemoryStore) ClaimAssistReward(inviterID string, assistType model.Assis
 }
 
 // GetAssistProgress returns the assist progress for the given inviter and type
-func (s *MemoryStore) GetAssistProgress(inviterID string, assistType model.AssistType) *model.AssistProgress {
+func (s *MemoryStore) GetAssistProgress(inviterID string, assistType model.AssistType) (*model.AssistProgress, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	key := fmt.Sprintf("%s:%s", inviterID, assistType)
 	p, ok := s.assistProgress[key]
 	if !ok {
-		return nil
+		return nil, nil
 	}
-	return &p
+	return &p, nil
 }
 
 // ============================================================
@@ -416,7 +417,7 @@ func (s *MemoryStore) ExpireTeam(teamID string) error {
 	return nil
 }
 
-func (s *MemoryStore) GetExpiredTeams() []model.Team {
+func (s *MemoryStore) GetExpiredTeams() ([]model.Team, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -427,5 +428,5 @@ func (s *MemoryStore) GetExpiredTeams() []model.Team {
 			expired = append(expired, team)
 		}
 	}
-	return expired
+	return expired, nil
 }

@@ -828,26 +828,7 @@ async function claimFirstRecharge(packId) {
   }
 }
 
-// Extend switchTab to include shop
-const origSwitchTab = switchTab;
-switchTab = function(tab) {
-  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
-  document.getElementById('tab-' + tab)?.classList.add('active');
-  document.querySelector(`.tab[data-tab="${tab}"]`)?.classList.add('active');
-  if (!state.token) return;
-  switch (tab) {
-    case 'series': loadSeries(); break;
-    case 'inventory': loadInventory(); break;
-    case 'exchange': loadExchange(); break;
-    case 'rank': loadLeaderboard(); break;
-    case 'member': loadMember(); break;
-    case 'shop': loadShop(); break;
-    case 'social': loadSocial(); break;
-  }
-};
-
-// Extend switchTab to include shop AND social
+// switchTab: 覆盖原始函数以支持新增Tab
 const origSwitchTab = switchTab;
 switchTab = function(tab) {
   document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
