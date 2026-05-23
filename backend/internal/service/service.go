@@ -13,8 +13,8 @@ import (
 
 // Service encapsulates business logic for the blind box lottery platform.
 type Service struct {
-	store        store.Store
-	pityTracker  probability.PityTracker
+	store       store.Store
+	pityTracker probability.PityTracker
 }
 
 // New creates a new Service with a data store and pity tracker.
@@ -133,400 +133,160 @@ func (s *Service) BlindBoxCampaignProbabilities(campaignID string) (map[string]a
 }
 
 // ============================================================
-// 盲盒抽奖（核心业务逻辑）
+// 工具函数
 // ============================================================
 
-// BlindBoxDraw 执行盲盒抽奖，使用概率引擎（混合模型+软保底）
-func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.BlindBoxDrawResult, error) {
-	// 1. 验证用户
+// buildPityConfig 从 Campaign 构建概率引擎的保底配置
+func (s *Service) buildPityConfig(campaign model.Campaign) probability.PityConfig {
+	pc := campaign.PityConfig
+	if !pc.Enabled {
+		return probability.PityConfig{Enabled: false}
+	}
+	if pc.SoftPityN <= 0 {
+		pc.SoftPityN = 60
+	}
+	if pc.PityFactor <= 0 {
+		pc.PityFactor = 0.015
+	}
+	if pc.HardPityN <= 0 {
+		pc.HardPityN = 90
+	}
+	return probability.PityConfig{
+		Enabled:      true,
+		SoftPityN:    pc.SoftPityN,
+		PityFactor:   pc.PityFactor,
+		HardPityN:    pc.HardPityN,
+		TargetWeight: 0,
+	}
+}
+
+// isUPPoolActive 检查UP池是否当前生效
+func isUPPoolActive(campaign model.Campaign) bool {
+	pc := campaign.PityConfig
+	if !pc.UPPoolEnabled || pc.UPPrizeID == "" || pc.UPLevel == "" {
+		return false
+	}
+	now := time.Now().UTC()
+	if now.Before(pc.UPStartAt) || now.After(pc.UPEndAt) {
+		return false
+	}
+	return true
+}
+
+// getUPPrizeInfo 获取UP池目标奖品信息（用于前端展示）
+func getUPPrizeInfo(active bool, prizes []model.Prize) map[string]any {
+	if !active {
+		return nil
+	}
+	for _, p := range prizes {
+		if p.Status == "active" && p.Level == model.PrizeLevelSecret {
+			return map[string]any{
+				"name":  p.Name,
+				"level": p.Level,
+			}
+		}
+	}
+	return nil
+}
+
+// IsUPPoolActive 外部可调用的UP池检查
+func (s *Service) IsUPPoolActive(campaignID string) (bool, error) {
+	campaign, err := s.store.GetCampaign(campaignID)
+	if err != nil {
+		return false, err
+	}
+	return isUPPoolActive(campaign), nil
+}
+
+// UPPoolInfo 获取UP池信息
+func (s *Service) UPPoolInfo(token string, campaignID string) (map[string]any, error) {
 	user, err := s.store.UserFromToken(token)
 	if err != nil {
 		return nil, err
 	}
-
-	// 2. 获取活动
-	campaign, err := s.store.GetCampaign(cfg.CampaignID)
+	campaign, err := s.store.GetCampaign(campaignID)
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
-	if now.Before(campaign.StartsAt) || now.After(campaign.EndsAt) || campaign.Status != "online" {
-		return nil, store.ErrCampaignInactive
+	active := isUPPoolActive(campaign)
+	prizes := s.store.PrizeList(campaignID)
+	upInfo := getUPPrizeInfo(active, prizes)
+
+	hasGuarantee := false
+	if active {
+		hasGuarantee = s.pityTracker.GetUPPoolGuarantee(user.ID, campaignID)
 	}
 
-	// 3. 检查每日次数
-	remaining, err := s.store.CheckDrawQuota(user.ID, campaign.ID, campaign.DailyDrawLimit)
-	if err != nil {
-		return nil, err
-	}
-	if remaining <= 0 {
-		return nil, store.ErrNoDrawChances
-	}
-
-	drawCount := cfg.DrawCount
-	if drawCount <= 0 {
-		drawCount = 1
-	}
-	if drawCount > remaining {
-		drawCount = remaining
-	}
-	isTenPull := drawCount >= 2
-
-	// 检查月卡
-	card, _ := s.store.GetUserCard(user.ID)
-	freeRemaining := 0
-	if card != nil {
-		freeRemaining, _ = s.store.GetFreeDrawRemaining(user.ID)
-	}
-
-	// 4. 检查并扣减积分（含月卡免费抽+折扣）
-	member, err := s.store.GetUserMember(user.ID)
-	if err != nil {
-		return nil, err
-	}
-	// 月卡: 先用免费抽
-	actualFree := 0
-	if freeRemaining > 0 {
-		actualFree = freeRemaining
-		if actualFree > drawCount {
-			actualFree = drawCount
-		}
-		for i := 0; i < actualFree; i++ {
-			s.store.ConsumeFreeDraw(user.ID)
-		}
-	}
-
-	// 剩余的计费
-	chargeCount := drawCount - actualFree
-	pointsCost := int64(0)
-	if chargeCount > 0 {
-		unitPrice := 100
-		if isTenPull {
-			unitPrice = 95 // 十连基础折扣
-		}
-		// 月卡用户的额外折扣
-		if card != nil {
-			cfg := model.CardConfigs[card.CardType]
-			unitPrice = int(float64(unitPrice) * cfg.DiscountRate)
-		}
-		pointsCost = int64(chargeCount * unitPrice)
-		if member.Points < pointsCost {
-			return nil, store.ErrInsufficientPoints
-		}
-		member.Points -= pointsCost
-	}
-
-	// 5. 构建概率引擎
-	prizes := s.store.PrizeList(campaign.ID)
-	pw := make([]probability.PrizeWeight, 0, len(prizes))
-	secretID := ""
-	secretWeight := 0.0
-	for _, p := range prizes {
-		if p.Status != "active" || p.Stock <= 0 {
-			continue
-		}
-		pw = append(pw, probability.PrizeWeight{
-			ID:     p.ID,
-			Weight: float64(p.ProbabilityWeight),
-			Level:  p.Level,
-		})
-		if p.Level == model.PrizeLevelSecret {
-			secretID = p.ID
-			secretWeight = float64(p.ProbabilityWeight)
-		}
-	}
-
-	pityCfg := s.buildPityConfig(campaign)
-	engineCfg := probability.EngineConfig{
-		TargetPrizeID: secretID,
-		MissWeight:    float64(campaign.MissWeight),
-		Pity:          pityCfg,
-	}
-	engine := probability.NewEngine(engineCfg, pw)
-
-	// 6. 执行抽奖
-	var drawResults []probability.DrawResult
-	if isTenPull {
-		drawResults = engine.DrawMultiple(drawCount, pityCfg, s.pityTracker, user.ID, campaign.ID)
-	} else {
-		r := engine.Draw(pityCfg, s.pityTracker, user.ID, campaign.ID)
-		drawResults = []probability.DrawResult{r}
-	}
-
-	// 🆕 7. UP池处理（50/50大小保底）
-	upPoolActive := isUPPoolActive(campaign)
-	upPrizeInfo := getUPPrizeInfo(upPoolActive, prizes)
-
-	// 7a. 检查大保底状态并强制执行
-	if upPoolActive {
-		hasGuarantee := s.pityTracker.GetUPPoolGuarantee(user.ID, campaign.ID)
-		if hasGuarantee {
-			// 大保底生效：第一次命中UP目标等级时强制改为UP款式
-			for i, d := range drawResults {
-				if d.PrizeID != "" && d.PrizeLevel == campaign.PityConfig.UPLevel {
-					drawResults[i].PrizeID = campaign.PityConfig.UPPrizeID
-					drawResults[i].PrizeLevel = campaign.PityConfig.UPLevel
-					drawResults[i].IsUPPoolWin = true
-					s.pityTracker.SetUPPoolGuarantee(user.ID, campaign.ID, false) // 消耗大保底
-					break // 一次抽奖只触发一次大保底
-				}
-			}
-		}
-	}
-
-	// 7b. 50/50判定：非大保底状态下命中目标等级
-	if upPoolActive {
-		for i, d := range drawResults {
-			if d.PrizeID != "" && d.PrizeLevel == campaign.PityConfig.UPLevel && !d.IsUPPoolWin {
-				// 50/50 判定
-				if rand.IntN(2) == 0 { // 50%概率不歪
-					drawResults[i].PrizeID = campaign.PityConfig.UPPrizeID
-					drawResults[i].IsUPPoolWin = true
-				} else {
-					// 歪了 → 设置大保底标记
-					s.pityTracker.SetUPPoolGuarantee(user.ID, campaign.ID, true)
-				}
-			}
-		}
-	}
-
-	// 8. 持久化结果
-	singleResults := make([]model.SingleDrawResult, 0, len(drawResults))
-	for _, d := range drawResults {
-		sr := model.SingleDrawResult{
-			IsWin:       d.PrizeID != "",
-			IsHardPity:  d.IsHardPity,
-			IsUPPoolWin: d.IsUPPoolWin, // 🆕 UP池中奖标记
-		}
-		if d.PrizeID != "" {
-			rec, err := s.store.CreateDrawRecord(user.ID, campaign.ID, d.PrizeID, isTenPull)
-			if err != nil {
-				return nil, fmt.Errorf("save draw record: %w", err)
-			}
-			sr.RecordID = rec.ID
-			sr.PrizeID = d.PrizeID
-			sr.PrizeName = rec.PrizeName
-			sr.PrizeLevel = d.PrizeLevel
-			// 检查是否为新款式
-			count, _ := s.store.GetPrizeCount(user.ID, d.PrizeID)
-			sr.IsNew = (count <= 1) // 库存中只有刚加的1条或0条 -> 新款式
-		} else {
-			rec, err := s.store.CreateMissRecord(user.ID, campaign.ID, isTenPull)
-			if err != nil {
-				return nil, fmt.Errorf("save miss record: %w", err)
-			}
-			sr.RecordID = rec.ID
-			sr.PrizeName = "未中奖"
-		}
-		singleResults = append(singleResults, sr)
-	}
-
-	// 8. 更新每日次数
-	newRemaining, err := s.store.DeductDrawQuota(user.ID, campaign.ID, drawCount)
-	if err != nil {
-		return nil, err
-	}
-
-	// 9. 扣减积分 + 更新消费记录（自动更新会员等级）
-	// 注：member.Points 已在第4步中扣减，这里只更新消费统计
-	member.TotalSpent += pointsCost
-	member.TotalDraws += int64(drawCount)
-	// 自动计算会员等级
-	member.Level = s.calcMemberLevel(member.TotalSpent)
-	s.store.UpdateUserMember(member) // 需要在Store接口加
-
-	// 记录积分变动日志
-	s.store.LogPoints(user.ID, -pointsCost, member.Points, "draw", fmt.Sprintf("抽奖消耗: %s x%d", campaign.Name, drawCount))
-
-	// 10. 检查集齐奖励
-	reward, _ := s.store.CheckCollectionCompletion(user.ID, campaign.ID)
-	var rewardInfo *model.CollectionReward
-	if reward != nil {
-		if err := s.store.GrantCollectionReward(user.ID, reward); err == nil {
-			rewardInfo = reward
-		}
-	}
-
-	// 11. 获取保底状态
-	state := s.pityTracker.Get(user.ID, campaign.ID)
-	ps := &model.PityStatus{
-		ConsecutiveMisses: state.ConsecutiveMisses,
-		PityMultiplier:    state.PityMultiplier,
-	}
-	if pityCfg.Enabled {
-		ps.SoftPityN = pityCfg.SoftPityN
-		ps.HardPityN = pityCfg.HardPityN
-		if pityCfg.HardPityN > 0 {
-			ps.MissesToHardPity = pityCfg.HardPityN - state.ConsecutiveMisses
-			if ps.MissesToHardPity < 0 {
-				ps.MissesToHardPity = 0
-			}
-		}
-	}
-	// 🆕 UP池保底状态
-	if upPoolActive {
-		ps.HasUPPoolGuarantee = s.pityTracker.GetUPPoolGuarantee(user.ID, campaign.ID)
-	}
-
-	return &model.BlindBoxDrawResult{
-		Draws:            singleResults,
-		RemainingChances: newRemaining,
-		PityStatus:       ps,
-		CollectionReward: rewardInfo,
+	return map[string]any{
+		"active":             active,
+		"prize":              upInfo,
+		"has_guarantee":      hasGuarantee,
+		"up_prize_id":        campaign.PityConfig.UPPrizeID,
+		"up_multiplier":      campaign.PityConfig.UPMultiplier,
+		"up_level":           campaign.PityConfig.UPLevel,
+		"up_start_at":        campaign.PityConfig.UPStartAt,
+		"up_end_at":          campaign.PityConfig.UPEndAt,
+		"consecutive_misses": s.pityTracker.Get(user.ID, campaignID).ConsecutiveMisses,
 	}, nil
 }
 
-// BuyCard 购买月卡/周卡/季卡
-func (s *Service) BuyCard(token string, input model.BuyCardRequest) (*model.BuyCardResult, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	return s.store.BuyCard(user.ID, input.CardType)
-}
+// ============================================================
+// 会员等级
+// ============================================================
 
-// GetUserCard 获取用户月卡信息
-func (s *Service) GetUserCard(token string) (*model.UserCard, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
+// calcMemberLevel 根据累计消费积分计算会员等级
+func (s *Service) calcMemberLevel(totalSpent int64) model.MemberLevel {
+	switch {
+	case totalSpent >= 15000:
+		return model.MemberDiamond
+	case totalSpent >= 5000:
+		return model.MemberDiamond
+	case totalSpent >= 2000:
+		return model.MemberGold
+	case totalSpent >= 500:
+		return model.MemberSilver
+	default:
+		return model.MemberNormal
 	}
-	card, err := s.store.GetUserCard(user.ID)
-	if err != nil {
-		return nil, err
-	}
-	return card, nil
-}
-
-// PityStatus 查询用户在当前活动的保底状态
-func (s *Service) PityStatus(token string, campaignID string) (*model.PityStatus, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	campaign, err := s.store.GetCampaign(campaignID)
-	if err != nil {
-		return nil, err
-	}
-
-	state := s.pityTracker.Get(user.ID, campaignID)
-	pityCfg := s.buildPityConfig(campaign)
-
-	ps := &model.PityStatus{
-		ConsecutiveMisses: state.ConsecutiveMisses,
-		PityMultiplier:    state.PityMultiplier,
-	}
-	if pityCfg.Enabled {
-		ps.SoftPityN = pityCfg.SoftPityN
-		ps.HardPityN = pityCfg.HardPityN
-		if pityCfg.HardPityN > 0 {
-			ps.MissesToHardPity = pityCfg.HardPityN - state.ConsecutiveMisses
-			if ps.MissesToHardPity < 0 {
-				ps.MissesToHardPity = 0
-			}
-		}
-	}
-	return ps, nil
 }
 
 // ============================================================
-// 用户库存 / 收集进度
+// 原 Draw 兼容
 // ============================================================
 
-// UserInventory 返回用户的库存列表
-func (s *Service) UserInventory(token string) ([]model.UserInventory, error) {
-	user, err := s.store.UserFromToken(token)
+func (s *Service) Draw(token string, campaignID string) (model.DrawResult, error) {
+	cfg := model.DrawConfig{CampaignID: campaignID, DrawCount: 1}
+	result, err := s.BlindBoxDraw(token, cfg)
 	if err != nil {
-		return nil, err
+		return model.DrawResult{}, err
 	}
-	return s.store.GetUserInventory(user.ID)
+	if len(result.Draws) == 0 {
+		return model.DrawResult{}, fmt.Errorf("draw returned no results")
+	}
+	d := result.Draws[0]
+	prizeName := d.PrizeName
+	if !d.IsWin {
+		prizeName = "未中奖"
+	}
+	rec := model.DrawRecord{
+		ID:         d.RecordID,
+		CampaignID: campaignID,
+		PrizeName:  prizeName,
+		Result:     map[bool]string{true: "win", false: "miss"}[d.IsWin],
+		DrawnAt:    time.Now().UTC(),
+		ChanceAfter: result.RemainingChances,
+	}
+	if d.IsWin {
+		rec.PrizeID = &d.PrizeID
+	}
+	return model.DrawResult{
+		Record:           rec,
+		RemainingChances: result.RemainingChances,
+	}, nil
 }
 
-// SeriesProgress 返回用户在某个系列的收集进度
-func (s *Service) SeriesProgress(token string, campaignID string) (*model.SeriesProgress, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	campaign, err := s.store.GetCampaign(campaignID)
-	if err != nil {
-		return nil, err
-	}
-	return s.store.GetSeriesProgress(user.ID, campaignID, campaign.Name)
-}
-
-// ============================================================
-// 交换市场
-// ============================================================
-
-func (s *Service) ExchangeOffers() []model.ExchangeOffer {
-	return s.store.ExchangeOffers()
-}
-
-func (s *Service) CreateExchangeOffer(token string, input model.ExchangeOfferMutation) (model.ExchangeOffer, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return model.ExchangeOffer{}, err
-	}
-	// 验证用户是否拥有 HavePrize
-	hasIt, err := s.store.UserHasPrize(user.ID, input.HavePrizeID)
-	if err != nil || !hasIt {
-		return model.ExchangeOffer{}, fmt.Errorf("you don't own this prize")
-	}
-	return s.store.CreateExchangeOffer(user.ID, input)
-}
-
-func (s *Service) CancelExchangeOffer(token string, offerID string) error {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return err
-	}
-	return s.store.CancelExchangeOffer(user.ID, offerID)
-}
-
-func (s *Service) AcceptExchangeOffer(token string, offerID string) (model.ExchangeOffer, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return model.ExchangeOffer{}, err
-	}
-	return s.store.AcceptExchangeOffer(user.ID, offerID)
-}
-
-// ============================================================
-// 积分/会员
-// ============================================================
-
-func (s *Service) UserMember(token string) (*model.UserMember, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	return s.store.GetUserMember(user.ID)
-}
-
-func (s *Service) PointsLog(token string) ([]model.UserPointsLog, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	return s.store.GetPointsLog(user.ID)
-}
-
-func (s *Service) RedeemPrize(token string, input model.RedeemRequest) (*model.RedeemResult, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	return s.store.RedeemPrize(user.ID, input)
-}
-
-// BlendPrizes 合成：消耗多个重复款式，合成更高级款式
-func (s *Service) BlendPrizes(token string, input model.BlendRequest) (*model.BlendResult, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	return s.store.BlendPrizes(user.ID, input.SourcePrizeID, input.CampaignID)
+func (s *Service) UserDrawRecords(token string) ([]model.DrawRecord, error) {
+	return s.store.UserDrawRecords(token)
 }
 
 // ============================================================
@@ -587,23 +347,19 @@ func (s *Service) UpdateFulfillmentTask(token string, taskID int64, input model.
 
 // DrawStatistics 获取抽奖统计数据
 func (s *Service) DrawStatistics(token string, campaignID string) (*model.DrawStatistics, error) {
-	// TODO: implement with actual DB aggregation
 	return s.store.GetDrawStatistics(token, campaignID)
 }
 
 // AdminUpdatePityConfig 管理员更新活动的保底配置
 func (s *Service) AdminUpdatePityConfig(token string, campaignID string, cfg model.PityConfig) (*model.Campaign, error) {
-	// 先验证管理员身份
 	if _, err := s.store.AdminOverview(token); err != nil {
 		return nil, err
 	}
-	// 获取当前活动
 	campaign, err := s.store.GetCampaign(campaignID)
 	if err != nil {
 		return nil, err
 	}
 	campaign.PityConfig = cfg
-	// 转成 CampaignMutation 更新
 	mutation := model.CampaignMutation{
 		Name: campaign.Name, Slug: campaign.Slug, Status: campaign.Status,
 		StartsAt: campaign.StartsAt, EndsAt: campaign.EndsAt,
@@ -614,7 +370,7 @@ func (s *Service) AdminUpdatePityConfig(token string, campaignID string, cfg mod
 	return s.store.UpdateCampaign(token, campaignID, mutation)
 }
 
-// 🆕 AdminGetCampaign 管理员获取活动详情
+// AdminGetCampaign 管理员获取活动详情
 func (s *Service) AdminGetCampaign(token, campaignID string) (*model.Campaign, error) {
 	if _, err := s.store.AdminOverview(token); err != nil {
 		return nil, err
@@ -627,487 +383,8 @@ func (s *Service) AdminGetCampaign(token, campaignID string) (*model.Campaign, e
 }
 
 // ============================================================
-// 原 Draw 兼容
+// v1.5 社交裂变 - 分享卡片
 // ============================================================
-
-func (s *Service) Draw(token string, campaignID string) (model.DrawResult, error) {
-	cfg := model.DrawConfig{CampaignID: campaignID, DrawCount: 1}
-	result, err := s.BlindBoxDraw(token, cfg)
-	if err != nil {
-		return model.DrawResult{}, err
-	}
-	if len(result.Draws) == 0 {
-		return model.DrawResult{}, fmt.Errorf("draw returned no results")
-	}
-	d := result.Draws[0]
-	prizeName := d.PrizeName
-	if !d.IsWin {
-		prizeName = "未中奖"
-	}
-	rec := model.DrawRecord{
-		ID:        d.RecordID,
-		CampaignID: campaignID,
-		PrizeName: prizeName,
-		Result:    map[bool]string{true: "win", false: "miss"}[d.IsWin],
-		DrawnAt:   time.Now().UTC(),
-		ChanceAfter: result.RemainingChances,
-	}
-	if d.IsWin {
-		rec.PrizeID = &d.PrizeID
-	}
-	return model.DrawResult{
-		Record:           rec,
-		RemainingChances: result.RemainingChances,
-	}, nil
-}
-
-func (s *Service) UserDrawRecords(token string) ([]model.DrawRecord, error) {
-	return s.store.UserDrawRecords(token)
-}
-
-// ============================================================
-// 工具函数
-// ============================================================
-
-// buildPityConfig 从 Campaign 构建概率引擎的保底配置
-func (s *Service) buildPityConfig(campaign model.Campaign) probability.PityConfig {
-	pc := campaign.PityConfig
-	if !pc.Enabled {
-		return probability.PityConfig{Enabled: false}
-	}
-	if pc.SoftPityN <= 0 {
-		pc.SoftPityN = 60
-	}
-	if pc.PityFactor <= 0 {
-		pc.PityFactor = 0.015
-	}
-	if pc.HardPityN <= 0 {
-		pc.HardPityN = 90
-	}
-	return probability.PityConfig{
-		Enabled:      true,
-		SoftPityN:    pc.SoftPityN,
-		PityFactor:   pc.PityFactor,
-		HardPityN:    pc.HardPityN,
-		TargetWeight: 0,
-	}
-}
-
-// 🆕 isUPPoolActive 检查UP池是否当前生效
-func isUPPoolActive(campaign model.Campaign) bool {
-	pc := campaign.PityConfig
-	if !pc.UPPoolEnabled || pc.UPPrizeID == "" || pc.UPLevel == "" {
-		return false
-	}
-	now := time.Now().UTC()
-	if now.Before(pc.UPStartAt) || now.After(pc.UPEndAt) {
-		return false
-	}
-	return true
-}
-
-// 🆕 getUPPrizeInfo 获取UP池目标奖品信息（用于前端展示）
-func getUPPrizeInfo(active bool, prizes []model.Prize) map[string]any {
-	if !active {
-		return nil
-	}
-	for _, p := range prizes {
-		if p.Status == "active" && p.Level == model.PrizeLevelSecret {
-			return map[string]any{
-				"name":  p.Name,
-				"level": p.Level,
-			}
-		}
-	}
-	return nil
-}
-
-// 🆕 IsUPPoolActive 外部可调用的UP池检查
-func (s *Service) IsUPPoolActive(campaignID string) (bool, error) {
-	campaign, err := s.store.GetCampaign(campaignID)
-	if err != nil {
-		return false, err
-	}
-	return isUPPoolActive(campaign), nil
-}
-
-// 🆕 UPPoolInfo 获取UP池信息
-func (s *Service) UPPoolInfo(token string, campaignID string) (map[string]any, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	campaign, err := s.store.GetCampaign(campaignID)
-	if err != nil {
-		return nil, err
-	}
-	active := isUPPoolActive(campaign)
-	prizes := s.store.PrizeList(campaignID)
-	upInfo := getUPPrizeInfo(active, prizes)
-
-	hasGuarantee := false
-	if active {
-		hasGuarantee = s.pityTracker.GetUPPoolGuarantee(user.ID, campaignID)
-	}
-
-	return map[string]any{
-		"active":         active,
-		"prize":          upInfo,
-		"has_guarantee":  hasGuarantee,
-		"up_prize_id":    campaign.PityConfig.UPPrizeID,
-		"up_multiplier":  campaign.PityConfig.UPMultiplier,
-		"up_level":       campaign.PityConfig.UPLevel,
-		"up_start_at":    campaign.PityConfig.UPStartAt,
-		"up_end_at":      campaign.PityConfig.UPEndAt,
-		"consecutive_misses": s.pityTracker.Get(user.ID, campaignID).ConsecutiveMisses,
-	}, nil
-}
-
-// ============================================================
-// 会员等级 & 用户积分系统
-// ============================================================
-
-// calcMemberLevel 根据累计消费积分计算会员等级
-// Lv1青铜: 注册即得
-// Lv2白银: ≥500分
-// Lv3黄金: ≥2000分
-// Lv4铂金: ≥5000分
-// Lv5钻石: ≥15000分
-func (s *Service) calcMemberLevel(totalSpent int64) model.MemberLevel {
-	switch {
-	case totalSpent >= 15000:
-		return model.MemberDiamond
-	case totalSpent >= 5000:
-		return model.MemberDiamond
-	case totalSpent >= 2000:
-		return model.MemberGold
-	case totalSpent >= 500:
-		return model.MemberSilver
-	default:
-		return model.MemberNormal
-	}
-}
-
-// DailyCheckIn 每日签到
-// 验证token，基础+5分，连续签到≥7天额外+20分
-func (s *Service) DailyCheckIn(token string) (*model.CheckInResult, error) {
-	user, err := s.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	result, err := s.store.DailyCheckIn(user.ID, 5)
-	if err != nil {
-		return nil, err
-	}
-	if result.StreakDays >= 7 {
-		bonusResult, err := s.store.DailyCheckIn(user.ID, 20)
-		if err != nil {
-			return nil, err
-		}
-		bonusResult.PointsAwarded = result.PointsAwarded + 20
-		bonusResult.IsBonus = true
-		member, _ := s.store.GetUserMember(user.ID)
-		s.store.LogPoints(user.ID, bonusResult.PointsAwarded, member.Points, "daily", "每日签到")
-		return bonusResult, nil
-	}
-	member, _ := s.store.GetUserMember(user.ID)
-	s.store.LogPoints(user.ID, result.PointsAwarded, member.Points, "daily", "每日签到")
-	return result, nil
-}
-
-// ShareReward 分享奖励
-// 每次+2分，每日上限10次
-func (s *Service) ShareReward(token string) (*model.ShareRewardResult, error) {
-	user, err := s.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	count, err := s.store.GetShareDailyCount(user.ID)
-	if err != nil {
-		return nil, err
-	}
-	if count >= 10 {
-		return nil, store.ErrShareLimitReached
-	}
-	result, err := s.store.ShareReward(user.ID, 2)
-	if err != nil {
-		return nil, err
-	}
-	member, _ := s.store.GetUserMember(user.ID)
-	s.store.LogPoints(user.ID, 2, member.Points, "share", "分享奖励")
-	return result, nil
-}
-
-// GetLeaderboard 获取收集排行榜
-func (s *Service) GetLeaderboard(limit int) ([]model.LeaderboardEntry, error) {
-	return s.store.GetLeaderboard(limit)
-}
-
-// GetCampaignHint 获取盲盒摇盒提示文案
-func (s *Service) GetCampaignHint(campaignID string) *model.HintMessage {
-	return s.store.GetCampaignHint(campaignID)
-}
-
-// 🆕 ---- 月卡系统 ----
-
-// MonthCardStatus 查询用户月卡状态
-func (s *Service) MonthCardStatus(token string) (*model.MonthCardStatus, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	card, _ := s.store.GetMonthCard(user.ID)
-	if card == nil {
-		return &model.MonthCardStatus{HasCard: false, FreeDraws: 0, DrawDiscount: 1.0}, nil
-	}
-	daysLeft := int(time.Until(card.ExpiresAt).Hours() / 24)
-	if daysLeft < 0 {
-		daysLeft = 0
-	}
-	used, _ := s.store.GetTodayFreeDrawUsed(user.ID)
-	return &model.MonthCardStatus{
-		HasCard: true, CardType: string(card.CardType),
-		FreeDraws: card.FreeDraws, DrawDiscount: card.DrawDiscount,
-		ExpiresAt: card.ExpiresAt, DaysLeft: daysLeft, TodayFreeUsed: used,
-	}, nil
-}
-
-// BuyMonthCard 购买月卡
-func (s *Service) BuyMonthCard(token string, cardType model.MonthCardType) (*model.MonthCardPurchaseResult, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	var price int64
-	switch cardType {
-	case model.MonthCardWeekly:
-		price = 990
-	case model.MonthCardMonthly:
-		price = 2800
-	case model.MonthCardSeason:
-		price = 6800
-	default:
-		return nil, fmt.Errorf("invalid card type: %s", cardType)
-	}
-	member, err := s.store.GetUserMember(user.ID)
-	if err != nil {
-		return nil, err
-	}
-	if member.Points < price {
-		return nil, store.ErrInsufficientPoints
-	}
-	card, err := s.store.BuyMonthCard(user.ID, cardType, price)
-	if err != nil {
-		return nil, err
-	}
-	member.Points -= price
-	member.TotalSpent += price
-	s.store.UpdateUserMember(member)
-	s.store.LogPoints(user.ID, -price, member.Points, "month_card", fmt.Sprintf("购买%s", cardType))
-	return &model.MonthCardPurchaseResult{Card: *card, NewPoints: member.Points}, nil
-}
-
-// 🆕 ---- 战令系统 ----
-
-// BattlePassInfo 获取战令完整信息
-func (s *Service) BattlePassInfo(token string) (*model.BattlePassInfo, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	season, err := s.store.GetActiveSeason()
-	if err != nil {
-		return nil, err
-	}
-	userPass, _ := s.store.GetUserBattlePass(user.ID, season.ID)
-	tasks, _ := s.store.GetBattlePassTasks(season.ID)
-	taskProgress, _ := s.store.GetBattlePassTaskProgress(user.ID, season.ID)
-	rewards, _ := s.store.GetBattlePassRewards(season.ID)
-	levelProgress := 0
-	if userPass != nil && season.XPPerLevel > 0 {
-		levelProgress = userPass.XP
-	}
-	return &model.BattlePassInfo{
-		Season: season, UserPass: userPass,
-		Tasks: tasks, TaskProgress: taskProgress,
-		Rewards: rewards, LevelProgress: levelProgress,
-	}, nil
-}
-
-// BuyBattlePass 购买付费战令
-func (s *Service) BuyBattlePass(token string) (*model.BattlePass, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	season, err := s.store.GetActiveSeason()
-	if err != nil {
-		return nil, err
-	}
-	price := int64(4800) // 48元
-	member, err := s.store.GetUserMember(user.ID)
-	if err != nil {
-		return nil, err
-	}
-	if member.Points < price {
-		return nil, store.ErrInsufficientPoints
-	}
-	bp, err := s.store.BuyBattlePass(user.ID, season.ID, price)
-	if err != nil {
-		return nil, err
-	}
-	member.Points -= price
-	member.TotalSpent += price
-	s.store.UpdateUserMember(member)
-	s.store.LogPoints(user.ID, -price, member.Points, "battle_pass", "购买战令")
-	return bp, nil
-}
-
-// ClaimBattlePassReward 领取战令等级奖励
-func (s *Service) ClaimBattlePassReward(token string, level int) (bool, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return false, err
-	}
-	season, err := s.store.GetActiveSeason()
-	if err != nil {
-		return false, err
-	}
-	return s.store.ClaimBattlePassReward(user.ID, season.ID, level)
-}
-
-// ============================================================
-// 🆕 商店 + 道具 + 首充礼包 Service
-// ============================================================
-
-// ShopItems 获取商店商品列表
-func (s *Service) ShopItems(token string) ([]model.ShopItem, error) {
-	if _, err := s.store.UserFromToken(token); err != nil {
-		return nil, err
-	}
-	return s.store.GetShopItems(), nil
-}
-
-// BuyShopItem 购买商店商品
-func (s *Service) BuyShopItem(token string, input model.BuyShopItemRequest) (*model.BuyShopItemResult, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	result, err := s.store.BuyShopItem(user.ID, input.ShopItemID, input.Quantity)
-	if err != nil {
-		return nil, err
-	}
-	// 记录积分变动
-	member, _ := s.store.GetUserMember(user.ID)
-	s.store.LogPoints(user.ID, -result.PointsCost, member.Points, "shop", fmt.Sprintf("购买 %s x%d", result.ItemName, result.Quantity))
-	return result, nil
-}
-
-// UserItems 获取用户所有道具
-func (s *Service) UserItems(token string) ([]model.UserItem, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	return s.store.GetUserItems(user.ID)
-}
-
-// UseItem 使用道具
-func (s *Service) UseItem(token string, input model.UseItemRequest) (map[string]any, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-
-	switch input.ItemType {
-	case model.ItemHintCard:
-		// 提示卡：排除当前池1个不想要的款式
-		ok, err := s.store.UseUserItem(user.ID, model.ItemHintCard, 1)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, fmt.Errorf("insufficient hint cards")
-		}
-		return map[string]any{
-			"success": true, "message": "使用提示卡成功，排除了一个款式",
-			"excluded_prize_id": input.PrizeID,
-		}, nil
-
-	case model.ItemSeeThrough:
-		// 透卡：预览下一抽（仅普通款）
-		ok, err := s.store.UseUserItem(user.ID, model.ItemSeeThrough, 1)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, fmt.Errorf("insufficient see-through cards")
-		}
-		// 随机返回一个普通款作为预览
-		if input.CampaignID != "" {
-			prizes := s.store.PrizeList(input.CampaignID)
-			for _, p := range prizes {
-				if p.Level == model.PrizeLevelCommon && p.Status == "active" {
-					return map[string]any{
-						"success": true, "message": "预览成功",
-						"preview_prize": map[string]any{
-							"id": p.ID, "name": p.Name, "level": p.Level,
-						},
-					}, nil
-				}
-			}
-		}
-		return map[string]any{"success": true, "message": "预览完成，仅显示普通款"}, nil
-
-	case model.ItemTenDrawTicket:
-		// 十连券：直接在抽奖中使用
-		ok, err := s.store.UseUserItem(user.ID, model.ItemTenDrawTicket, 1)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, fmt.Errorf("insufficient ten-draw tickets")
-		}
-		return map[string]any{
-			"success": true, "message": "使用十连券成功，可进行一次免费十连抽",
-		}, nil
-
-	default:
-		return nil, fmt.Errorf("unsupported item type: %s", input.ItemType)
-	}
-}
-
-// 🆕 首充礼包
-
-// FirstRechargeStatus 获取首充状态（可领取的礼包列表）
-func (s *Service) FirstRechargeStatus(token string) (*model.UserFirstRecharge, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	return s.store.GetFirstRechargeStatus(user.ID)
-}
-
-// FirstRechargePacks 获取所有首充礼包配置
-func (s *Service) FirstRechargePacks() map[string]model.FirstRechargePack {
-	return model.FirstRechargePacks
-}
-
-// ClaimFirstRecharge 领取首充礼包
-func (s *Service) ClaimFirstRecharge(token string, input model.ClaimFirstRechargeRequest) (*model.ClaimFirstRechargeResult, error) {
-	user, err := s.store.UserFromToken(token)
-	if err != nil {
-		return nil, err
-	}
-	return s.store.ClaimFirstRecharge(user.ID, input.PackID)
-}
-
-// ============================================================
-// 🆕 v1.5 社交裂变 Service
-// ============================================================
-
-// ---- 分享卡片 ----
 
 // CreateShareCard 创建分享卡片
 func (s *Service) CreateShareCard(token string, cardType string, prizeName, prizeLevel string) (*model.ShareCard, error) {
@@ -1277,14 +554,12 @@ func (s *Service) ClaimAssistReward(token string, assistType model.AssistType) (
 	// 发放奖励
 	switch assistType {
 	case model.AssistFreeDraw:
-		// 免费抽：给用户添加免费抽券
 		s.store.AddUserItem(user.ID, model.ItemFreeDraw, 1)
 		return &model.AssistClaimResult{
 			AssistType: assistType, RewardType: "free_draw",
 			Description: "助力完成！获得1次免费抽奖机会 🎉",
 		}, nil
 	case model.AssistPityReduce:
-		// 保底缩短：-10次
 		return &model.AssistClaimResult{
 			AssistType: assistType, RewardType: "pity_reduce",
 			Description: "助力完成！保底次数减少10次 ⚡",
@@ -1397,7 +672,6 @@ func (s *Service) getTeamInfo(teamID string) (*model.TeamInfo, error) {
 	}
 
 	reward, _ := s.store.CompleteTeam(teamID)
-	// Only return reward if team completed
 
 	return &model.TeamInfo{
 		Team:           team,
@@ -1408,7 +682,7 @@ func (s *Service) getTeamInfo(teamID string) (*model.TeamInfo, error) {
 	}, nil
 }
 
-// AddTeamDrawHook 抽奖后调用，累计队伍开盒次数（从盲盒抽奖Service调用）
+// AddTeamDrawHook 抽奖后调用，累计队伍开盒次数
 func (s *Service) AddTeamDrawHook(userID string) {
 	team, err := s.store.GetUserActiveTeam(userID)
 	if err != nil || team == nil {
@@ -1418,8 +692,6 @@ func (s *Service) AddTeamDrawHook(userID string) {
 	if err != nil {
 		return
 	}
-	_ = total
-	// 如果达到目标，自动完成
 	if total >= team.GoalDraws {
 		s.store.CompleteTeam(team.ID)
 	}
@@ -1709,9 +981,9 @@ func (s *Service) GetMyFlashSubscriptions(token string) ([]model.FlashSubscripti
 	return s.store.GetUserFlashSubscriptions(user.ID)
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================
 // Activity service methods
-// ---------------------------------------------------------------------------
+// ============================================================
 
 // GetActivityList 获取活动列表（前端展示）
 func (s *Service) GetActivityList(token string) ([]model.ActivityListInfo, error) {
