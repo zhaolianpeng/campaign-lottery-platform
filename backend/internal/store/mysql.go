@@ -1947,3 +1947,51 @@ func (store *MySQLStore) CreateFlashSale(input model.FlashSale) (*model.FlashSal
 func (store *MySQLStore) UpdateFlashSaleStatus(flashID, status string) error {
 	return fmt.Errorf("mysql flash not implemented, use memory store")
 }
+
+// ---------------------------------------------------------------------------
+// Activity stubs (MySQL not implemented – use memory store)
+// ---------------------------------------------------------------------------
+
+func (store *MySQLStore) GetActiveActivities() []model.Activity {
+	return nil
+}
+
+func (store *MySQLStore) GetAllActivities() []model.Activity {
+	return nil
+}
+
+func (store *MySQLStore) GetActivity(activityID string) (*model.Activity, error) {
+	return nil, fmt.Errorf("mysql activity not implemented, use memory store")
+}
+
+func (store *MySQLStore) CreateActivity(input model.ActivityCreateRequest) (*model.Activity, error) {
+	return nil, fmt.Errorf("mysql activity not implemented, use memory store")
+}
+
+func (store *MySQLStore) UpdateActivity(activityID string, input model.ActivityUpdateRequest) (*model.Activity, error) {
+	return nil, fmt.Errorf("mysql activity not implemented, use memory store")
+}
+
+func (store *MySQLStore) DeleteActivity(activityID string) error {
+	return fmt.Errorf("mysql activity not implemented, use memory store")
+}
+
+func (store *MySQLStore) GetActivityRewards(activityID string) ([]model.ActivityReward, error) {
+	return nil, fmt.Errorf("mysql activity not implemented, use memory store")
+}
+
+func (store *MySQLStore) JoinActivity(userID, activityID string) (*model.ActivityParticipation, error) {
+	return nil, fmt.Errorf("mysql activity not implemented, use memory store")
+}
+
+func (store *MySQLStore) GetUserActivityParticipation(userID, activityID string) (*model.ActivityParticipation, error) {
+	return nil, fmt.Errorf("mysql activity not implemented, use memory store")
+}
+
+func (store *MySQLStore) GetUserActivityParticipations(userID string) ([]model.ActivityParticipation, error) {
+	return nil, fmt.Errorf("mysql activity not implemented, use memory store")
+}
+
+func (store *MySQLStore) ClaimActivityReward(userID, activityID, rewardID string) (*model.ActivityReward, error) {
+	return nil, fmt.Errorf("mysql activity not implemented, use memory store")
+}

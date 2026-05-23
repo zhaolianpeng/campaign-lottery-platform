@@ -975,3 +975,119 @@ type FlashListInfo struct {
 	Subscribed  bool              `json:"subscribed"`
 	Purchasable bool              `json:"purchasable"` // 是否符合资格
 }
+
+// ============================================================
+// 🆕 v2.0 活动系统
+// ============================================================
+
+// ActivityType 活动类型
+type ActivityType string
+
+const (
+	ActivityUPPool       ActivityType = "up_pool"        // UP池概率提升
+	ActivityDiscount     ActivityType = "discount"       // 限时折扣
+	ActivityFestival     ActivityType = "festival"       // 节日活动
+	ActivityCheckinBoost ActivityType = "checkin_boost"  // 签到加倍
+	ActivityCraftBoost   ActivityType = "craft_boost"    // 合成加成
+	ActivityFlashSale    ActivityType = "flash_sale"     // 限时抢购
+)
+
+// Activity 活动
+type Activity struct {
+	ID          string       `json:"id"`
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	Type        ActivityType `json:"type"`
+	BannerURL   string       `json:"banner_url,omitempty"`
+	Rules       ActivityRules `json:"rules"`         // 活动规则（JSON配置）
+	SortOrder   int          `json:"sort_order"`
+	Status      string       `json:"status"`         // draft / active / paused / ended
+	StartAt     time.Time    `json:"start_at"`
+	EndAt       time.Time    `json:"end_at"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
+}
+
+// ActivityRules 活动规则配置
+type ActivityRules struct {
+	// UP池规则
+	UPPrizeID       string  `json:"up_prize_id,omitempty"`
+	UPMultiplier    float64 `json:"up_multiplier,omitempty"`
+	UPLevel         string  `json:"up_level,omitempty"`
+	UPCampaignID    string  `json:"up_campaign_id,omitempty"`
+
+	// 折扣规则
+	DiscountRate    float64 `json:"discount_rate,omitempty"`    // 0.8 = 8折
+	DiscountTarget  string  `json:"discount_target,omitempty"`  // single_draw / ten_draw / shop
+
+	// 签到加倍
+	CheckinMultiplier int   `json:"checkin_multiplier,omitempty"` // 签到积分倍数
+
+	// 合成加成
+	CraftBoostRate  float64 `json:"craft_boost_rate,omitempty"` // 合成成功率加成
+
+	// 节日礼包
+	GiftPackID      string  `json:"gift_pack_id,omitempty"`
+
+	// 抢购（复用FlashSale系统）
+	FlashID         string  `json:"flash_id,omitempty"`
+}
+
+// ActivityParticipation 用户活动参与记录
+type ActivityParticipation struct {
+	ID         string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	ActivityID string    `json:"activity_id"`
+	Data       string    `json:"data,omitempty"` // 参与数据（如抽奖次数等，JSON）
+	RewardClaimed bool  `json:"reward_claimed"`
+	JoinedAt   time.Time `json:"joined_at"`
+}
+
+// ActivityReward 活动奖励
+type ActivityReward struct {
+	ID          string `json:"id"`
+	ActivityID  string `json:"activity_id"`
+	Condition   string `json:"condition"`    // 条件描述
+	RewardType  string `json:"reward_type"`  // points / draw_ticket / prize / item
+	RewardQty   int    `json:"reward_qty"`
+	RewardName  string `json:"reward_name"`
+	RewardID    string `json:"reward_id,omitempty"`
+}
+
+// ActivityCreateRequest 创建活动请求
+type ActivityCreateRequest struct {
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	Type        ActivityType `json:"type"`
+	BannerURL   string       `json:"banner_url,omitempty"`
+	Rules       ActivityRules `json:"rules"`
+	SortOrder   int          `json:"sort_order"`
+	StartAt     time.Time    `json:"start_at"`
+	EndAt       time.Time    `json:"end_at"`
+}
+
+// ActivityUpdateRequest 更新活动请求
+type ActivityUpdateRequest struct {
+	Name        string        `json:"name,omitempty"`
+	Description string        `json:"description,omitempty"`
+	BannerURL   string        `json:"banner_url,omitempty"`
+	Rules       *ActivityRules `json:"rules,omitempty"`
+	SortOrder   *int          `json:"sort_order,omitempty"`
+	Status      string        `json:"status,omitempty"`
+	StartAt     *time.Time    `json:"start_at,omitempty"`
+	EndAt       *time.Time    `json:"end_at,omitempty"`
+}
+
+// ClaimActivityRewardRequest 领取活动奖励请求
+type ClaimActivityRewardRequest struct {
+	ActivityID string `json:"activity_id"`
+	RewardID   string `json:"reward_id"`
+}
+
+// ActivityListInfo 活动列表项（前端展示）
+type ActivityListInfo struct {
+	Activity  *Activity `json:"activity"`
+	Joined    bool      `json:"joined"`
+	CanClaim  bool      `json:"can_claim"`
+	Rewards   []ActivityReward `json:"rewards,omitempty"`
+}

@@ -1071,7 +1071,72 @@ func New(cfg config.Config) (http.Handler, error) {
 		response.JSON(w, http.StatusOK, "ok", "my flash subscriptions", subscriptions)
 	})
 
+	// 🆕 Activity routes
+	mux.Handle("GET /api/v1/activities", getActivityListHandler(services))
+	mux.Handle("GET /api/v1/activities/{id}", getActivityDetailHandler(services))
+	mux.Handle("POST /api/v1/activities/{id}/join", joinActivityHandler(services))
+	mux.Handle("POST /api/v1/activities/claim", claimActivityRewardHandler(services))
+
 	return mux, nil
+}
+
+// getActivityListHandler 获取活动列表
+func getActivityListHandler(svc *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		list, err := svc.GetActivityList(token)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "activity list", list)
+	}
+}
+
+// getActivityDetailHandler 获取活动详情
+func getActivityDetailHandler(svc *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		id := r.PathValue("id")
+		detail, err := svc.GetActivityDetail(token, id)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "activity detail", detail)
+	}
+}
+
+// joinActivityHandler 用户参与活动
+func joinActivityHandler(svc *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		id := r.PathValue("id")
+		participation, err := svc.JoinActivity(token, id)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "joined", participation)
+	}
+}
+
+// claimActivityRewardHandler 领取活动奖励
+func claimActivityRewardHandler(svc *service.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := bearerToken(r)
+		var req model.ClaimActivityRewardRequest
+		if err := decodeJSON(r, &req); err != nil {
+			response.JSON(w, http.StatusBadRequest, "bad_request", "invalid request body", nil)
+			return
+		}
+		reward, err := svc.ClaimActivityReward(token, req.ActivityID, req.RewardID)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		response.JSON(w, http.StatusOK, "ok", "reward claimed", reward)
+	}
 }
 
 func decodeJSON(r *http.Request, target any) error {

@@ -541,3 +541,135 @@ h2 { font-size: 18px; margin-bottom: 12px; }
 .flash-eligibility { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
 .flash-actions { display: flex; gap: 8px; margin-top: 8px; }
 .flash-actions .btn-sm { font-size: 12px; }
+
+/* ============================================================
+   活动系统 样式
+   ============================================================ */
+
+.activity-banner {
+  overflow: hidden;
+  margin-bottom: 12px;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, rgba(167,139,250,0.15), rgba(244,114,182,0.15));
+  border: 1px solid rgba(167,139,250,0.2);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.activity-banner:active { transform: scale(0.98); }
+.activity-banner-scroll {
+  display: flex; gap: 10px;
+  overflow-x: auto; padding: 12px;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+.activity-banner-scroll::-webkit-scrollbar { display: none; }
+.activity-banner-card {
+  flex: 0 0 240px;
+  scroll-snap-align: start;
+  background: linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05));
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 12px;
+  padding: 12px 14px;
+  min-width: 200px;
+  transition: all 0.2s;
+}
+.activity-banner-card:active { transform: scale(0.96); }
+.activity-banner-card .act-name { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+.activity-banner-card .act-desc { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.activity-banner-card .act-time { font-size: 11px; color: var(--gold); }
+.activity-banner-card .act-badge {
+  display: inline-block;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border-radius: 8px;
+  padding: 2px 8px;
+  font-size: 10px;
+  color: #fff;
+  margin-bottom: 6px;
+}
+.activity-banner-card.act-ongoing { border-color: var(--green); }
+.activity-banner-card.act-upcoming { border-color: var(--accent2); }
+.activity-banner-card.act-ended { opacity: 0.5; }
+
+/* 活动弹窗 */
+.activity-modal-body { text-align: left; font-size: 14px; line-height: 1.6; }
+.activity-modal-body .act-info { margin-bottom: 16px; }
+.activity-modal-body .act-info p { color: var(--muted); font-size: 13px; margin: 4px 0; }
+.activity-modal-body .act-info .act-status {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.activity-modal-body .act-status.ongoing { background: rgba(52,211,153,0.2); color: var(--green); }
+.activity-modal-body .act-status.ended { background: rgba(255,255,255,0.1); color: var(--muted); }
+.activity-modal-body .act-status.upcoming { background: rgba(167,139,250,0.2); color: var(--accent2); }
+.activity-reward-list {
+  display: flex; flex-direction: column; gap: 8px;
+  margin: 12px 0;
+}
+.activity-reward-item {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.activity-reward-item .reward-icon { font-size: 24px; }
+.activity-reward-item .reward-info { flex: 1; }
+.activity-reward-item .reward-name { font-size: 14px; font-weight: 600; }
+.activity-reward-item .reward-desc { font-size: 12px; color: var(--muted); }
+.activity-reward-item .reward-claim-btn {
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border: 0; border-radius: 8px;
+  padding: 6px 14px; font-size: 12px;
+  color: #fff; cursor: pointer;
+  white-space: nowrap;
+}
+.activity-reward-item .reward-claim-btn:disabled { background: #444; color: #888; cursor: not-allowed; }
+.activity-join-btn {
+  display: block; width: 100%;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border: 0; border-radius: 12px;
+  padding: 12px; font-size: 16px; font-weight: 600;
+  color: #fff; cursor: pointer;
+  margin: 16px 0;
+}
+.activity-join-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.activity-join-btn.joined { background: linear-gradient(135deg, #34d399, #10b981); }
+
+/* ============================================================
+   AR 开盒动画增强
+   ============================================================ */
+
+.box-anim.ar-mode {
+  perspective: 800px;
+  transform-style: preserve-3d;
+  transform: rotateX(5deg);
+}
+.ar-mode .box-shake {
+  animation: shakeBoxAR 1.2s ease-in-out infinite;
+}
+@keyframes shakeBoxAR {
+  0%,100% { transform: rotateY(0deg) rotateX(0deg) scale(1); }
+  20% { transform: rotateY(30deg) rotateX(10deg) scale(1.08); }
+  40% { transform: rotateY(-20deg) rotateX(-5deg) scale(0.95); }
+  60% { transform: rotateY(15deg) rotateX(8deg) scale(1.05); }
+  80% { transform: rotateY(-10deg) rotateX(-3deg) scale(0.98); }
+}
+.ar-mode .box-glow {
+  animation: glowAR 0.8s ease-in-out infinite alternate;
+  background: radial-gradient(circle, rgba(244,114,182,0.6), rgba(167,139,250,0.3), transparent);
+  width: 80px; height: 80px;
+}
+@keyframes glowAR {
+  from { transform: scale(0.8) rotateY(0deg); opacity: 0.4; }
+  to { transform: scale(1.4) rotateY(180deg); opacity: 1; }
+}
+
+/* 抽奖结果稀有度背景增强 */
+.box-result.rarity-common-bg { background: rgba(148,163,184,0.1); border-radius: 12px; padding: 10px; }
+.box-result.rarity-rare-bg { background: rgba(96,165,250,0.15); border-radius: 12px; padding: 10px; box-shadow: 0 0 30px rgba(96,165,250,0.2); }
+.box-result.rarity-secret-bg { background: rgba(167,139,250,0.2); border-radius: 12px; padding: 10px; box-shadow: 0 0 40px rgba(167,139,250,0.3); }
+.box-result.rarity-limited-bg { background: rgba(251,191,36,0.2); border-radius: 12px; padding: 10px; box-shadow: 0 0 50px rgba(251,191,36,0.4); }

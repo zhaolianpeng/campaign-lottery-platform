@@ -167,6 +167,7 @@ async function loadSeries() {
     const seriesData = await api('/api/v1/blindbox/campaigns');
     state.campaigns = seriesData.data;
     renderSeries();
+    loadActivityBanners();
   } catch (e) {
     document.getElementById('seriesList').innerHTML = `<div class="loading">❌ ${e.message}</div>`;
   }
@@ -1367,3 +1368,197 @@ async function purchaseFlash(flashId) {
     showToast('❌ ' + e.message, true);
   }
 }
+
+// ============================================================
+// 活动系统
+// ============================================================
+
+async function loadActivityBanners() {
+  const banner = document.getElementById('activityBanner');
+  const list = document.getElementById('activityBannerList');
+  if (!banner || !list) return;
+  try {
+    const res = await api('/api/v1/activities');
+    const activities = res.data || [];
+    if (!activities.length) {
+      banner.style.display = 'none';
+      return;
+    }
+    banner.style.display = '';
+    list.innerHTML = activities.map(a => {
+      const statusClass = getActivityStatusClass(a);
+      const timeText = formatActivityTime(a);
+      return `
+        <div class="activity-banner-card ${statusClass}" onclick="event.stopPropagation();showActivityDetail('${a.id}')">
+          ${a.type ? `<span class="act-badge">${a.type}</span>` : ''}
+          <div class="act-name">${a.name}</div>
+          <div class="act-desc">${a.description || ''}</div>
+          <div class="act-time">${timeText}</div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    banner.style.display = 'none';
+  }
+}
+
+function getActivityStatusClass(a) {
+  const now = Date.now();
+  const start = a.start_time ? new Date(a.start_time).getTime() : 0;
+  const end = a.end_time ? new Date(a.end_time).getTime() : Infinity;
+  if (end < now) return 'act-ended';
+  if (start > now) return 'act-upcoming';
+  return 'act-ongoing';
+}
+
+function formatActivityTime(a) {
+  const now = Date.now();
+  const start = a.start_time ? new Date(a.start_time).getTime() : 0;
+  const end = a.end_time ? new Date(a.end_time).getTime() : Infinity;
+  if (end < now) return '⏰ 已结束';
+  if (start > now) {
+    const diff = start - now;
+    const days = Math.floor(diff / 86400000);
+    const hours = Math.floor((diff % 86400000) / 3600000);
+    return days > 0 ? `📅 ${days}天后开始` : `📅 ${hours}小时后开始`;
+  }
+  const diff = end - now;
+  if (diff <= 0) return '⏰ 即将结束';
+  const days = Math.floor(diff / 86400000);
+  const hours = Math.floor((diff % 86400000) / 3600000);
+  const mins = Math.floor((diff % 3600000) / 60000);
+  if (days > 0) return `⏱️ 剩余 ${days}天${hours}小时`;
+  if (hours > 0) return `⏱️ 剩余 ${hours}时${mins}分`;
+  return `⏱️ 剩余 ${mins}分`;
+}
+
+async function showActivityDetail(activityId) {
+  try {
+    const res = await api('/api/v1/activities/' + activityId);
+    const act = res.data;
+    if (!act) { showToast('活动不存在', true); return; }
+
+    document.getElementById('activityModalTitle').textContent = act.name || '活动详情';
+
+    const now = Date.now();
+    const start = act.start_time ? new Date(act.start_time).getTime() : 0;
+    const end = act.end_time ? new Date(act.end_time).getTime() : Infinity;
+    let statusText = '进行中', statusClass = 'ongoing';
+    if (end < now) { statusText = '已结束'; statusClass = 'ended'; }
+    else if (start > now) { statusText = '即将开始'; statusClass = 'upcoming'; }
+
+    const rewards = act.rewards || [];
+    const userJoined = act.user_joined || false;
+    const rewardsHtml = rewards.length ? `
+      <h3 style="margin-top:12px;margin-bottom:8px;">🎁 奖励列表</h3>
+      <div class="activity-reward-list">
+        ${rewards.map(r => {
+          const claimed = r.claimed || false;
+          return `
+            <div class="activity-reward-item">
+              <span class="reward-icon">${r.icon || '🎁'}</span>
+              <div class="reward-info">
+                <div class="reward-name">${r.name}</div>
+                <div class="reward-desc">${r.description || ''}</div>
+              </div>
+              <button class="reward-claim-btn" ${claimed ? 'disabled' : ''} onclick="event.stopPropagation();claimActivityReward('${act.id}','${r.id}')">
+                ${claimed ? '✅ 已领取' : '领取'}
+              </button>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    ` : '';
+
+    document.getElementById('activityModalBody').innerHTML = `
+      <div class="activity-modal-body">
+        <div class="act-info">
+          <span class="act-status ${statusClass}">${statusText}</span>
+          <p>${act.description || ''}</p>
+          ${act.start_time ? `<p>📅 开始: ${new Date(act.start_time).toLocaleDateString()}</p>` : ''}
+          ${act.end_time ? `<p>📅 结束: ${new Date(act.end_time).toLocaleDateString()}</p>` : ''}
+        </div>
+        ${rewardsHtml}
+        <button class="activity-join-btn ${userJoined ? 'joined' : ''}" onclick="joinActivity('${act.id}')" ${statusClass === 'ended' ? 'disabled' : ''}>
+          ${userJoined ? '✅ 已参与' : (statusClass === 'ended' ? '已结束' : '🎯 立即参与')}
+        </button>
+      </div>
+    `;
+    document.getElementById('activityModal').classList.remove('hidden');
+  } catch (e) {
+    showToast('❌ ' + e.message, true);
+  }
+}
+
+function closeActivityModal() {
+  document.getElementById('activityModal').classList.add('hidden');
+}
+
+async function joinActivity(activityId) {
+  if (!state.token) { showToast('请先登录', true); return; }
+  try {
+    const res = await api('/api/v1/activities/' + activityId + '/join', { method: 'POST' });
+    showToast('🎉 ' + (res.data?.message || '参与成功！'));
+    showActivityDetail(activityId);
+    loadActivityBanners();
+  } catch (e) {
+    showToast('❌ ' + e.message, true);
+  }
+}
+
+async function claimActivityReward(activityId, rewardId) {
+  if (!state.token) { showToast('请先登录', true); return; }
+  try {
+    const res = await api('/api/v1/activities/claim', {
+      method: 'POST',
+      body: JSON.stringify({ activity_id: activityId, reward_id: rewardId }),
+    });
+    showToast('🎉 领取成功！' + (res.data?.reward_name || ''));
+    if (res.data?.new_points) {
+      state.member.points = res.data.new_points;
+      updatePoints();
+    }
+    showActivityDetail(activityId);
+    loadActivityBanners();
+  } catch (e) {
+    showToast('❌ ' + e.message, true);
+  }
+}
+
+// ============================================================
+// AR 开盒动画增强
+// ============================================================
+
+// AR模式切换
+document.addEventListener('DOMContentLoaded', function() {
+  var arBtn = document.getElementById('arToggle');
+  if (arBtn) {
+    arBtn.onclick = function() {
+      var boxAnim = document.getElementById('boxAnim');
+      if (boxAnim) {
+        boxAnim.classList.toggle('ar-mode');
+        arBtn.textContent = boxAnim.classList.contains('ar-mode') ? '🔮 AR开启' : '🔮 AR模式';
+      }
+    };
+  }
+});
+
+// 增强 showDrawResults：稀有度背景
+const origShowDrawResults = showDrawResults;
+showDrawResults = function(data, count) {
+  origShowDrawResults(data, count);
+
+  const draws = data.draws || [];
+  let show = draws[0] || {};
+  const levels = { limited: 5, secret: 4, rare: 3, common: 1 };
+  for (const d of draws) {
+    if ((levels[d.prize_level] || 0) > (levels[show.prize_level] || 0)) show = d;
+  }
+
+  const resultEl = document.getElementById('boxResult');
+  // Remove old rarity classes
+  resultEl.classList.remove('rarity-common-bg', 'rarity-rare-bg', 'rarity-secret-bg', 'rarity-limited-bg');
+  // Add new rarity class
+  const rarityClass = 'rarity-' + (show.prize_level || 'common') + '-bg';
+  resultEl.classList.add(rarityClass);
+};

@@ -285,4 +285,28 @@ LogPoints(userID string, points int64, balance int64, reason, remark string) err
 	CreateFlashSale(input model.FlashSale) (*model.FlashSale, error)
 	// UpdateFlashSaleStatus 更新抢购状态
 	UpdateFlashSaleStatus(flashID, status string) error
+
+	// 🆕 ---- v2.0 活动系统 ----
+	// GetActiveActivities 获取当前活跃活动列表
+	GetActiveActivities() []model.Activity
+	// GetAllActivities 获取所有活动（管理端）
+	GetAllActivities() []model.Activity
+	// GetActivity 获取活动详情
+	GetActivity(activityID string) (*model.Activity, error)
+	// CreateActivity 创建活动
+	CreateActivity(input model.ActivityCreateRequest) (*model.Activity, error)
+	// UpdateActivity 更新活动
+	UpdateActivity(activityID string, input model.ActivityUpdateRequest) (*model.Activity, error)
+	// DeleteActivity 删除活动
+	DeleteActivity(activityID string) error
+	// GetActivityRewards 获取活动奖励列表
+	GetActivityRewards(activityID string) ([]model.ActivityReward, error)
+	// JoinActivity 用户参与活动
+	JoinActivity(userID, activityID string) (*model.ActivityParticipation, error)
+	// GetUserActivityParticipation 获取用户活动参与记录
+	GetUserActivityParticipation(userID, activityID string) (*model.ActivityParticipation, error)
+	// GetUserActivityParticipations 获取用户所有活动参与
+	GetUserActivityParticipations(userID string) ([]model.ActivityParticipation, error)
+	// ClaimActivityReward 领取活动奖励
+	ClaimActivityReward(userID, activityID, rewardID string) (*model.ActivityReward, error)
 }

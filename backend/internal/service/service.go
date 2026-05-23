@@ -1708,3 +1708,81 @@ func (s *Service) GetMyFlashSubscriptions(token string) ([]model.FlashSubscripti
 	}
 	return s.store.GetUserFlashSubscriptions(user.ID)
 }
+
+// ---------------------------------------------------------------------------
+// Activity service methods
+// ---------------------------------------------------------------------------
+
+// GetActivityList 获取活动列表（前端展示）
+func (s *Service) GetActivityList(token string) ([]model.ActivityListInfo, error) {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	activities := s.store.GetActiveActivities()
+	var result []model.ActivityListInfo
+	for _, activity := range activities {
+		info := model.ActivityListInfo{
+			Activity: &activity,
+			Joined:   false,
+			CanClaim: false,
+		}
+		participation, _ := s.store.GetUserActivityParticipation(user.ID, activity.ID)
+		if participation != nil {
+			info.Joined = true
+			info.CanClaim = !participation.RewardClaimed
+		}
+		rewards, _ := s.store.GetActivityRewards(activity.ID)
+		if rewards != nil {
+			info.Rewards = rewards
+		}
+		result = append(result, info)
+	}
+	if result == nil {
+		result = []model.ActivityListInfo{}
+	}
+	return result, nil
+}
+
+// GetActivityDetail 获取活动详情
+func (s *Service) GetActivityDetail(token, activityID string) (*model.ActivityListInfo, error) {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	activity, err := s.store.GetActivity(activityID)
+	if err != nil {
+		return nil, err
+	}
+	info := &model.ActivityListInfo{
+		Activity: activity,
+	}
+	participation, _ := s.store.GetUserActivityParticipation(user.ID, activityID)
+	if participation != nil {
+		info.Joined = true
+		info.CanClaim = !participation.RewardClaimed
+	}
+	rewards, _ := s.store.GetActivityRewards(activityID)
+	if rewards != nil {
+		info.Rewards = rewards
+	}
+	return info, nil
+}
+
+// JoinActivity 用户参与活动
+func (s *Service) JoinActivity(token, activityID string) (*model.ActivityParticipation, error) {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.JoinActivity(user.ID, activityID)
+}
+
+// ClaimActivityReward 领取活动奖励
+func (s *Service) ClaimActivityReward(token, activityID, rewardID string) (*model.ActivityReward, error) {
+	user, err := s.UserFromToken(token)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.ClaimActivityReward(user.ID, activityID, rewardID)
+}
