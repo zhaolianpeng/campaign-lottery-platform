@@ -88,6 +88,7 @@ import type {
   UserMember,
   UserPointsLog,
   UseItemRequest,
+  WechatUser,
 } from './types';
 
 const POINTS_PER_DRAW = 100;
@@ -197,6 +198,9 @@ export class MemoryStore {
   private readonly shareCounts = new Map<string, number>();
   private readonly userCards = new Map<string, UserCard>();
   private readonly userItems = new Map<string, UserItem>();
+  private readonly wechatUsers = new Map<string, WechatUser>();
+  private readonly wechatByOpenid = new Map<string, WechatUser>();
+  private readonly wechatSessionKeys = new Map<string, string>();
   private readonly firstRechargeClaims = new Map<string, UserFirstRecharge>();
   private readonly battlePasses = new Map<string, BattlePass>();
   private readonly taskProgress = new Map<string, BattlePassTaskProgress>();
@@ -253,6 +257,76 @@ export class MemoryStore {
     this.logPoints(user.id, 1000, 1000, 'welcome', '新用户注册赠送');
 
     return { user, session };
+  }
+
+  public createWechatUser(openid: string, phone: string, nickname: string, avatar: string): { readonly user: User; readonly session: Session; readonly wechatUser: WechatUser } {
+    const createdAt = nowISO();
+    const user: User = {
+      id: randomId('usr'),
+      nickname: nickname.trim() || `WeChat${Math.floor(Math.random() * 10000)}`,
+      created_at: createdAt,
+    };
+    const session: Session = {
+      token: randomId('utk'),
+      user_id: user.id,
+      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    };
+    const wechatUser: WechatUser = {
+      openid,
+      phone: phone || undefined,
+      nickname: nickname || undefined,
+      avatar: avatar || undefined,
+      user_id: user.id,
+      created_at: createdAt,
+    };
+
+    this.users.set(user.id, user);
+    this.sessions.set(session.token, session);
+    this.wechatUsers.set(user.id, wechatUser);
+    this.wechatByOpenid.set(openid, wechatUser);
+    this.members.set(user.id, {
+      user_id: user.id,
+      level: 'normal',
+      points: 1000,
+      total_draws: 0,
+      total_spent: 0,
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
+    this.logPoints(user.id, 1000, 1000, 'welcome', '新用户注册赠送');
+
+    return { user, session, wechatUser };
+  }
+
+  public findWechatUserByOpenid(openid: string): WechatUser | undefined {
+    return this.wechatByOpenid.get(openid);
+  }
+
+  public createSession(userId: string): Session {
+    const session: Session = {
+      token: randomId('utk'),
+      user_id: userId,
+      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    };
+    this.sessions.set(session.token, session);
+    return session;
+  }
+
+  public storeWechatSessionKey(openid: string, sessionKey: string): void {
+    this.wechatSessionKeys.set(openid, sessionKey);
+  }
+
+  public getWechatSessionKey(openid: string): string | undefined {
+    return this.wechatSessionKeys.get(openid);
+  }
+
+  public bindWechatPhone(openid: string, phone: string): void {
+    const wechatUser = this.wechatByOpenid.get(openid);
+    if (wechatUser) {
+      const updated: WechatUser = { ...wechatUser, phone };
+      this.wechatByOpenid.set(openid, updated);
+      this.wechatUsers.set(wechatUser.user_id, updated);
+    }
   }
 
   public userFromToken(token: string): User {

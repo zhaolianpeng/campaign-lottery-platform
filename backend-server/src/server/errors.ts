@@ -18,3 +18,5 @@ export const noDrawChances = new AppError('no_draw_chances', 'no draw chances', 
 export const insufficientPoints = new AppError('insufficient_points', 'insufficient points', 409);
 export const badAdminAuth = new AppError('bad_admin_credentials', 'bad admin credentials', 401);
 export const notFound = new AppError('not_found', 'not found', 404);
+export const wechatAuthFailed = new AppError('wechat_auth_failed', '微信授权失败', 401);
+export const wechatPhoneRequired = new AppError('wechat_phone_required', '需要获取手机号', 403);

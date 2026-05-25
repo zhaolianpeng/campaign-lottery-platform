@@ -749,3 +749,43 @@ export interface ClaimActivityRewardRequest {
   readonly activity_id: string;
   readonly reward_id: string;
 }
+
+// ── WeChat ──
+
+export interface WechatUser {
+  readonly openid: string;
+  readonly phone?: string;
+  readonly nickname?: string;
+  readonly avatar?: string;
+  readonly user_id: string;
+  readonly created_at: string;
+}
+
+export interface JssdkConfig {
+  readonly appId: string;
+  readonly timestamp: number;
+  readonly nonceStr: string;
+  readonly signature: string;
+}
+
+export interface WechatOauthUrlResult {
+  readonly url: string;
+}
+
+export interface WechatLoginResult {
+  readonly openid: string;
+  readonly user_id: string;
+  readonly token: string;
+  readonly nickname: string;
+  readonly is_new: boolean;
+}
+
+export interface WechatPhoneRequest {
+  readonly openid: string;
+  readonly encryptedData: string;
+  readonly iv: string;
+}
+
+export interface WechatCodeBody {
+  readonly code: string;
+}

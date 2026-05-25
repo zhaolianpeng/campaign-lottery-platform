@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { bearerToken, corsHeaders, fail, ok } from '@/server/api-response';
 import { notFound } from '@/server/errors';
 import { getService } from '@/server/singleton';
+import { getOauthUrl, getJssdkConfig } from '@/server/wechat-service';
 
 export const dynamic = 'force-dynamic';
 
@@ -149,6 +150,16 @@ const puzzleTeamJoinSchema = z.object({
 const activityClaimSchema = z.object({
   activity_id: z.string().min(1),
   reward_id: z.string().min(1),
+});
+
+const wechatCodeSchema = z.object({
+  code: z.string().min(1),
+});
+
+const wechatPhoneSchema = z.object({
+  openid: z.string().min(1),
+  encryptedData: z.string().min(1),
+  iv: z.string().min(1),
 });
 
 type RouteContext = {
@@ -311,6 +322,14 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
     if (path[0] === 'activities' && path[1]) {
       return ok('activity detail', service.activityInfo(token, path[1]));
     }
+    if (path.join('/') === 'auth/wechat/oauth-url') {
+      return ok('oauth url', { url: getOauthUrl() });
+    }
+    if (path.join('/') === 'auth/wechat/jssdk-config') {
+      const url = searchParam(request, 'url') || request.headers.get('referer') || '';
+      const config = await getJssdkConfig(url);
+      return ok('jssdk config', config);
+    }
 
     throw notFound;
   } catch (error) {
@@ -445,6 +464,16 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
         }),
       );
       return ok('delivery approved', results);
+    }
+    if (path.join('/') === 'auth/wechat/login') {
+      const input = wechatCodeSchema.parse(body);
+      const result = await service.wechatLogin(input.code);
+      return ok('wechat login succeeded', result);
+    }
+    if (path.join('/') === 'auth/wechat/phone') {
+      const input = wechatPhoneSchema.parse(body);
+      const result = service.wechatBindPhone(input.openid, input.encryptedData, input.iv);
+      return ok('phone bound', result);
     }
 
     throw notFound;

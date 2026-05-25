@@ -1,7 +1,8 @@
 import { randomInt } from 'node:crypto';
-import { campaignInactive, noDrawChances } from './errors';
+import { campaignInactive, noDrawChances, wechatPhoneRequired } from './errors';
 import { MemoryStore } from './memory-store';
 import { PityTracker, ProbabilityEngine, type PityEngineConfig } from './probability';
+import { exchangeCode, getUserInfo, decryptPhoneNumber } from './wechat-service';
 import type {
   AdminOverview,
   ActivityListInfo,
@@ -68,6 +69,7 @@ import type {
   UserMember,
   UserPointsLog,
   User,
+  WechatLoginResult,
 } from './types';
 
 export class LotteryService {
@@ -77,6 +79,51 @@ export class LotteryService {
 
   public guestLogin(nickname: string): ReturnType<MemoryStore['createGuestSession']> {
     return this.store.createGuestSession(nickname);
+  }
+
+  public async wechatLogin(code: string): Promise<WechatLoginResult> {
+    const tokenResult = await exchangeCode(code);
+    const openid = tokenResult.openid;
+
+    const existing = this.store.findWechatUserByOpenid(openid);
+    if (existing) {
+      const session = this.store.createSession(existing.user_id);
+      if (tokenResult.session_key) {
+        this.store.storeWechatSessionKey(openid, tokenResult.session_key);
+      }
+      return {
+        openid,
+        user_id: existing.user_id,
+        token: session.token,
+        nickname: existing.nickname ?? '',
+        is_new: false,
+      };
+    }
+
+    const userInfo = await getUserInfo(tokenResult.access_token, openid);
+    const created = this.store.createWechatUser(openid, '', userInfo.nickname, userInfo.headimgurl);
+
+    if (tokenResult.session_key) {
+      this.store.storeWechatSessionKey(openid, tokenResult.session_key);
+    }
+
+    return {
+      openid,
+      user_id: created.user.id,
+      token: created.session.token,
+      nickname: created.user.nickname,
+      is_new: true,
+    };
+  }
+
+  public wechatBindPhone(openid: string, encryptedData: string, iv: string): { readonly phone: string } {
+    const sessionKey = this.store.getWechatSessionKey(openid);
+    if (!sessionKey) {
+      throw wechatPhoneRequired;
+    }
+    const phone = decryptPhoneNumber(sessionKey, encryptedData, iv);
+    this.store.bindWechatPhone(openid, phone);
+    return { phone };
   }
 
   public campaignList(): readonly CampaignListItem[] {

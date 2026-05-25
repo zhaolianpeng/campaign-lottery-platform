@@ -22,6 +22,11 @@ const envSchema = z.object({
   REDIS_PASSWORD: z.string().optional(),
   REDIS_DATABASE: z.coerce.number().int().nonnegative().default(0),
   REDIS_KEY_PREFIX: z.string().default(''),
+
+  WECHAT_APP_ID: z.string().default(''),
+  WECHAT_APP_SECRET: z.string().default(''),
+  WECHAT_TOKEN: z.string().default(''),
+  WECHAT_REDIRECT_URI: z.string().default(''),
 });
 
 export interface AppConfig {
@@ -51,6 +56,12 @@ export interface AppConfig {
     readonly password?: string;
     readonly database: number;
     readonly keyPrefix: string;
+  };
+  readonly wechat: {
+    readonly appId: string;
+    readonly appSecret: string;
+    readonly token: string;
+    readonly redirectUri: string;
   };
 }
 
@@ -89,6 +100,12 @@ export function getAppConfig(): AppConfig {
       password: env.REDIS_PASSWORD || undefined,
       database: env.REDIS_DATABASE,
       keyPrefix: env.REDIS_KEY_PREFIX,
+    },
+    wechat: {
+      appId: env.WECHAT_APP_ID,
+      appSecret: env.WECHAT_APP_SECRET,
+      token: env.WECHAT_TOKEN,
+      redirectUri: env.WECHAT_REDIRECT_URI,
     },
   };
 
