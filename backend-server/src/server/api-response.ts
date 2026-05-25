@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { getAppConfig } from './config';
 import { AppError } from './errors';
 
 export interface ApiEnvelope<T> {
@@ -9,7 +10,7 @@ export interface ApiEnvelope<T> {
 
 export function corsHeaders(): HeadersInit {
   return {
-    'Access-Control-Allow-Origin': process.env.CORS_ALLOW_ORIGIN ?? '*',
+    'Access-Control-Allow-Origin': getAppConfig().server.corsAllowOrigin,
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   };

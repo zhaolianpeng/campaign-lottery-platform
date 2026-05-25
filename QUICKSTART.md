@@ -54,6 +54,23 @@ Copy-Item front-page\.env.example front-page\.env.local
 ADMIN_USER=admin
 ADMIN_PASSWORD=change-me
 CORS_ALLOW_ORIGIN=http://localhost:3000
+
+MYSQL_ENABLED=false
+MYSQL_DSN=
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_DATABASE=campaign_lottery_platform
+MYSQL_USER=campaign_lottery_app
+MYSQL_PASSWORD=
+MYSQL_CHARSET=utf8mb4
+MYSQL_CONNECTION_LIMIT=10
+
+REDIS_ENABLED=false
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+REDIS_PASSWORD=
+REDIS_DATABASE=10
+REDIS_KEY_PREFIX=campaign:lottery:
 ```
 
 前端 `front-page/.env.local`：
@@ -83,6 +100,10 @@ http://localhost:18100
 ```text
 http://localhost:18100/healthz
 ```
+
+启用 `MYSQL_ENABLED=true`、`REDIS_ENABLED=true` 后，健康检查会同时 ping MySQL 和 Redis，并在依赖异常时返回 `degraded`。
+
+更多后端配置项说明见 `docs/configuration.md`。
 
 ## 4. 启动前端页面
 
@@ -165,7 +186,7 @@ npm run build
 
 ## 注意事项
 
-- 当前业务数据存储在服务进程内存中，重启 `backend-server` 后数据会重置。
-- 当前项目以本地开发和演示为主，尚未接入数据库、Redis、容器化和 CI/CD。
+- 当前业务数据仍存储在服务进程内存中，重启 `backend-server` 后数据会重置；MySQL 与 Redis 连接已接入健康检查和统一配置，业务落库可按 `docs/database-design.md` 继续推进。
+- 当前项目以本地开发和演示为主，尚未接入容器化和 CI/CD。
 - 前后端分别独立构建和启动，修改任一子项目依赖后请在对应目录重新执行 `npm install`。
 - 模块、API、数据库表结构和系统设计文档位于 `docs/`，其中 `docs/database-design.md` 包含 Mermaid ER 图。

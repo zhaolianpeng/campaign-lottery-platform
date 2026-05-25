@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { getAppConfig } from './config';
 import {
   adminUnauthorized,
   badAdminAuth,
@@ -1726,5 +1727,6 @@ export class MemoryStore {
 }
 
 export function createMemoryStore(): MemoryStore {
-  return new MemoryStore(process.env.ADMIN_USER ?? 'admin', process.env.ADMIN_PASSWORD ?? '');
+  const { admin } = getAppConfig();
+  return new MemoryStore(admin.user, admin.password);
 }
