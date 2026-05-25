@@ -277,7 +277,7 @@ func (store *MySQLStore) Draw(token string, campaignID string) (model.DrawResult
 	if err != nil {
 		return model.DrawResult{}, err
 	}
-	if usedCount >= campaign.DailyDrawLimit {
+	if campaign.DailyDrawLimit > 0 && usedCount >= campaign.DailyDrawLimit {
 		return model.DrawResult{}, ErrNoDrawChances
 	}
 
@@ -362,10 +362,10 @@ func (store *MySQLStore) UserDrawRecords(token string) ([]model.DrawRecord, erro
 	}
 	return store.fetchDrawRecordsByUser(ctx, session.UserID)
 }
-
-func (store *MySQLStore) AdminLogin(username string, password string) (string, error) {
+func (store *MySQLStore) AdminLogin(username, password string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
 	var passwordHash string
 	err := store.db.QueryRowContext(ctx, `SELECT password_hash FROM admin_users WHERE username = ? AND status = 'active'`, username).Scan(&passwordHash)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -378,6 +378,20 @@ func (store *MySQLStore) AdminLogin(username string, password string) (string, e
 		return "", ErrBadAdminAuth
 	}
 	token := "atk_" + randomSuffix(24)
+
+	// Also persist to MySQL so admin tokens survive Redis restart
+	now := time.Now().UTC()
+	expiresAt := now.Add(12 * time.Hour)
+	_, mySQLErr := store.db.ExecContext(ctx,
+		`INSERT INTO user_sessions (token, user_id, expires_at, created_at)
+		 VALUES (?, 'admin', ?, UTC_TIMESTAMP())
+		 ON DUPLICATE KEY UPDATE expires_at = VALUES(expires_at)`,
+		token, expiresAt)
+	if mySQLErr != nil {
+		// Log but don't fail - Redis is the primary store
+		fmt.Printf("WARN: failed to persist admin session to MySQL: %v\n", mySQLErr)
+	}
+
 	if err := store.redis.Set(ctx, store.adminSessionKey(token), username, 12*time.Hour).Err(); err != nil {
 		return "", err
 	}
@@ -762,9 +776,22 @@ func (store *MySQLStore) ensureAdmin(ctx context.Context, token string) error {
 		return ErrAdminUnauthorized
 	}
 	result, err := store.redis.Get(ctx, store.adminSessionKey(token)).Result()
-	if err != nil || result == "" {
+	if err == nil && result != "" {
+		return nil
+	}
+
+	// Fallback: check MySQL if Redis missed (e.g. after restart)
+	var userID string
+	var expiresAt time.Time
+	sqlErr := store.db.QueryRowContext(ctx,
+		`SELECT user_id, expires_at FROM user_sessions WHERE token = ? AND user_id = 'admin'`,
+		token).Scan(&userID, &expiresAt)
+	if sqlErr != nil || userID != "admin" || time.Now().UTC().After(expiresAt) {
 		return ErrAdminUnauthorized
 	}
+
+	// Re-cache into Redis for next time
+	store.redis.Set(ctx, store.adminSessionKey(token), userID, time.Until(expiresAt))
 	return nil
 }
 

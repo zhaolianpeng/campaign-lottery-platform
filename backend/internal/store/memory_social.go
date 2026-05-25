@@ -106,11 +106,11 @@ func (s *MemoryStore) IsAssistActionRecorded(inviterID, helperID string, assistT
 	for _, a := range s.assistActions {
 		if a.InviterID == inviterID && a.HelperID == helperID && a.AssistType == assistType {
 			if a.CreatedAt.Year() == now.Year() && a.CreatedAt.YearDay() == now.YearDay() {
-				return true
+				return true, nil
 			}
 		}
 	}
-	return false
+	return false, nil
 }
 
 // RecordAssistAction records a new assist action
@@ -139,7 +139,7 @@ func (s *MemoryStore) IncrementAssistProgress(inviterID string, assistType model
 	p := s.assistProgress[key]
 	p.Current++
 	s.assistProgress[key] = p
-	return &p
+	return &p, nil
 }
 
 // ClaimAssistReward marks the assist progress as claimed
@@ -151,6 +151,7 @@ func (s *MemoryStore) ClaimAssistReward(inviterID string, assistType model.Assis
 	p := s.assistProgress[key]
 	p.Claimed = true
 	s.assistProgress[key] = p
+	return &p, nil
 }
 
 // GetAssistProgress returns the assist progress for the given inviter and type

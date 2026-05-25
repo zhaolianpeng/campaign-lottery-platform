@@ -33,7 +33,7 @@ func (s *MemoryStore) GetUserBattlePass(userID string, seasonID int) (*model.Bat
 	}
 	// 创建免费版战令
 	now := time.Now().UTC()
-	season, err := s.GetActiveSeason()
+	_, err := s.GetActiveSeason()
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +59,7 @@ func (s *MemoryStore) BuyBattlePass(userID string, seasonID int, pointsCost int6
 	}
 	now := time.Now().UTC()
 	bp.PassType = "paid"
-	bp.BoughtAt = &now
+	bp.BoughtAt = now
 	bp.UpdatedAt = now
 	b := *bp
 	return &b, nil
@@ -73,7 +73,7 @@ func (s *MemoryStore) AddBattlePassXP(userID string, seasonID int, xp int) (*mod
 	if !ok {
 		return nil, ErrCampaignNotFound
 	}
-	season, err := s.GetActiveSeason()
+	_, err := s.GetActiveSeason()
 	if err != nil {
 		return nil, err
 	}

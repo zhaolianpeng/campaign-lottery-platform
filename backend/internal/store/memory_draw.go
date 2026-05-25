@@ -2,6 +2,9 @@ package store
 
 import (
 	"errors"
+	"fmt"
+	"math/rand/v2"
+	"sync"
 	"time"
 
 	"campaign-lottery-platform/backend/internal/model"
@@ -79,6 +82,10 @@ func (s *MemoryStore) CreateMissRecord(userID, campaignID string, _ bool) (model
 }
 
 func (s *MemoryStore) CheckDrawQuota(userID, campaignID string, dailyLimit int) (int, error) {
+	// 0 = unlimited
+	if dailyLimit <= 0 {
+		return 999999, nil
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	used := s.userDrawCounts[userID+":"+campaignID]

@@ -110,6 +110,11 @@ func (store *MySQLStore) CheckDrawQuota(userID, campaignID string, dailyLimit in
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// 0 = unlimited
+	if dailyLimit <= 0 {
+		return 999999, nil
+	}
+
 	quotaDate := time.Now().UTC().Format("2006-01-02")
 	var used int
 	err := store.db.QueryRowContext(ctx, `SELECT used_count FROM user_campaign_quotas
@@ -474,7 +479,16 @@ func (store *MySQLStore) GetDrawStatistics(token, campaignID string) (*model.Dra
 	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(1) FROM draw_records"+where, args...).Scan(&totalDraws); err != nil {
 		return nil, err
 	}
-	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(1) FROM draw_records"+where+" AND result='win'", args...).Scan(&totalWins); err != nil {
+	// Fix: properly handle empty vs non-empty WHERE clause
+	var winWhere string
+	var winArgs []any
+	if campaignID != "" {
+		winWhere = " WHERE campaign_id = ? AND result='win'"
+		winArgs = []any{campaignID}
+	} else {
+		winWhere = " WHERE result='win'"
+	}
+	if err := store.db.QueryRowContext(ctx, "SELECT COUNT(1) FROM draw_records"+winWhere, winArgs...).Scan(&totalWins); err != nil {
 		return nil, err
 	}
 

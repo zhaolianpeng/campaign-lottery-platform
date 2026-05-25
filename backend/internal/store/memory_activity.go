@@ -219,7 +219,7 @@ func (s *MemoryStore) ClaimActivityReward(userID, activityID, rewardID string) (
 		if !exists {
 			return nil, fmt.Errorf("member not found: %s", userID)
 		}
-		member.Points += reward.RewardQty
+		member.Points += int64(reward.RewardQty)
 		member.UpdatedAt = time.Now().UTC()
 		s.members[userID] = member
 	}
