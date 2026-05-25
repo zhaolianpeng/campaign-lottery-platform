@@ -73,7 +73,7 @@ func (s *MemoryStore) AddBattlePassXP(userID string, seasonID int, xp int) (*mod
 	if !ok {
 		return nil, ErrCampaignNotFound
 	}
-	_, err := s.GetActiveSeason()
+	season, err := s.GetActiveSeason()
 	if err != nil {
 		return nil, err
 	}

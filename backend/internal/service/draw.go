@@ -98,7 +98,6 @@ func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.Blind
 	prizes := s.store.PrizeList(campaign.ID)
 	pw := make([]probability.PrizeWeight, 0, len(prizes))
 	secretID := ""
-	secretWeight := 0.0
 	for _, p := range prizes {
 		if p.Status != "active" || p.Stock <= 0 {
 			continue
@@ -110,7 +109,6 @@ func (s *Service) BlindBoxDraw(token string, cfg model.DrawConfig) (*model.Blind
 		})
 		if p.Level == model.PrizeLevelSecret {
 			secretID = p.ID
-			secretWeight = float64(p.ProbabilityWeight)
 		}
 	}
 

@@ -37,7 +37,9 @@ type adminLoginRequest struct {
 
 // New creates the HTTP handler with all routes.
 func New(cfg config.Config) (http.Handler, error) {
-	dataStore, err := store.NewMySQLStore(cfg)
+	var dataStore store.Store
+	var err error
+	dataStore, err = store.NewMySQLStore(cfg)
 	if err != nil {
 		// MySQL 不可用时使用内存存储（适合本地开发/演示）
 		dataStore = store.NewMemoryStore(cfg.AdminUser, cfg.AdminPassword)
@@ -709,22 +711,22 @@ func New(cfg config.Config) (http.Handler, error) {
 
 	mux.HandleFunc("POST /api/v1/flash/{id}/subscribe", func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r)
-		result, err := services.SubscribeFlash(token, r.PathValue("id"))
+		err := services.SubscribeFlash(token, r.PathValue("id"))
 		if err != nil {
 			writeStoreError(w, err)
 			return
 		}
-		response.JSON(w, http.StatusOK, "ok", "subscribed", result)
+		response.JSON(w, http.StatusOK, "ok", "subscribed", nil)
 	})
 
 	mux.HandleFunc("POST /api/v1/flash/{id}/unsubscribe", func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r)
-		result, err := services.UnsubscribeFlash(token, r.PathValue("id"))
+		err := services.UnsubscribeFlash(token, r.PathValue("id"))
 		if err != nil {
 			writeStoreError(w, err)
 			return
 		}
-		response.JSON(w, http.StatusOK, "ok", "unsubscribed", result)
+		response.JSON(w, http.StatusOK, "ok", "unsubscribed", nil)
 	})
 
 	mux.HandleFunc("POST /api/v1/flash/{id}/purchase", func(w http.ResponseWriter, r *http.Request) {

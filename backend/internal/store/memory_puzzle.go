@@ -1,9 +1,11 @@
 package store
 
 import (
-	"fmt"
-
 	"time"
+)
+
+import (
+	"fmt"
 
 	"campaign-lottery-platform/backend/internal/model"
 )

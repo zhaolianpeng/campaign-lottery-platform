@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"campaign-lottery-platform/backend/internal/model"
-	"campaign-lottery-platform/backend/internal/store"
 )
 
 // ============================================================

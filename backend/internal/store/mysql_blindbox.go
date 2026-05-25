@@ -410,9 +410,9 @@ func (store *MySQLStore) RedeemPrize(userID string, input model.RedeemRequest) (
 	}
 
 	// Get prize info and cost
-	var prizeName string
+	var prizeName, prizeCampaignID string
 	var cost int64
-	err = tx.QueryRowContext(ctx, `SELECT name, 100 FROM prizes WHERE id = ? AND status = 'active' AND stock > 0`, input.PrizeID).Scan(&prizeName, &cost)
+	err = tx.QueryRowContext(ctx, `SELECT name, campaign_id, 100 FROM prizes WHERE id = ? AND status = 'active' AND stock > 0`, input.PrizeID).Scan(&prizeName, &prizeCampaignID, &cost)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errors.New("prize not available")
 	}
@@ -440,8 +440,8 @@ func (store *MySQLStore) RedeemPrize(userID string, input model.RedeemRequest) (
 
 	// Add inventory
 	invID := "inv_" + randomSuffix(12)
-	_, err = tx.ExecContext(ctx, `INSERT INTO user_inventories (id, user_id, prize_id, prize_name, source, created_at)
-		VALUES (?, ?, ?, ?, 'redeem', UTC_TIMESTAMP())`, invID, userID, input.PrizeID, prizeName)
+	_, err = tx.ExecContext(ctx, `INSERT INTO user_inventories (id, user_id, prize_id, prize_name, campaign_id, source, created_at)
+		VALUES (?, ?, ?, ?, ?, 'redeem', UTC_TIMESTAMP())`, invID, userID, input.PrizeID, prizeName, prizeCampaignID)
 	if err != nil {
 		return nil, err
 	}

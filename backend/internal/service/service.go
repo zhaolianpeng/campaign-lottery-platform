@@ -124,7 +124,7 @@ func (s *Service) BlindBoxCampaignProbabilities(campaignID string) (map[string]a
 			"soft_pity_start":      pityCfg.SoftPityN,
 			"hard_pity_at":         pityCfg.HardPityN,
 			"pity_factor":          pityCfg.PityFactor,
-			"target_prize":         pityCfg.TargetPrize,
+			"target_prize":         pityCfg.TargetWeight,
 			"base_secret_prob":     fmt.Sprintf("%.4f%%", secretWeight/totalWeight*100),
 		}
 	}
@@ -367,7 +367,11 @@ func (s *Service) AdminUpdatePityConfig(token string, campaignID string, cfg mod
 		BannerImageURL: campaign.BannerImageURL, CampaignSummary: campaign.CampaignSummary,
 		PityConfig: cfg,
 	}
-	return s.store.UpdateCampaign(token, campaignID, mutation)
+	camp, err := s.store.UpdateCampaign(token, campaignID, mutation)
+	if err != nil {
+		return nil, err
+	}
+	return &camp, nil
 }
 
 // AdminGetCampaign 管理员获取活动详情

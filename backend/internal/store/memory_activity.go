@@ -13,7 +13,7 @@ import (
 // ============================================================
 
 // GetActiveActivities 获取所有进行中的活动（时间范围内且状态为active）
-func (s *MemoryStore) GetActiveActivities() ([]model.Activity, error) {
+func (s *MemoryStore) GetActiveActivities() []model.Activity {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -24,17 +24,17 @@ func (s *MemoryStore) GetActiveActivities() ([]model.Activity, error) {
 			active = append(active, a)
 		}
 	}
-	return active, nil
+	return active
 }
 
 // GetAllActivities 返回所有活动
-func (s *MemoryStore) GetAllActivities() ([]model.Activity, error) {
+func (s *MemoryStore) GetAllActivities() []model.Activity {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	result := make([]model.Activity, len(s.activities))
 	copy(result, s.activities)
-	return result, nil
+	return result
 }
 
 // GetActivity 根据ID获取活动
