@@ -684,8 +684,6 @@ async function loadMember() {
           '<span style="color:' + (log.points >= 0 ? 'var(--green)' : 'var(--accent)') + ';font-weight:600">' + (log.points >= 0 ? '+' : '') + log.points + '</span>' +
         '</div>';
       }).join('');
-
-    `;
   } catch (e) {
     document.getElementById('memberContent').innerHTML = '<div class="loading">❌ ' + e.message + '</div>';
   }
@@ -703,7 +701,7 @@ function formatTime(t) {
 async function buyCard(cardType) {
   if (!state.token) { showToast('请先登录', true); return; }
   var names = { weekly: '周卡(990分)', monthly: '月卡(2800分)', season: '季卡(6800分)' };
-  showConfirm('确认购买', '确定购买' + (names[cardType] || cardType) + '吗？', function() {
+  showConfirm('确认购买', '确定购买' + (names[cardType] || cardType) + '吗？', async function() {
   try {
     var res = await api('/api/v1/blindbox/buy-card', {
       method: 'POST',
@@ -771,7 +769,7 @@ function renderShopItems(items) {
       <span class="item-category">${categoryLabels[item.category] || item.category}</span>
       <div class="item-name">${item.name}</div>
       <div class="item-desc">${item.description || ''}</div>
-      <div class="item-price">💎 ${item.price_points} 积分${item.price_cash ? ` / 💰¥${(item.price_cash/100).toFixed(0)}` : ''}</div>
+      <div class="item-price">💎 ${item.price_points} 积分${item.price_cash ? ' / 💰¥' + (item.price_cash/100).toFixed(0) : ''}</div>
       <button class="item-buy-btn" onclick="buyShopItem('${item.id}')">购买</button>
     </div>
   `).join('');
