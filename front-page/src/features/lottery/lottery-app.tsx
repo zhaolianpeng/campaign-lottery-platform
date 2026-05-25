@@ -605,6 +605,48 @@ export function LotteryApp(): React.ReactNode {
               微信一键登录
             </button>
 
+            {/* 本机号码一键登录按钮 */}
+            <button
+              type="button"
+              onClick={async () => {
+                let phone = '';
+                // 尝试 WebOTP API 自动获取本机号码（仅 HTTPS 且部分运营商支持）
+                try {
+                  if ('getMobileNumber' in navigator) {
+                    const result = await (navigator as any).getMobileNumber();
+                    if (result?.number) {
+                      phone = result.number;
+                    }
+                  }
+                } catch {
+                  // WebOTP 不可用，留空让用户确认
+                }
+                // 回落：提示用户确认号码或输入
+                const userPhone = prompt(phone ? `检测到本机号码：${phone}\n点击确定使用该号码登录` : '请输入手机号', phone);
+                if (!userPhone) return;
+                setWechatLoggingIn(true);
+                try {
+                  const data = await apiRequest<LoginPayload>('/api/v1/auth/phone-login', '', {
+                    method: 'POST',
+                    body: JSON.stringify({ phone: userPhone }),
+                  });
+                  setToken(data.session.token);
+                  setNickname(data.user.nickname);
+                } catch (err) {
+                  setWechatError(err instanceof Error ? err.message : '手机号登录失败');
+                } finally {
+                  setWechatLoggingIn(false);
+                }
+              }}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-3 font-medium text-white hover:bg-white/[0.10]"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
+                <line x1="12" y1="18" x2="12.01" y2="18" />
+              </svg>
+              本机号码一键登录
+            </button>
+
             {/* 微信登录中 */}
             {wechatLoggingIn ? (
               <div className="mt-3 flex items-center justify-center gap-2 text-sm text-violet-100/70">
