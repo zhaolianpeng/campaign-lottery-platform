@@ -715,6 +715,7 @@ async function buyCard(cardType) {
     showToast('❌ ' + e.message, true);
   }
 });
+}
 
 // ============================================================
 // 初始化 - 检查是否已登录
