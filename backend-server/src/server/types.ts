@@ -7,6 +7,7 @@ export type ExchangeOfferStatus = 'pending' | 'matched' | 'completed' | 'cancell
 export interface User {
   readonly id: string;
   readonly nickname: string;
+  readonly phone?: string;
   readonly created_at: string;
 }
 

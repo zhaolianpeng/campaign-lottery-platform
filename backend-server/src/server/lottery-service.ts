@@ -126,6 +126,15 @@ export class LotteryService {
     return { phone };
   }
 
+  public phoneLogin(phone: string): ReturnType<MemoryStore['createPhoneUser']> {
+    const existing = this.store.findUserByPhone(phone);
+    if (existing) {
+      const session = this.store.createSession(existing.id);
+      return { user: existing, session };
+    }
+    return this.store.createPhoneUser(phone);
+  }
+
   public campaignList(): readonly CampaignListItem[] {
     return this.store.campaigns().map((campaign) => ({
       campaign,

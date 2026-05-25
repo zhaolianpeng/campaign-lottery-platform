@@ -201,6 +201,7 @@ export class MemoryStore {
   private readonly wechatUsers = new Map<string, WechatUser>();
   private readonly wechatByOpenid = new Map<string, WechatUser>();
   private readonly wechatSessionKeys = new Map<string, string>();
+  private readonly phoneByNumber = new Map<string, string>();
   private readonly firstRechargeClaims = new Map<string, UserFirstRecharge>();
   private readonly battlePasses = new Map<string, BattlePass>();
   private readonly taskProgress = new Map<string, BattlePassTaskProgress>();
@@ -327,6 +328,41 @@ export class MemoryStore {
       this.wechatByOpenid.set(openid, updated);
       this.wechatUsers.set(wechatUser.user_id, updated);
     }
+  }
+
+  public findUserByPhone(phone: string): User | undefined {
+    const userId = this.phoneByNumber.get(phone);
+    if (!userId) return undefined;
+    return this.users.get(userId);
+  }
+
+  public createPhoneUser(phone: string, nickname?: string): { readonly user: User; readonly session: Session } {
+    const createdAt = nowISO();
+    const user: User = {
+      id: randomId('usr'),
+      nickname: nickname || phone.slice(-4),
+      phone,
+      created_at: createdAt,
+    };
+    const session: Session = {
+      token: randomId('utk'),
+      user_id: user.id,
+      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+    };
+    this.users.set(user.id, user);
+    this.phoneByNumber.set(phone, user.id);
+    this.sessions.set(session.token, session);
+    this.members.set(user.id, {
+      user_id: user.id,
+      level: 'normal',
+      points: 1000,
+      total_draws: 0,
+      total_spent: 0,
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
+    this.logPoints(user.id, 1000, 1000, 'welcome', '新用户注册赠送');
+    return { user, session };
   }
 
   public userFromToken(token: string): User {

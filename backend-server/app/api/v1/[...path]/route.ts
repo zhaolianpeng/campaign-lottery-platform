@@ -347,6 +347,10 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     if (path.join('/') === 'auth/guest-login') {
       return ok('guest login succeeded', service.guestLogin(guestLoginSchema.parse(body).nickname));
     }
+    if (path.join('/') === 'auth/phone-login') {
+      const phoneSchema = z.object({ phone: z.string().regex(/^1[3-9]\d{9}$/) });
+      return ok('phone login succeeded', service.phoneLogin(phoneSchema.parse(body).phone));
+    }
     if (path.join('/') === 'lottery/draw' || path.join('/') === 'blindbox/draw') {
       return ok('blind box draw completed', service.blindBoxDraw(token, drawSchema.parse(body)));
     }
