@@ -1,8 +1,5 @@
-CREATE DATABASE IF NOT EXISTS campaign_lottery_platform
-  DEFAULT CHARACTER SET utf8mb4
-  DEFAULT COLLATE utf8mb4_unicode_ci;
-
-USE campaign_lottery_platform;
+-- Baseline schema for the migration runner.
+-- The active database is selected by the migration command before this file runs.
 
 CREATE TABLE IF NOT EXISTS users (
   id VARCHAR(32) NOT NULL,
@@ -61,6 +58,7 @@ CREATE TABLE IF NOT EXISTS prizes (
   stock INT NOT NULL DEFAULT 0,
   probability_weight INT NOT NULL DEFAULT 0,
   status VARCHAR(16) NOT NULL DEFAULT 'active',
+  image_url VARCHAR(255) NOT NULL DEFAULT '',
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
   PRIMARY KEY (id),
@@ -173,10 +171,121 @@ CREATE TABLE IF NOT EXISTS user_points_logs (
   KEY idx_user_points_logs_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 商店商品配置
+CREATE TABLE IF NOT EXISTS shop_items (
+  id VARCHAR(32) NOT NULL,
+  name VARCHAR(128) NOT NULL,
+  description VARCHAR(255) NOT NULL DEFAULT '',
+  image_url VARCHAR(255) NOT NULL DEFAULT '',
+  price_points INT NOT NULL DEFAULT 0,
+  price_cash INT NOT NULL DEFAULT 0,
+  item_type VARCHAR(32) NOT NULL,
+  item_qty INT NOT NULL DEFAULT 1,
+  stock INT NOT NULL DEFAULT -1,
+  daily_limit INT NOT NULL DEFAULT 0,
+  category VARCHAR(32) NOT NULL DEFAULT '',
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  expires_at DATETIME NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_shop_items_sort_order (sort_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 首充礼包配置
+CREATE TABLE IF NOT EXISTS first_recharge_packs (
+  id VARCHAR(32) NOT NULL,
+  name VARCHAR(128) NOT NULL,
+  price_points INT NOT NULL DEFAULT 0,
+  cash_price INT NOT NULL DEFAULT 0,
+  description VARCHAR(255) NOT NULL DEFAULT '',
+  image_url VARCHAR(255) NOT NULL DEFAULT '',
+  sort_order INT NOT NULL DEFAULT 0,
+  items_json JSON NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_first_recharge_packs_sort_order (sort_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ============================================================
 -- v1.1 迁移: campaigns 表加 pity_config JSON 字段
 -- ============================================================
-ALTER TABLE campaigns ADD COLUMN pity_config JSON NULL COMMENT '保底概率配置' AFTER campaign_summary;
+SET @schema_name := DATABASE();
+
+SET @ddl := IF(
+  EXISTS(
+    SELECT 1
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = @schema_name
+      AND TABLE_NAME = 'campaigns'
+      AND COLUMN_NAME = 'pity_config'
+  ),
+  'SELECT 1',
+  "ALTER TABLE campaigns ADD COLUMN pity_config JSON NULL COMMENT '保底概率配置' AFTER campaign_summary"
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @ddl := IF(
+  EXISTS(
+    SELECT 1
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = @schema_name
+      AND TABLE_NAME = 'prizes'
+      AND COLUMN_NAME = 'image_url'
+  ),
+  'SELECT 1',
+  "ALTER TABLE prizes ADD COLUMN image_url VARCHAR(255) NOT NULL DEFAULT '' AFTER status"
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @ddl := IF(
+  EXISTS(
+    SELECT 1
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = @schema_name
+      AND TABLE_NAME = 'shop_items'
+      AND COLUMN_NAME = 'image_url'
+  ),
+  'SELECT 1',
+  "ALTER TABLE shop_items ADD COLUMN image_url VARCHAR(255) NOT NULL DEFAULT '' AFTER description"
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @ddl := IF(
+  EXISTS(
+    SELECT 1
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = @schema_name
+      AND TABLE_NAME = 'first_recharge_packs'
+      AND COLUMN_NAME = 'image_url'
+  ),
+  'SELECT 1',
+  "ALTER TABLE first_recharge_packs ADD COLUMN image_url VARCHAR(255) NOT NULL DEFAULT '' AFTER description"
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- user_inventories 表加索引
-ALTER TABLE user_inventories ADD INDEX idx_ui_user_campaign (user_id, campaign_id);
+SET @ddl := IF(
+  EXISTS(
+    SELECT 1
+    FROM information_schema.STATISTICS
+    WHERE TABLE_SCHEMA = @schema_name
+      AND TABLE_NAME = 'user_inventories'
+      AND INDEX_NAME = 'idx_ui_user_campaign'
+  ),
+  'SELECT 1',
+  'ALTER TABLE user_inventories ADD INDEX idx_ui_user_campaign (user_id, campaign_id)'
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
