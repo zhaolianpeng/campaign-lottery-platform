@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { bearerToken, corsHeaders, fail, ok } from '@/server/api-response';
 import { getAppConfig } from '@/server/config';
-import { notFound } from '@/server/errors';
+import { notFound, phoneVerificationRequired } from '@/server/errors';
 import { getService } from '@/server/singleton';
 import { getOauthUrl, getJssdkConfig } from '@/server/wechat-service';
 
@@ -61,6 +61,9 @@ const prizeMutationSchema = z.object({
   stock: z.number().int().nonnegative(),
   probability_weight: z.number().int().nonnegative(),
   status: z.enum(['active', 'inactive']).default('active'),
+  image_url: z.string().optional(),
+  sort_order: z.number().int().optional(),
+  display_prob: z.string().optional(),
 });
 
 const exchangeOfferSchema = z.object({
@@ -224,6 +227,10 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
       return ok('public config', {
         wechat: {
           quick_login_enabled: config.wechat.quickLoginEnabled,
+        },
+        sms: {
+          provider: config.sms.provider || 'mock',
+          mock_enabled: config.sms.provider.toLowerCase() === 'mock',
         },
       });
     }
@@ -411,6 +418,10 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
       return ok('guest login succeeded', service.guestLogin(guestLoginSchema.parse(body).nickname));
     }
     if (path.join('/') === 'auth/phone-login') {
+      const config = getAppConfig();
+      if (config.sms.provider.toLowerCase() !== 'mock') {
+        throw phoneVerificationRequired;
+      }
       const phoneSchema = z.object({ phone: z.string().regex(/^1[3-9]\d{9}$/) });
       return ok('phone login succeeded', service.phoneLogin(phoneSchema.parse(body).phone));
     }
@@ -530,6 +541,9 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     }
     if (path.join('/') === 'admin/campaigns') {
       return ok('campaign created', service.createCampaign(token, campaignMutationSchema.parse(body)), 201);
+    }
+    if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path[3] === 'validate') {
+      return ok('campaign publish validation', service.validateCampaignPublish(token, path[2]));
     }
     if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path[3] === 'prizes') {
       return ok('prize created', service.createPrize(token, path[2], prizeMutationSchema.parse(body)), 201);

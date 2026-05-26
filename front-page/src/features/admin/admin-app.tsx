@@ -25,6 +25,7 @@ import type {
   AdminUserListResult,
   BattlePassInfo,
   Campaign,
+  CampaignPublishValidation,
   DrawRecord,
   FirstRechargePack,
   FulfillmentTask,
@@ -54,8 +55,8 @@ interface AdminTabItem {
 const adminTabs: readonly AdminTabItem[] = [
   { key: 'overview', label: '总览', icon: BarChart3 },
   { key: 'users', label: '用户', icon: UserRound },
-  { key: 'campaigns', label: '活动', icon: Package },
-  { key: 'prizes', label: '礼品', icon: Gift },
+  { key: 'campaigns', label: '盲盒', icon: Package },
+  { key: 'prizes', label: '奖品', icon: Gift },
   { key: 'pity', label: '概率', icon: Settings },
   { key: 'delivery', label: '发奖', icon: Truck },
   { key: 'records', label: '记录', icon: ClipboardList },
@@ -171,14 +172,14 @@ export function AdminApp(): React.ReactNode {
       apiRequest('/api/v1/admin/campaigns', token, {
         method: 'POST',
         body: JSON.stringify({
-          name: `运营活动 ${Date.now().toString().slice(-4)}`,
-          slug: `ops-${Date.now()}`,
-          status: 'online',
+          name: `运营盲盒 ${Date.now().toString().slice(-4)}`,
+          slug: `box-${Date.now()}`,
+          status: 'draft',
           starts_at: new Date().toISOString(),
           ends_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
           daily_draw_limit: 5,
           miss_weight: 70,
-          campaign_summary: '管理端快速创建的对齐活动',
+          campaign_summary: '管理端快速创建的盲盒草稿，请补充奖品后再上线。',
         }),
       }),
     onSuccess: () => {
@@ -191,11 +192,27 @@ export function AdminApp(): React.ReactNode {
     mutationFn: () =>
       apiRequest(`/api/v1/admin/campaigns/${selectedCampaignId}/prizes`, token, {
         method: 'POST',
-        body: JSON.stringify({ name: '新礼品', level: 'common', stock: 100, probability_weight: 10, status: 'active' }),
+        body: JSON.stringify({
+          name: '新奖品',
+          level: 'common',
+          stock: 100,
+          probability_weight: 10,
+          status: 'active',
+          sort_order: (prizesQuery.data?.length ?? 0) + 1,
+          display_prob: '待计算',
+        }),
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-prizes', token, selectedCampaignId] });
     },
+  });
+
+  const validateCampaignMutation = useMutation({
+    mutationFn: (campaignId: string) =>
+      apiRequest<CampaignPublishValidation>(`/api/v1/admin/campaigns/${campaignId}/validate`, token, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
   });
 
   const savePityMutation = useMutation({
@@ -254,6 +271,13 @@ export function AdminApp(): React.ReactNode {
       void queryClient.invalidateQueries({ queryKey: ['admin-user-detail', token, selectedUserId] });
     },
   });
+
+  const campaigns = campaignsQuery.data ?? [];
+  const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId);
+  const selectedPrizes = prizesQuery.data ?? [];
+  const activePrizeCount = selectedPrizes.filter((prize) => prize.status === 'active').length;
+  const selectedPrizeStock = selectedPrizes.reduce((sum, prize) => sum + prize.stock, 0);
+  const selectedPrizeWeight = selectedPrizes.reduce((sum, prize) => sum + prize.probability_weight, 0);
 
   if (!token) {
     return (
@@ -350,7 +374,7 @@ export function AdminApp(): React.ReactNode {
                 ['用户数', overviewQuery.data?.total_users ?? 0],
                 ['抽奖次数', overviewQuery.data?.total_draws ?? 0],
                 ['中奖次数', overviewQuery.data?.total_wins ?? 0],
-                ['活动数', overviewQuery.data?.campaigns.length ?? 0],
+                ['盲盒数', overviewQuery.data?.campaigns.length ?? 0],
               ].map(([label, value]) => (
                 <div className="rounded-xl border border-zinc-800 bg-[#1a1a24] p-4 text-center" key={label}>
                   <div className="text-3xl font-black text-orange-400">{value}</div>
@@ -358,7 +382,7 @@ export function AdminApp(): React.ReactNode {
                 </div>
               ))}
             </div>
-            <AdminList title="活动列表">
+            <AdminList title="盲盒列表">
               {(overviewQuery.data?.campaigns ?? []).map((campaign) => (
                 <DataCard
                   badge={campaign.status}
@@ -510,29 +534,40 @@ export function AdminApp(): React.ReactNode {
         {tab === 'campaigns' ? (
           <section className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-xl font-black text-white">活动管理</h2>
+              <h2 className="text-xl font-black text-white">盲盒管理</h2>
               <button
                 className="rounded-md bg-orange-500 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
                 disabled={createCampaignMutation.isPending}
                 onClick={() => createCampaignMutation.mutate()}
                 type="button"
               >
-                + 新建活动
+                + 新建盲盒
               </button>
             </div>
-            {(campaignsQuery.data ?? []).map((campaign) => (
+            <p className="text-sm text-zinc-500">一个盲盒可以包含多个奖品，进入奖品管理后维护该盲盒下的奖品池。</p>
+            {campaigns.map((campaign) => (
               <DataCard
                 action={
-                  <button
-                    className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300"
-                    onClick={() => {
-                      setSelectedCampaignId(campaign.id);
-                      setTab('prizes');
-                    }}
-                    type="button"
-                  >
-                    礼品
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300"
+                      onClick={() => {
+                        setSelectedCampaignId(campaign.id);
+                        setTab('prizes');
+                      }}
+                      type="button"
+                    >
+                      奖品管理
+                    </button>
+                    <button
+                      className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 disabled:opacity-50"
+                      disabled={validateCampaignMutation.isPending}
+                      onClick={() => validateCampaignMutation.mutate(campaign.id)}
+                      type="button"
+                    >
+                      发布校验
+                    </button>
+                  </div>
                 }
                 badge={campaign.status}
                 badgeClass={statusClass(campaign.status)}
@@ -541,20 +576,43 @@ export function AdminApp(): React.ReactNode {
                 title={campaign.name}
               />
             ))}
+            {validateCampaignMutation.data ? (
+              <div className="rounded-xl border border-zinc-800 bg-[#1a1a24] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="font-bold text-white">发布校验：{validateCampaignMutation.data.campaign_name}</h3>
+                  <span className={`rounded px-2 py-1 text-xs ${validateCampaignMutation.data.can_publish ? statusClass('active') : statusClass('disabled')}`}>
+                    {validateCampaignMutation.data.can_publish ? '可发布' : '需修正'}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm text-zinc-400">
+                  奖品 {validateCampaignMutation.data.prize_count} 个 · 上架 {validateCampaignMutation.data.active_prize_count} 个 · 总库存{' '}
+                  {validateCampaignMutation.data.total_stock} · 权重合计 {validateCampaignMutation.data.total_weight}
+                </p>
+                {validateCampaignMutation.data.errors.length > 0 ? (
+                  <div className="mt-3 text-sm text-red-300">{validateCampaignMutation.data.errors.join('；')}</div>
+                ) : null}
+                {validateCampaignMutation.data.warnings.length > 0 ? (
+                  <div className="mt-2 text-sm text-amber-300">{validateCampaignMutation.data.warnings.join('；')}</div>
+                ) : null}
+              </div>
+            ) : null}
           </section>
         ) : null}
 
         {tab === 'prizes' ? (
           <section className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-xl font-black text-white">礼品管理</h2>
+              <div>
+                <div className="text-xs font-bold text-orange-400">盲盒管理 / 奖品管理</div>
+                <h2 className="mt-1 text-xl font-black text-white">奖品管理</h2>
+              </div>
               <button
                 className="rounded-md bg-orange-500 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
                 disabled={!selectedCampaignId || createPrizeMutation.isPending}
                 onClick={() => createPrizeMutation.mutate()}
                 type="button"
               >
-                + 新建礼品
+                + 新建奖品
               </button>
             </div>
             <select
@@ -562,8 +620,8 @@ export function AdminApp(): React.ReactNode {
               onChange={(event) => setSelectedCampaignId(event.target.value)}
               value={selectedCampaignId}
             >
-              <option value="">-- 选择活动 --</option>
-              {(campaignsQuery.data ?? []).map((campaign) => (
+              <option value="">-- 选择盲盒 --</option>
+              {campaigns.map((campaign) => (
                 <option key={campaign.id} value={campaign.id}>
                   {campaign.name}
                 </option>
@@ -571,19 +629,35 @@ export function AdminApp(): React.ReactNode {
             </select>
             {selectedCampaignId ? (
               <div className="space-y-3">
-                {(prizesQuery.data ?? []).map((prize) => (
+                {selectedCampaign ? (
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    {[
+                      ['所属盲盒', selectedCampaign.name],
+                      ['奖品数量', selectedPrizes.length],
+                      ['上架奖品', activePrizeCount],
+                      ['总库存', selectedPrizeStock],
+                      ['权重合计', selectedPrizeWeight],
+                    ].map(([label, value]) => (
+                      <div className="rounded-xl border border-zinc-800 bg-[#1a1a24] p-3" key={label}>
+                        <div className="text-lg font-black text-orange-400">{value}</div>
+                        <div className="mt-1 text-xs text-zinc-500">{label}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {selectedPrizes.map((prize) => (
                   <DataCard
                     badge={prize.level}
                     badgeClass="border-blue-500/30 bg-blue-500/10 text-blue-300"
                     key={prize.id}
-                    subtitle={`ID: ${prize.id} · 库存 ${prize.stock} · 权重 ${prize.probability_weight} · ${prize.status}`}
+                    subtitle={`ID: ${prize.id} · 库存 ${prize.stock} · 权重 ${prize.probability_weight} · ${prize.status}${prize.sort_order ? ` · 排序 ${prize.sort_order}` : ''}`}
                     title={prize.name}
                   />
                 ))}
-                {prizesQuery.data?.length === 0 ? <EmptyAdmin text="当前活动暂无礼品" /> : null}
+                {selectedPrizes.length === 0 ? <EmptyAdmin text="当前盲盒暂无奖品" /> : null}
               </div>
             ) : (
-              <EmptyAdmin text="请先选择一个活动" />
+              <EmptyAdmin text="请先选择一个盲盒" />
             )}
           </section>
         ) : null}
@@ -596,8 +670,8 @@ export function AdminApp(): React.ReactNode {
               onChange={(event) => setSelectedCampaignId(event.target.value)}
               value={selectedCampaignId}
             >
-              <option value="">-- 选择活动 --</option>
-              {(campaignsQuery.data ?? []).map((campaign) => (
+              <option value="">-- 选择盲盒 --</option>
+              {campaigns.map((campaign) => (
                 <option key={campaign.id} value={campaign.id}>
                   {campaign.name}
                 </option>

@@ -400,6 +400,21 @@ export interface PrizeMutation {
   readonly stock: number;
   readonly probability_weight: number;
   readonly status: 'active' | 'inactive';
+  readonly image_url?: string;
+  readonly sort_order?: number;
+  readonly display_prob?: string;
+}
+
+export interface CampaignPublishValidation {
+  readonly campaign_id: string;
+  readonly campaign_name: string;
+  readonly prize_count: number;
+  readonly active_prize_count: number;
+  readonly total_stock: number;
+  readonly total_weight: number;
+  readonly can_publish: boolean;
+  readonly errors: readonly string[];
+  readonly warnings: readonly string[];
 }
 
 export interface FulfillmentTask {

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { getAppConfig } from './config';
 import {
+  AppError,
   adminUnauthorized,
   badAdminAuth,
   campaignNotFound,
@@ -37,6 +38,7 @@ import type {
   BuyShopItemResult,
   Campaign,
   CampaignMutation,
+  CampaignPublishValidation,
   CardType,
   CheckInResult,
   ClaimActivityRewardRequest,
@@ -1018,6 +1020,7 @@ export class MemoryStore {
   public updatePityConfig(token: string, campaignId: string, pityConfig: PityConfig): Campaign {
     this.ensureAdmin(token);
     const campaign = this.getCampaign(campaignId);
+    this.validatePityConfig(campaignId, pityConfig);
     const updated = { ...campaign, pity_config: pityConfig };
     this.campaignsById.set(campaignId, updated);
     return cloneCampaign(updated);
@@ -1031,11 +1034,13 @@ export class MemoryStore {
 
   public adminPrizes(token: string, campaignId: string): readonly Prize[] {
     this.ensureAdmin(token);
+    this.getCampaign(campaignId);
     return this.prizeList(campaignId);
   }
 
   public createPrize(token: string, campaignId: string, input: PrizeMutation): Prize {
     this.ensureAdmin(token);
+    this.getCampaign(campaignId);
     const prize: Prize = {
       id: randomId('prize'),
       campaign_id: campaignId,
@@ -1044,6 +1049,9 @@ export class MemoryStore {
       stock: input.stock,
       probability_weight: input.probability_weight,
       status: input.status,
+      image_url: input.image_url,
+      sort_order: input.sort_order,
+      display_prob: input.display_prob,
     };
     this.prizesByCampaign.set(campaignId, [...(this.prizesByCampaign.get(campaignId) ?? []), prize]);
     return { ...prize };
@@ -1076,6 +1084,65 @@ export class MemoryStore {
       }
     }
     throw notFound;
+  }
+
+  public validateCampaignPublish(token: string, campaignId: string): CampaignPublishValidation {
+    this.ensureAdmin(token);
+    const campaign = this.getCampaign(campaignId);
+    const prizes = this.prizeList(campaignId);
+    const activePrizes = prizes.filter((prize) => prize.status === 'active');
+    const drawablePrizes = activePrizes.filter((prize) => prize.stock > 0 && prize.probability_weight > 0);
+    const totalStock = activePrizes.reduce((sum, prize) => sum + prize.stock, 0);
+    const totalWeight = activePrizes.reduce((sum, prize) => sum + prize.probability_weight, 0);
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    if (!campaign.name.trim()) {
+      errors.push('盲盒名称不能为空');
+    }
+    if (!campaign.slug.trim()) {
+      errors.push('盲盒标识不能为空');
+    }
+    if (new Date(campaign.ends_at).getTime() <= new Date(campaign.starts_at).getTime()) {
+      errors.push('结束时间必须晚于开始时间');
+    }
+    if (prizes.length === 0) {
+      errors.push('盲盒至少需要配置一个奖品');
+    }
+    if (activePrizes.length === 0) {
+      errors.push('盲盒至少需要一个已上架奖品');
+    }
+    if (drawablePrizes.length === 0) {
+      errors.push('盲盒至少需要一个有库存且权重大于 0 的可抽奖品');
+    }
+    if (totalWeight <= 0) {
+      errors.push('可抽奖品权重合计必须大于 0');
+    }
+    if (!campaign.banner_image_url) {
+      warnings.push('建议补充盲盒 Banner 图，提升用户端展示效果');
+    }
+    if (!campaign.campaign_summary) {
+      warnings.push('建议补充盲盒简介，便于用户理解活动规则');
+    }
+    if (activePrizes.some((prize) => !prize.image_url)) {
+      warnings.push('存在未配置图片的上架奖品');
+    }
+
+    if (campaign.pity_config) {
+      this.collectPityConfigIssues(campaignId, campaign.pity_config, errors);
+    }
+
+    return {
+      campaign_id: campaign.id,
+      campaign_name: campaign.name,
+      prize_count: prizes.length,
+      active_prize_count: activePrizes.length,
+      total_stock: totalStock,
+      total_weight: totalWeight,
+      can_publish: errors.length === 0,
+      errors,
+      warnings,
+    };
   }
 
   public adminDrawRecords(token: string): readonly DrawRecord[] {
@@ -2190,6 +2257,29 @@ export class MemoryStore {
       operator_id: operatorId,
       created_at: nowISO(),
     });
+  }
+
+  private validatePityConfig(campaignId: string, pityConfig: PityConfig): void {
+    const errors: string[] = [];
+    this.collectPityConfigIssues(campaignId, pityConfig, errors);
+    if (errors.length > 0) {
+      throw new AppError('invalid_pity_config', errors.join('；'), 400);
+    }
+  }
+
+  private collectPityConfigIssues(campaignId: string, pityConfig: PityConfig, errors: string[]): void {
+    const prizes = this.prizeList(campaignId);
+    const prizeIds = new Set(prizes.map((prize) => prize.id));
+
+    if (pityConfig.hard_pity_n > 0 && pityConfig.hard_pity_n < pityConfig.soft_pity_n) {
+      errors.push('硬保底次数必须大于等于软保底起始次数');
+    }
+    if (pityConfig.target_prize && !prizeIds.has(pityConfig.target_prize)) {
+      errors.push('保底目标奖品必须属于当前盲盒');
+    }
+    if (pityConfig.up_prize_id && !prizeIds.has(pityConfig.up_prize_id)) {
+      errors.push('UP 奖品必须属于当前盲盒');
+    }
   }
 
   private findPrize(prizeId: string): Prize {

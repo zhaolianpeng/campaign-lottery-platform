@@ -26,6 +26,7 @@ import type {
   Campaign,
   CampaignListItem,
   CampaignMutation,
+  CampaignPublishValidation,
   CheckInResult,
   ClaimActivityRewardRequest,
   ClaimFirstRechargeRequest,
@@ -401,6 +402,10 @@ export class LotteryService {
 
   public adminPrizes(token: string, campaignId: string): readonly Prize[] {
     return this.store.adminPrizes(token, campaignId);
+  }
+
+  public validateCampaignPublish(token: string, campaignId: string): CampaignPublishValidation {
+    return this.store.validateCampaignPublish(token, campaignId);
   }
 
   public createPrize(token: string, campaignId: string, input: PrizeMutation): Prize {

@@ -22,4 +22,5 @@ export const wechatAuthFailed = new AppError('wechat_auth_failed', '微信授权
 export const wechatPhoneRequired = new AppError('wechat_phone_required', '需要获取手机号', 403);
 export const phoneAlreadyBound = new AppError('phone_already_bound', '手机号已绑定其他账号', 409);
 export const phoneCodeInvalid = new AppError('phone_code_invalid', '验证码错误或已过期', 400);
+export const phoneVerificationRequired = new AppError('phone_verification_required', '请使用短信验证码登录', 403);
 export const userStatusForbidden = new AppError('user_status_forbidden', '当前账号状态不允许执行该操作', 403);

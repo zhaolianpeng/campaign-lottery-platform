@@ -71,6 +71,29 @@ interface LoginPayload {
   };
 }
 
+interface PublicConfig {
+  readonly wechat?: {
+    readonly quick_login_enabled?: boolean;
+  };
+  readonly sms?: {
+    readonly provider: string;
+    readonly mock_enabled: boolean;
+  };
+}
+
+interface PhoneCodePayload {
+  readonly sent: boolean;
+  readonly provider: string;
+  readonly expires_in: number;
+  readonly dev_code?: string;
+  readonly message: string;
+}
+
+interface PhoneLoginFormValues {
+  readonly phone: string;
+  readonly code: string;
+}
+
 interface CampaignProbabilities {
   readonly campaign: CampaignListItem['campaign'];
   readonly prizes: readonly (Prize & { readonly base_prob?: string })[];
@@ -87,9 +110,7 @@ interface TabItem {
   readonly icon: ComponentType<{ readonly size?: number; readonly className?: string }>;
 }
 
-interface NavigatorWithMobileNumber extends Navigator {
-  readonly getMobileNumber?: () => Promise<{ readonly number?: string }>;
-}
+const phonePattern = /^1[3-9]\d{9}$/;
 
 const tabs: readonly TabItem[] = [
   { key: 'series', label: '系列', icon: Home },
@@ -169,6 +190,9 @@ export function LotteryApp(): React.ReactNode {
   // 微信 OAuth 回调处理：检查 URL 中是否有 code 参数
   const [wechatLoggingIn, setWechatLoggingIn] = useState(false);
   const [wechatError, setWechatError] = useState('');
+  const [showPhoneLogin, setShowPhoneLogin] = useState(false);
+  const [phoneLoginForm, setPhoneLoginForm] = useState<PhoneLoginFormValues>({ phone: '', code: '' });
+  const [phoneCodeMessage, setPhoneCodeMessage] = useState('');
 
   // 在组件挂载时检查微信登录回调
   if (typeof window !== 'undefined' && !token && !wechatLoggingIn) {
@@ -204,6 +228,16 @@ export function LotteryApp(): React.ReactNode {
     defaultValues: { have_prize_id: '', want_prize_id: '' },
   });
 
+  const publicConfigQuery = useQuery({
+    queryKey: ['public-config'],
+    queryFn: () => apiRequest<PublicConfig>('/api/v1/config/public', ''),
+    enabled: !token,
+  });
+
+  const smsProvider = publicConfigQuery.data?.sms?.provider?.toLowerCase();
+  const isMockSmsProvider = publicConfigQuery.data?.sms?.mock_enabled ?? (smsProvider === 'mock');
+  const isWechatQuickLoginEnabled = publicConfigQuery.data?.wechat?.quick_login_enabled === true;
+
   const loginMutation = useMutation({
     mutationFn: (values: LoginFormValues) =>
       apiRequest<LoginPayload>('/api/v1/auth/guest-login', '', {
@@ -213,6 +247,46 @@ export function LotteryApp(): React.ReactNode {
     onSuccess: (payload) => {
       setToken(payload.session.token);
       setNickname(payload.user.nickname);
+    },
+  });
+
+  const sendPhoneCodeMutation = useMutation({
+    mutationFn: (phone: string) =>
+      apiRequest<PhoneCodePayload>('/api/v1/auth/phone/code', '', {
+        method: 'POST',
+        body: JSON.stringify({ phone, scene: 'login' }),
+      }),
+    onSuccess: (payload) => {
+      setPhoneCodeMessage(payload.dev_code ? `${payload.message} 开发验证码：${payload.dev_code}` : payload.message);
+      setWechatError('');
+    },
+    onError: (error) => {
+      setPhoneCodeMessage('');
+      setWechatError(error instanceof Error ? error.message : '验证码发送失败');
+    },
+  });
+
+  const phoneLoginMutation = useMutation({
+    mutationFn: (values: PhoneLoginFormValues) =>
+      isMockSmsProvider
+        ? apiRequest<LoginPayload>('/api/v1/auth/phone-login', '', {
+            method: 'POST',
+            body: JSON.stringify({ phone: values.phone }),
+          })
+        : apiRequest<LoginPayload>('/api/v1/auth/phone/verify', '', {
+            method: 'POST',
+            body: JSON.stringify({ phone: values.phone, code: values.code, scene: 'login' }),
+          }),
+    onSuccess: (payload) => {
+      setToken(payload.session.token);
+      setNickname(payload.user.nickname);
+      setShowPhoneLogin(false);
+      setPhoneLoginForm({ phone: '', code: '' });
+      setPhoneCodeMessage('');
+      setWechatError('');
+    },
+    onError: (error) => {
+      setWechatError(error instanceof Error ? error.message : '手机号登录失败');
     },
   });
 
@@ -553,6 +627,55 @@ export function LotteryApp(): React.ReactNode {
     drawMutation.mutate(drawCount);
   }
 
+  function updatePhoneLoginForm(field: keyof PhoneLoginFormValues, value: string): void {
+    setPhoneLoginForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function phoneFromForm(): string {
+    return phoneLoginForm.phone.replace(/\s+/g, '');
+  }
+
+  function validatePhoneLoginPhone(): string | null {
+    const phone = phoneFromForm();
+    if (!phonePattern.test(phone)) {
+      setWechatError('请输入正确的 11 位手机号码');
+      return null;
+    }
+    return phone;
+  }
+
+  function handleSendPhoneCode(): void {
+    const phone = validatePhoneLoginPhone();
+    if (!phone) {
+      return;
+    }
+    setPhoneLoginForm((current) => ({ ...current, phone }));
+    setWechatError('');
+    if (isMockSmsProvider) {
+      setPhoneCodeMessage('当前为 mock 短信配置，无需获取验证码，点击确认即可进入主页面。');
+      return;
+    }
+    sendPhoneCodeMutation.mutate(phone);
+  }
+
+  function handleConfirmPhoneLogin(): void {
+    const phone = validatePhoneLoginPhone();
+    if (!phone) {
+      return;
+    }
+    if (publicConfigQuery.isLoading) {
+      setWechatError('短信配置加载中，请稍后再试');
+      return;
+    }
+    const code = phoneLoginForm.code.trim();
+    if (!isMockSmsProvider && !code) {
+      setWechatError('请输入手机验证码');
+      return;
+    }
+    setWechatError('');
+    phoneLoginMutation.mutate({ phone, code });
+  }
+
   if (!token) {
     return (
       <main className="min-h-screen bg-[linear-gradient(160deg,#0d0f1a_0%,#1a1040_38%,#0f2027_100%)] px-4 py-8 text-violet-50">
@@ -594,68 +717,117 @@ export function LotteryApp(): React.ReactNode {
               <span className="h-px flex-1 bg-white/10" />
             </div>
 
-            {/* 微信登录按钮 */}
+            {isWechatQuickLoginEnabled ? (
+              <button
+                type="button"
+                onClick={() => {
+                  apiRequest<{ url: string }>('/api/v1/auth/wechat/oauth-url', '')
+                    .then((data) => {
+                      window.location.href = data.url;
+                    })
+                    .catch(() => {
+                      window.location.href = `/api/v1/auth/wechat/oauth-url`;
+                    });
+                }}
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-3 font-medium text-white hover:bg-white/[0.10]"
+              >
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                  <path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 01.213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 00.167-.054l1.903-1.114a.864.864 0 01.717-.098 10.16 10.16 0 002.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178A1.17 1.17 0 014.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178 1.17 1.17 0 01-1.162-1.178c0-.651.52-1.18 1.162-1.18zm5.34 2.867c-1.797-.052-3.746.512-5.28 1.786-1.72 1.428-2.687 3.72-1.78 6.22.942 2.453 3.666 4.229 6.884 4.229.826 0 1.622-.12 2.361-.336a.722.722 0 01.598.082l1.584.926a.272.272 0 00.14.045c.134 0 .24-.11.24-.245 0-.06-.024-.12-.04-.178l-.324-1.233a.492.492 0 01.177-.553C23.028 18.48 24 16.82 24 14.98c0-3.21-2.931-5.837-7.062-6.122zm-2.18 2.956c.535 0 .969.44.969.982a.976.976 0 01-.969.983.976.976 0 01-.969-.983c0-.542.434-.982.97-.982zm4.36 0c.535 0 .969.44.969.982a.976.976 0 01-.969.983.976.976 0 01-.969-.983c0-.542.434-.982.97-.982z" />
+                </svg>
+                微信一键登录
+              </button>
+            ) : null}
+
+            {/* 手机号码登录按钮 */}
             <button
               type="button"
               onClick={() => {
-                apiRequest<{ url: string }>('/api/v1/auth/wechat/oauth-url', '')
-                  .then((data) => {
-                    window.location.href = data.url;
-                  })
-                  .catch(() => {
-                    window.location.href = `/api/v1/auth/wechat/oauth-url`;
-                  });
-              }}
-              className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-3 font-medium text-white hover:bg-white/[0.10]"
-            >
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                <path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 01.213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 00.167-.054l1.903-1.114a.864.864 0 01.717-.098 10.16 10.16 0 002.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178A1.17 1.17 0 014.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178 1.17 1.17 0 01-1.162-1.178c0-.651.52-1.18 1.162-1.18zm5.34 2.867c-1.797-.052-3.746.512-5.28 1.786-1.72 1.428-2.687 3.72-1.78 6.22.942 2.453 3.666 4.229 6.884 4.229.826 0 1.622-.12 2.361-.336a.722.722 0 01.598.082l1.584.926a.272.272 0 00.14.045c.134 0 .24-.11.24-.245 0-.06-.024-.12-.04-.178l-.324-1.233a.492.492 0 01.177-.553C23.028 18.48 24 16.82 24 14.98c0-3.21-2.931-5.837-7.062-6.122zm-2.18 2.956c.535 0 .969.44.969.982a.976.976 0 01-.969.983.976.976 0 01-.969-.983c0-.542.434-.982.97-.982zm4.36 0c.535 0 .969.44.969.982a.976.976 0 01-.969.983.976.976 0 01-.969-.983c0-.542.434-.982.97-.982z" />
-              </svg>
-              微信一键登录
-            </button>
-
-            {/* 本机号码一键登录按钮 */}
-            <button
-              type="button"
-              onClick={async () => {
-                let phone = '';
-                // 尝试 WebOTP API 自动获取本机号码（仅 HTTPS 且部分运营商支持）
-                try {
-                  const mobileNavigator = navigator as NavigatorWithMobileNumber;
-                  if (mobileNavigator.getMobileNumber) {
-                    const result = await mobileNavigator.getMobileNumber();
-                    if (result?.number) {
-                      phone = result.number;
-                    }
-                  }
-                } catch {
-                  // WebOTP 不可用，留空让用户确认
-                }
-                // 回落：提示用户确认号码或输入
-                const userPhone = prompt(phone ? `检测到本机号码：${phone}\n点击确定使用该号码登录` : '请输入手机号', phone);
-                if (!userPhone) return;
-                setWechatLoggingIn(true);
-                try {
-                  const data = await apiRequest<LoginPayload>('/api/v1/auth/phone-login', '', {
-                    method: 'POST',
-                    body: JSON.stringify({ phone: userPhone }),
-                  });
-                  setToken(data.session.token);
-                  setNickname(data.user.nickname);
-                } catch (err) {
-                  setWechatError(err instanceof Error ? err.message : '手机号登录失败');
-                } finally {
-                  setWechatLoggingIn(false);
-                }
+                setShowPhoneLogin((current) => !current);
+                setWechatError('');
+                setPhoneCodeMessage('');
               }}
               className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-3 font-medium text-white hover:bg-white/[0.10]"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
                 <line x1="12" y1="18" x2="12.01" y2="18" />
               </svg>
-              本机号码一键登录
+              使用手机号码登录
             </button>
+
+            {showPhoneLogin ? (
+              <div className="mt-3 rounded-2xl border border-violet-200/15 bg-white/[0.08] p-4 text-left">
+                <div className="mb-3 text-center text-sm font-semibold text-white">使用手机号码登录</div>
+                <div className="space-y-3">
+                  <input
+                    className="w-full rounded-2xl border-0 bg-white px-4 py-3 text-[15px] text-slate-950 outline-none ring-2 ring-transparent placeholder:text-slate-400 focus:ring-violet-300"
+                    inputMode="tel"
+                    maxLength={11}
+                    onChange={(event) => updatePhoneLoginForm('phone', event.target.value)}
+                    placeholder="填写手机号码"
+                    value={phoneLoginForm.phone}
+                  />
+                  <div className="grid grid-cols-[1fr_auto] gap-2">
+                    <input
+                      className="min-w-0 rounded-2xl border-0 bg-white px-4 py-3 text-[15px] text-slate-950 outline-none ring-2 ring-transparent placeholder:text-slate-400 focus:ring-violet-300 disabled:bg-white/70"
+                      disabled={isMockSmsProvider}
+                      inputMode="numeric"
+                      maxLength={8}
+                      onChange={(event) => updatePhoneLoginForm('code', event.target.value)}
+                      placeholder={isMockSmsProvider ? 'mock 模式无需验证码' : '填写验证码'}
+                      value={phoneLoginForm.code}
+                    />
+                    <button
+                      className="rounded-2xl border border-white/15 bg-white/10 px-3 py-3 text-sm font-semibold text-white disabled:opacity-60"
+                      disabled={sendPhoneCodeMutation.isPending || phoneLoginMutation.isPending || publicConfigQuery.isLoading}
+                      onClick={handleSendPhoneCode}
+                      type="button"
+                    >
+                      {sendPhoneCodeMutation.isPending ? <Loader2 className="animate-spin" size={16} /> : '获取验证码'}
+                    </button>
+                  </div>
+                  <p className="text-xs text-violet-100/55">
+                    {publicConfigQuery.isLoading
+                      ? '正在读取短信配置...'
+                      : isMockSmsProvider
+                        ? '当前 SMS_PROVIDER=mock，确认后将直接进入主页面。'
+                        : '请先获取验证码，再输入短信验证码完成登录。'}
+                  </p>
+                  {phoneCodeMessage ? <p className="text-xs text-violet-100/70">{phoneCodeMessage}</p> : null}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      className="rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-3 font-semibold text-white"
+                      onClick={() => {
+                        setShowPhoneLogin(false);
+                        setPhoneCodeMessage('');
+                      }}
+                      type="button"
+                    >
+                      取消
+                    </button>
+                    <button
+                      className="flex items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#f472b6,#a78bfa)] px-4 py-3 font-bold text-white disabled:opacity-60"
+                      disabled={phoneLoginMutation.isPending || publicConfigQuery.isLoading}
+                      onClick={handleConfirmPhoneLogin}
+                      type="button"
+                    >
+                      {phoneLoginMutation.isPending ? <Loader2 className="animate-spin" size={18} /> : null}
+                      确认登录
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             {/* 微信登录中 */}
             {wechatLoggingIn ? (

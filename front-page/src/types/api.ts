@@ -96,6 +96,20 @@ export interface AdminUserDetail {
   readonly status_logs: readonly UserStatusLog[];
 }
 
+export interface PityConfig {
+  readonly enabled: boolean;
+  readonly soft_pity_n: number;
+  readonly pity_factor: number;
+  readonly hard_pity_n: number;
+  readonly target_prize: string;
+  readonly up_pool_enabled?: boolean;
+  readonly up_prize_id?: string;
+  readonly up_multiplier?: number;
+  readonly up_level?: PrizeLevel;
+  readonly up_start_at?: string;
+  readonly up_end_at?: string;
+}
+
 export interface Campaign {
   readonly id: string;
   readonly name: string;
@@ -107,6 +121,7 @@ export interface Campaign {
   readonly miss_weight: number;
   readonly banner_image_url: string;
   readonly campaign_summary: string;
+  readonly pity_config?: PityConfig;
 }
 
 export interface Prize {
@@ -118,6 +133,20 @@ export interface Prize {
   readonly probability_weight: number;
   readonly status: 'active' | 'inactive';
   readonly image_url?: string;
+  readonly sort_order?: number;
+  readonly display_prob?: string;
+}
+
+export interface CampaignPublishValidation {
+  readonly campaign_id: string;
+  readonly campaign_name: string;
+  readonly prize_count: number;
+  readonly active_prize_count: number;
+  readonly total_stock: number;
+  readonly total_weight: number;
+  readonly can_publish: boolean;
+  readonly errors: readonly string[];
+  readonly warnings: readonly string[];
 }
 
 export interface PrizeSummary {
