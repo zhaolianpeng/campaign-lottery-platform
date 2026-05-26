@@ -27,6 +27,7 @@ import type {
   CampaignListItem,
   CampaignMutation,
   CampaignPublishValidation,
+  CEndFeatureToggles,
   CheckInResult,
   ClaimActivityRewardRequest,
   ClaimFirstRechargeRequest,
@@ -52,6 +53,7 @@ import type {
   LeaderboardEntry,
   MonthCardPurchaseResult,
   MonthCardStatus,
+  PendingAnonymousWin,
   PityConfig,
   PityStatus,
   Prize,
@@ -225,8 +227,10 @@ export class LotteryService {
     };
   }
 
-  public blindBoxDraw(token: string, config: DrawConfig): BlindBoxDrawResult {
-    const user = this.assetUserFromToken(token);
+  public blindBoxDraw(token: string, config: DrawConfig, anonymousDrawToken?: string): BlindBoxDrawResult {
+    const authenticatedUser = token ? this.safeUserFromToken(token) : null;
+    const anonymousToken = authenticatedUser ? '' : this.store.ensureAnonymousDrawToken(anonymousDrawToken);
+    const actorId = authenticatedUser ? authenticatedUser.id : this.store.anonymousDrawActorId(anonymousToken);
     const campaign = this.store.getCampaign(config.campaign_id);
     const now = Date.now();
     if (
@@ -237,15 +241,18 @@ export class LotteryService {
       throw campaignInactive;
     }
 
-    const remaining = this.store.checkDrawQuota(user.id, campaign.id, campaign.daily_draw_limit);
+    const remaining = this.store.checkDrawQuota(actorId, campaign.id, campaign.daily_draw_limit);
     const requestedCount = config.draw_count && config.draw_count > 0 ? config.draw_count : 1;
     const drawCount = Math.min(requestedCount, remaining);
     if (drawCount <= 0) {
       throw noDrawChances;
     }
 
-    this.store.spendDrawPoints(user.id, drawCount);
-    this.store.deductDrawQuota(user.id, campaign.id, drawCount);
+    if (authenticatedUser) {
+      this.store.assertAssetAllowed(authenticatedUser.id);
+      this.store.spendDrawPoints(authenticatedUser.id, drawCount);
+    }
+    this.store.deductDrawQuota(actorId, campaign.id, drawCount);
 
     const prizes = this.store
       .prizeList(campaign.id)
@@ -260,7 +267,7 @@ export class LotteryService {
       })),
     );
 
-    const probabilityResults = engine.drawMultiple(drawCount, pity, this.pityTracker, user.id, campaign.id);
+    const probabilityResults = engine.drawMultiple(drawCount, pity, this.pityTracker, actorId, campaign.id);
     const upPoolActive = this.isUPPoolActive(campaign);
     const draws: SingleDrawResult[] = [];
 
@@ -269,23 +276,54 @@ export class LotteryService {
       let isUPPoolWin = probabilityResult.isUPPoolWin;
 
       if (upPoolActive && prizeId && probabilityResult.prizeLevel === campaign.pity_config?.up_level) {
-        const hasGuarantee = this.pityTracker.get(user.id, campaign.id).hasUPPoolGuarantee;
+        const hasGuarantee = this.pityTracker.get(actorId, campaign.id).hasUPPoolGuarantee;
         if (hasGuarantee) {
           prizeId = campaign.pity_config?.up_prize_id ?? prizeId;
           isUPPoolWin = true;
-          this.pityTracker.setUPPoolGuarantee(user.id, campaign.id, false);
+          this.pityTracker.setUPPoolGuarantee(actorId, campaign.id, false);
         } else if (randomInt(2) === 0) {
           prizeId = campaign.pity_config?.up_prize_id ?? prizeId;
           isUPPoolWin = true;
         } else {
-          this.pityTracker.setUPPoolGuarantee(user.id, campaign.id, true);
+          this.pityTracker.setUPPoolGuarantee(actorId, campaign.id, true);
         }
       }
 
-      const record = prizeId
-        ? this.store.createDrawRecord(user.id, campaign.id, prizeId)
-        : this.store.createMissRecord(user.id, campaign.id);
-      const prize = prizeId ? this.store.prizeList(campaign.id).find((item) => item.id === prizeId) : undefined;
+      let record: DrawRecord;
+      let prize = prizeId ? this.store.prizeList(campaign.id).find((item) => item.id === prizeId) : undefined;
+
+      if (prizeId && authenticatedUser) {
+        record = this.store.createDrawRecord(authenticatedUser.id, campaign.id, prizeId);
+        prize = this.store.prizeList(campaign.id).find((item) => item.id === prizeId);
+      } else if (prizeId) {
+        const pendingWin = this.store.createAnonymousPendingWin(anonymousToken, campaign.id, prizeId);
+        if (pendingWin) {
+          record = {
+            id: pendingWin.id,
+            campaign_id: campaign.id,
+            user_id: actorId,
+            prize_id: pendingWin.prize_id,
+            prize_name: pendingWin.prize_name,
+            result: 'win',
+            drawn_at: pendingWin.drawn_at,
+            chance_after: this.store.checkDrawQuota(actorId, campaign.id, campaign.daily_draw_limit),
+          };
+          if (prize) {
+            prize = {
+              ...prize,
+              image_url: pendingWin.prize_image_url,
+              level: pendingWin.prize_level,
+            };
+          }
+        } else {
+          record = this.store.createMissRecord(actorId, campaign.id);
+          prizeId = '';
+          prize = undefined;
+        }
+      } else {
+        record = this.store.createMissRecord(actorId, campaign.id);
+      }
+
       draws.push({
         record_id: record.id,
         prize_id: prizeId || undefined,
@@ -294,17 +332,34 @@ export class LotteryService {
         prize_image_url: prize?.image_url,
         is_win: record.result === 'win',
         is_hard_pity: probabilityResult.isHardPity || undefined,
-        is_new: prizeId ? this.isFirstPrize(user.id, prizeId) : undefined,
+        is_new: authenticatedUser && prizeId ? this.isFirstPrize(authenticatedUser.id, prizeId) : undefined,
         is_up_pool_win: isUPPoolWin || undefined,
       });
     }
 
     return {
       draws,
-      remaining_chances: this.store.checkDrawQuota(user.id, campaign.id, campaign.daily_draw_limit),
-      pity_status: this.pityStatus(token, campaign.id),
+      remaining_chances: this.store.checkDrawQuota(actorId, campaign.id, campaign.daily_draw_limit),
+      pity_status: authenticatedUser ? this.pityStatus(token, campaign.id) : undefined,
       collection_reward: null,
+      requires_login: !authenticatedUser && draws.some((item) => item.is_win),
+      anonymous_draw_token: anonymousToken || undefined,
+      pending_claim_count: anonymousToken ? this.store.anonymousPendingClaimCount(anonymousToken) : undefined,
     };
+  }
+
+  public claimAnonymousWins(anonymousDrawToken: string, userId: string): number {
+    if (!anonymousDrawToken.trim()) {
+      return 0;
+    }
+    return this.store.claimAnonymousWins(anonymousDrawToken, userId);
+  }
+
+  public pendingAnonymousWins(anonymousDrawToken: string): readonly PendingAnonymousWin[] {
+    if (!anonymousDrawToken.trim()) {
+      return [];
+    }
+    return this.store.pendingAnonymousWinsForToken(anonymousDrawToken);
   }
 
   public pityStatus(token: string, campaignId: string): PityStatus {
@@ -398,6 +453,14 @@ export class LotteryService {
 
   public adminCampaigns(token: string): readonly Campaign[] {
     return this.store.adminCampaigns(token);
+  }
+
+  public adminCEndFeatureToggles(token: string): CEndFeatureToggles {
+    return this.store.adminCEndFeatureToggles(token);
+  }
+
+  public updateCEndFeatureToggles(token: string, input: CEndFeatureToggles): CEndFeatureToggles {
+    return this.store.updateCEndFeatureToggles(token, input);
   }
 
   public createCampaign(token: string, input: CampaignMutation): Campaign {
@@ -534,6 +597,10 @@ export class LotteryService {
 
   public shopItems(): readonly ShopItem[] {
     return this.store.shopItems();
+  }
+
+  public cEndFeatureToggles(): CEndFeatureToggles {
+    return this.store.cEndFeatureToggles();
   }
 
   public adminShopItems(token: string): readonly ShopItem[] {

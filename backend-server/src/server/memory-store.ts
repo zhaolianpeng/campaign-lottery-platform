@@ -41,6 +41,7 @@ import type {
   CampaignMutation,
   CampaignPublishValidation,
   CardType,
+  CEndFeatureToggles,
   CheckInResult,
   ClaimActivityRewardRequest,
   ClaimFirstRechargeRequest,
@@ -68,6 +69,7 @@ import type {
   LeaderboardEntry,
   MonthCardPurchaseResult,
   MonthCardStatus,
+  PendingAnonymousWin,
   PityConfig,
   Prize,
   PrizeMutation,
@@ -219,11 +221,29 @@ function cloneFirstRechargePack(pack: FirstRechargePack): FirstRechargePack {
   };
 }
 
+function defaultCEndFeatureToggles(): CEndFeatureToggles {
+  return {
+    series: true,
+    inventory: true,
+    exchange: true,
+    rank: true,
+    member: true,
+    shop: true,
+    social: true,
+    puzzle: true,
+  };
+}
+
+function cloneCEndFeatureToggles(toggles: CEndFeatureToggles): CEndFeatureToggles {
+  return { ...toggles };
+}
+
 export interface AdminConfigState {
   readonly campaigns: readonly Campaign[];
   readonly prizesByCampaign: Readonly<Record<string, readonly Prize[]>>;
   readonly shopItems: readonly ShopItem[];
   readonly firstRechargePacks: readonly FirstRechargePack[];
+  readonly cEndFeatureToggles: CEndFeatureToggles;
 }
 
 function memberLevel(totalSpent: number): UserMember['level'] {
@@ -279,6 +299,7 @@ export class MemoryStore {
   private readonly puzzleTeams = new Map<string, PuzzleTeam>();
   private readonly flashSubscriptions: FlashSubscription[] = [];
   private readonly activityParticipations: ActivityParticipation[] = [];
+  private readonly pendingAnonymousWins = new Map<string, PendingAnonymousWin[]>();
   private shopItemList: ShopItem[] = [];
   private firstRechargePackList: FirstRechargePack[] = [];
   private battlePassSeason: BattlePassSeason | null = null;
@@ -288,6 +309,7 @@ export class MemoryStore {
   private flashSales: FlashSale[] = [];
   private activities: Activity[] = [];
   private activityRewards: ActivityReward[] = [];
+  private cEndFeatureToggleState: CEndFeatureToggles = defaultCEndFeatureToggles();
 
   public constructor(
     private readonly adminUser: string,
@@ -530,6 +552,14 @@ export class MemoryStore {
     return { user, session };
   }
 
+  public ensureAnonymousDrawToken(token?: string): string {
+    return token?.trim() || randomId('anon');
+  }
+
+  public anonymousDrawActorId(token: string): string {
+    return `anon:${token}`;
+  }
+
   public userFromToken(token: string): User {
     const session = this.sessions.get(token);
     if (!session || session.revoked_at || new Date(session.expires_at).getTime() < Date.now()) {
@@ -677,6 +707,7 @@ export class MemoryStore {
       prizesByCampaign,
       shopItems: this.shopItemList.map((item) => cloneShopItem(item)),
       firstRechargePacks: this.firstRechargePackList.map((pack) => cloneFirstRechargePack(pack)),
+      cEndFeatureToggles: cloneCEndFeatureToggles(this.cEndFeatureToggleState),
     };
   }
 
@@ -700,6 +731,9 @@ export class MemoryStore {
     if (state.firstRechargePacks && state.firstRechargePacks.length > 0) {
       this.firstRechargePackList = state.firstRechargePacks.map((pack) => cloneFirstRechargePack(pack));
       this.firstRechargePackList.sort((left, right) => left.sort_order - right.sort_order);
+    }
+    if (state.cEndFeatureToggles) {
+      this.cEndFeatureToggleState = cloneCEndFeatureToggles(state.cEndFeatureToggles);
     }
   }
 
@@ -769,6 +803,61 @@ export class MemoryStore {
     return record;
   }
 
+  public createAnonymousPendingWin(anonymousToken: string, campaignId: string, prizeId: string): PendingAnonymousWin | null {
+    const prizes = this.prizesByCampaign.get(campaignId) ?? [];
+    const index = prizes.findIndex((prize) => prize.id === prizeId);
+    const prize = prizes[index];
+    if (!prize || prize.stock <= 0) {
+      return null;
+    }
+
+    const updatedPrize = { ...prize, stock: prize.stock - 1 };
+    this.prizesByCampaign.set(campaignId, [
+      ...prizes.slice(0, index),
+      updatedPrize,
+      ...prizes.slice(index + 1),
+    ]);
+
+    const pending: PendingAnonymousWin = {
+      id: randomId('draw'),
+      campaign_id: campaignId,
+      prize_id: prize.id,
+      prize_name: prize.name,
+      prize_level: prize.level,
+      prize_image_url: prize.image_url,
+      drawn_at: nowISO(),
+    };
+    this.pendingAnonymousWins.set(anonymousToken, [...(this.pendingAnonymousWins.get(anonymousToken) ?? []), pending]);
+    return pending;
+  }
+
+  public anonymousPendingClaimCount(anonymousToken: string): number {
+    return this.pendingAnonymousWins.get(anonymousToken)?.length ?? 0;
+  }
+
+  public pendingAnonymousWinsForToken(anonymousToken: string): readonly PendingAnonymousWin[] {
+    return (this.pendingAnonymousWins.get(anonymousToken) ?? []).map((item) => ({ ...item }));
+  }
+
+  public hydratePendingAnonymousWins(entriesByToken: Readonly<Record<string, readonly PendingAnonymousWin[]>>): void {
+    this.pendingAnonymousWins.clear();
+    for (const [token, entries] of Object.entries(entriesByToken)) {
+      this.pendingAnonymousWins.set(token, entries.map((item) => ({ ...item })));
+    }
+  }
+
+  public claimAnonymousWins(anonymousToken: string, userId: string): number {
+    const pendingWins = this.pendingAnonymousWins.get(anonymousToken) ?? [];
+    if (pendingWins.length === 0) {
+      return 0;
+    }
+    for (const pendingWin of pendingWins) {
+      this.finalizeAnonymousWinClaim(userId, pendingWin);
+    }
+    this.pendingAnonymousWins.delete(anonymousToken);
+    return pendingWins.length;
+  }
+
   public createMissRecord(userId: string, campaignId: string): DrawRecord {
     const record: DrawRecord = {
       id: randomId('draw'),
@@ -791,6 +880,42 @@ export class MemoryStore {
 
   public getUserInventory(userId: string): readonly UserInventory[] {
     return this.inventory.filter((item) => item.user_id === userId).map((item) => ({ ...item }));
+  }
+
+  private finalizeAnonymousWinClaim(userId: string, pendingWin: PendingAnonymousWin): DrawRecord {
+    const record: DrawRecord = {
+      id: pendingWin.id,
+      campaign_id: pendingWin.campaign_id,
+      user_id: userId,
+      prize_id: pendingWin.prize_id,
+      prize_name: pendingWin.prize_name,
+      result: 'win',
+      drawn_at: pendingWin.drawn_at,
+      chance_after: this.checkDrawQuota(userId, pendingWin.campaign_id, this.getCampaign(pendingWin.campaign_id).daily_draw_limit),
+    };
+    this.drawRecords.unshift(record);
+    this.inventory.unshift({
+      id: randomId('inv'),
+      user_id: userId,
+      prize_id: pendingWin.prize_id,
+      prize_name: pendingWin.prize_name,
+      prize_level: pendingWin.prize_level,
+      campaign_id: pendingWin.campaign_id,
+      source: 'draw',
+      created_at: pendingWin.drawn_at,
+    });
+    this.fulfillmentTaskItems.unshift({
+      id: this.fulfillmentTaskItems.length + 1,
+      draw_record_id: record.id,
+      user_id: userId,
+      prize_id: pendingWin.prize_id,
+      status: 'pending',
+      payload_json: JSON.stringify({ prize_name: pendingWin.prize_name }),
+      operator_note: 'anonymous draw claimed after login',
+      created_at: pendingWin.drawn_at,
+      updated_at: pendingWin.drawn_at,
+    });
+    return record;
   }
 
   public getSeriesProgress(userId: string, campaignId: string, campaignName: string): SeriesProgress {
@@ -1037,6 +1162,17 @@ export class MemoryStore {
   public adminCampaigns(token: string): readonly Campaign[] {
     this.ensureAdmin(token);
     return this.campaigns();
+  }
+
+  public adminCEndFeatureToggles(token: string): CEndFeatureToggles {
+    this.ensureAdmin(token);
+    return cloneCEndFeatureToggles(this.cEndFeatureToggleState);
+  }
+
+  public updateCEndFeatureToggles(token: string, input: CEndFeatureToggles): CEndFeatureToggles {
+    this.ensureAdmin(token);
+    this.cEndFeatureToggleState = cloneCEndFeatureToggles(input);
+    return cloneCEndFeatureToggles(this.cEndFeatureToggleState);
   }
 
   public createCampaign(token: string, input: CampaignMutation): Campaign {
@@ -1604,6 +1740,10 @@ export class MemoryStore {
 
   public shopItems(): readonly ShopItem[] {
     return this.shopItemList.filter((item) => item.is_active).map((item) => cloneShopItem(item));
+  }
+
+  public cEndFeatureToggles(): CEndFeatureToggles {
+    return cloneCEndFeatureToggles(this.cEndFeatureToggleState);
   }
 
   public buyShopItem(userId: string, input: BuyShopItemRequest): BuyShopItemResult {

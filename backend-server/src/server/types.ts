@@ -6,6 +6,29 @@ export type ExchangeOfferStatus = 'pending' | 'matched' | 'completed' | 'cancell
 export type UserStatus = 'pending_phone' | 'active' | 'frozen' | 'disabled' | 'cancelled';
 export type RegisterSource = 'wechat' | 'mobile' | 'guest' | 'admin_import';
 export type LoginType = 'wechat' | 'mobile_code' | 'phone_login' | 'guest' | 'admin';
+export type CEndFeatureKey = 'series' | 'inventory' | 'exchange' | 'rank' | 'member' | 'shop' | 'social' | 'puzzle';
+
+export interface CEndFeatureToggles {
+  readonly series: boolean;
+  readonly inventory: boolean;
+  readonly exchange: boolean;
+  readonly rank: boolean;
+  readonly member: boolean;
+  readonly shop: boolean;
+  readonly social: boolean;
+  readonly puzzle: boolean;
+}
+
+export interface PublicConfig {
+  readonly wechat?: {
+    readonly quick_login_enabled?: boolean;
+  };
+  readonly sms?: {
+    readonly provider: string;
+    readonly mock_enabled: boolean;
+  };
+  readonly c_end_features?: CEndFeatureToggles;
+}
 
 export interface User {
   readonly id: string;
@@ -233,6 +256,19 @@ export interface BlindBoxDrawResult {
   readonly remaining_chances: number;
   readonly pity_status?: PityStatus;
   readonly collection_reward?: CollectionReward | null;
+  readonly requires_login?: boolean;
+  readonly anonymous_draw_token?: string;
+  readonly pending_claim_count?: number;
+}
+
+export interface PendingAnonymousWin {
+  readonly id: string;
+  readonly campaign_id: string;
+  readonly prize_id: string;
+  readonly prize_name: string;
+  readonly prize_level: PrizeLevel;
+  readonly prize_image_url?: string;
+  readonly drawn_at: string;
 }
 
 export interface CollectedPrize extends Prize {

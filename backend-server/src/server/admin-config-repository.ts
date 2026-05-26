@@ -2,7 +2,9 @@ import type { RowDataPacket } from 'mysql2/promise';
 import { getMysqlPool } from './database';
 import type { AdminConfigState } from './memory-store';
 import type { MemoryStore } from './memory-store';
-import type { Campaign, FirstRechargePack, PackItem, PityConfig, Prize, ShopItem } from './types';
+import type { Campaign, CEndFeatureToggles, FirstRechargePack, PackItem, PendingAnonymousWin, PityConfig, Prize, ShopItem } from './types';
+
+const C_END_FEATURE_TOGGLES_KEY = 'c_end_feature_toggles';
 
 interface CampaignRow extends RowDataPacket {
   id: string;
@@ -57,6 +59,22 @@ interface FirstRechargePackRow extends RowDataPacket {
   items_json: string | readonly PackItem[];
 }
 
+interface AppSettingRow extends RowDataPacket {
+  setting_key: string;
+  setting_value: string;
+}
+
+interface PendingAnonymousWinRow extends RowDataPacket {
+  id: string;
+  anonymous_token: string;
+  campaign_id: string;
+  prize_id: string;
+  prize_name: string;
+  prize_level: string;
+  prize_image_url: string | null;
+  drawn_at: Date | string;
+}
+
 function toIsoString(value: Date | string | null | undefined): string | undefined {
   if (!value) {
     return undefined;
@@ -98,6 +116,33 @@ function normalizePityConfig(raw: PityConfig | null | undefined): PityConfig | u
     up_level: raw.up_level || undefined,
     up_start_at: raw.up_start_at || undefined,
     up_end_at: raw.up_end_at || undefined,
+  };
+}
+
+function defaultCEndFeatureToggles(): CEndFeatureToggles {
+  return {
+    series: true,
+    inventory: true,
+    exchange: true,
+    rank: true,
+    member: true,
+    shop: true,
+    social: true,
+    puzzle: true,
+  };
+}
+
+function normalizeCEndFeatureToggles(raw: Partial<CEndFeatureToggles> | null | undefined): CEndFeatureToggles {
+  const defaults = defaultCEndFeatureToggles();
+  return {
+    series: raw?.series ?? defaults.series,
+    inventory: raw?.inventory ?? defaults.inventory,
+    exchange: raw?.exchange ?? defaults.exchange,
+    rank: raw?.rank ?? defaults.rank,
+    member: raw?.member ?? defaults.member,
+    shop: raw?.shop ?? defaults.shop,
+    social: raw?.social ?? defaults.social,
+    puzzle: raw?.puzzle ?? defaults.puzzle,
   };
 }
 
@@ -219,6 +264,55 @@ async function loadFirstRechargePacks(): Promise<readonly FirstRechargePack[] | 
   }));
 }
 
+async function loadCEndFeatureToggles(): Promise<CEndFeatureToggles | null> {
+  const pool = getMysqlPool();
+  if (!pool) {
+    return null;
+  }
+
+  const [rows] = await pool.query<AppSettingRow[]>(
+    'SELECT setting_key, setting_value FROM app_settings WHERE setting_key = ? LIMIT 1',
+    [C_END_FEATURE_TOGGLES_KEY],
+  );
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return normalizeCEndFeatureToggles(parseJsonValue<Partial<CEndFeatureToggles>>(rows[0].setting_value, defaultCEndFeatureToggles()));
+}
+
+async function loadPendingAnonymousWins(): Promise<Readonly<Record<string, readonly PendingAnonymousWin[]>>> {
+  const pool = getMysqlPool();
+  if (!pool) {
+    return {};
+  }
+
+  const [rows] = await pool.query<PendingAnonymousWinRow[]>(`
+    SELECT id, anonymous_token, campaign_id, prize_id, prize_name, prize_level, prize_image_url, drawn_at
+    FROM pending_anonymous_wins
+    ORDER BY drawn_at ASC, id ASC
+  `);
+
+  const entriesByToken: Record<string, PendingAnonymousWin[]> = {};
+  for (const row of rows) {
+    if (!entriesByToken[row.anonymous_token]) {
+      entriesByToken[row.anonymous_token] = [];
+    }
+    entriesByToken[row.anonymous_token].push({
+      id: row.id,
+      campaign_id: row.campaign_id,
+      prize_id: row.prize_id,
+      prize_name: row.prize_name,
+      prize_level: row.prize_level as PendingAnonymousWin['prize_level'],
+      prize_image_url: row.prize_image_url || undefined,
+      drawn_at: new Date(row.drawn_at).toISOString(),
+    });
+  }
+
+  return entriesByToken;
+}
+
 async function bootstrapIfEmpty(store: MemoryStore): Promise<void> {
   const pool = getMysqlPool();
   if (!pool) {
@@ -249,6 +343,11 @@ async function bootstrapIfEmpty(store: MemoryStore): Promise<void> {
       await upsertFirstRechargePack(pack);
     }
   }
+
+  const [settingRows] = await pool.query<RowDataPacket[]>('SELECT setting_key FROM app_settings WHERE setting_key = ? LIMIT 1', [C_END_FEATURE_TOGGLES_KEY]);
+  if (settingRows.length === 0) {
+    await upsertCEndFeatureToggles(state.cEndFeatureToggles);
+  }
 }
 
 export async function syncAdminConfigWithMysql(store: MemoryStore): Promise<void> {
@@ -259,10 +358,12 @@ export async function syncAdminConfigWithMysql(store: MemoryStore): Promise<void
 
   await bootstrapIfEmpty(store);
 
-  const [campaignState, shopItems, firstRechargePacks] = await Promise.all([
+  const [campaignState, shopItems, firstRechargePacks, cEndFeatureToggles, pendingAnonymousWins] = await Promise.all([
     loadCampaignState(),
     loadShopItems(),
     loadFirstRechargePacks(),
+    loadCEndFeatureToggles(),
+    loadPendingAnonymousWins(),
   ]);
 
   store.hydrateAdminConfigState({
@@ -270,7 +371,68 @@ export async function syncAdminConfigWithMysql(store: MemoryStore): Promise<void
     prizesByCampaign: campaignState?.prizesByCampaign,
     shopItems: shopItems ?? undefined,
     firstRechargePacks: firstRechargePacks ?? undefined,
+    cEndFeatureToggles: cEndFeatureToggles ?? undefined,
   });
+  store.hydratePendingAnonymousWins(pendingAnonymousWins);
+}
+
+export async function upsertCEndFeatureToggles(toggles: CEndFeatureToggles): Promise<void> {
+  const pool = getMysqlPool();
+  if (!pool) {
+    return;
+  }
+
+  await pool.query(
+    `INSERT INTO app_settings (setting_key, setting_value, created_at, updated_at)
+     VALUES (?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())
+     ON DUPLICATE KEY UPDATE
+       setting_value = VALUES(setting_value),
+       updated_at = UTC_TIMESTAMP()`,
+    [C_END_FEATURE_TOGGLES_KEY, JSON.stringify(normalizeCEndFeatureToggles(toggles))],
+  );
+}
+
+export async function replacePendingAnonymousWins(anonymousToken: string, wins: readonly PendingAnonymousWin[]): Promise<void> {
+  const pool = getMysqlPool();
+  if (!pool || !anonymousToken.trim()) {
+    return;
+  }
+
+  const connection = await pool.getConnection();
+  try {
+    await connection.beginTransaction();
+    await connection.query('DELETE FROM pending_anonymous_wins WHERE anonymous_token = ?', [anonymousToken]);
+    for (const win of wins) {
+      await connection.query(
+        `INSERT INTO pending_anonymous_wins (id, anonymous_token, campaign_id, prize_id, prize_name, prize_level, prize_image_url, drawn_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())`,
+        [
+          win.id,
+          anonymousToken,
+          win.campaign_id,
+          win.prize_id,
+          win.prize_name,
+          win.prize_level,
+          win.prize_image_url ?? null,
+          win.drawn_at.slice(0, 19).replace('T', ' '),
+        ],
+      );
+    }
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+export async function deletePendingAnonymousWins(anonymousToken: string): Promise<void> {
+  const pool = getMysqlPool();
+  if (!pool || !anonymousToken.trim()) {
+    return;
+  }
+  await pool.query('DELETE FROM pending_anonymous_wins WHERE anonymous_token = ?', [anonymousToken]);
 }
 
 export async function upsertCampaign(campaign: Campaign): Promise<void> {

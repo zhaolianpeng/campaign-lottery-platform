@@ -1,10 +1,13 @@
 import { z } from 'zod';
-import { bearerToken, corsHeaders, fail, ok } from '@/server/api-response';
+import { anonymousDrawToken, bearerToken, corsHeaders, fail, ok } from '@/server/api-response';
 import {
+  deletePendingAnonymousWins,
   deleteCampaignConfig,
   deleteFirstRechargePackConfig,
   deletePrizeConfig,
   deleteShopItemConfig,
+  replacePendingAnonymousWins,
+  upsertCEndFeatureToggles,
   upsertCampaign,
   upsertFirstRechargePack,
   upsertPrize,
@@ -239,6 +242,17 @@ const pointsAdjustSchema = z.object({
   remark: z.string().max(255).optional().default(''),
 });
 
+const cEndFeatureTogglesSchema = z.object({
+  series: z.boolean(),
+  inventory: z.boolean(),
+  exchange: z.boolean(),
+  rank: z.boolean(),
+  member: z.boolean(),
+  shop: z.boolean(),
+  social: z.boolean(),
+  puzzle: z.boolean(),
+});
+
 type RouteContext = {
   readonly params: { readonly path?: readonly string[] } | Promise<{ readonly path?: readonly string[] }>;
 };
@@ -275,6 +289,7 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
           provider: config.sms.provider || 'mock',
           mock_enabled: config.sms.provider.toLowerCase() === 'mock',
         },
+        c_end_features: service.cEndFeatureToggles(),
       });
     }
     if (path.join('/') === 'campaigns') {
@@ -328,6 +343,9 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
     }
     if (path.join('/') === 'admin/campaigns') {
       return ok('admin campaigns', service.adminCampaigns(token));
+    }
+    if (path.join('/') === 'admin/feature-toggles') {
+      return ok('admin feature toggles', service.adminCEndFeatureToggles(token));
     }
     if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path.length === 3) {
       return ok('admin campaign', service.adminCampaigns(token).find((campaign) => campaign.id === path[2]) ?? null);
@@ -461,10 +479,16 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     const path = await segments(context);
     const service = await getService();
     const token = bearerToken(request);
+    const guestDrawToken = anonymousDrawToken(request);
     const body = await readJson(request);
 
     if (path.join('/') === 'auth/guest-login') {
-      return ok('guest login succeeded', service.guestLogin(guestLoginSchema.parse(body).nickname));
+      const result = service.guestLogin(guestLoginSchema.parse(body).nickname);
+      const claimedPendingDraws = service.claimAnonymousWins(guestDrawToken, result.user.id);
+      if (claimedPendingDraws > 0) {
+        await deletePendingAnonymousWins(guestDrawToken);
+      }
+      return ok('guest login succeeded', { ...result, claimed_pending_draws: claimedPendingDraws });
     }
     if (path.join('/') === 'auth/phone-login') {
       const config = getAppConfig();
@@ -472,7 +496,12 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
         throw phoneVerificationRequired;
       }
       const phoneSchema = z.object({ phone: z.string().regex(/^1[3-9]\d{9}$/) });
-      return ok('phone login succeeded', service.phoneLogin(phoneSchema.parse(body).phone));
+      const result = service.phoneLogin(phoneSchema.parse(body).phone);
+      const claimedPendingDraws = service.claimAnonymousWins(guestDrawToken, result.user.id);
+      if (claimedPendingDraws > 0) {
+        await deletePendingAnonymousWins(guestDrawToken);
+      }
+      return ok('phone login succeeded', { ...result, claimed_pending_draws: claimedPendingDraws });
     }
     if (path.join('/') === 'auth/phone/code') {
       const input = phoneCodeSchema.parse(body);
@@ -480,14 +509,23 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     }
     if (path.join('/') === 'auth/phone/verify') {
       const input = phoneVerifySchema.parse(body);
-      return ok('phone verified', service.verifyPhoneCode(input.phone, input.code, input.scene));
+      const result = service.verifyPhoneCode(input.phone, input.code, input.scene);
+      const claimedPendingDraws = service.claimAnonymousWins(guestDrawToken, result.user.id);
+      if (claimedPendingDraws > 0) {
+        await deletePendingAnonymousWins(guestDrawToken);
+      }
+      return ok('phone verified', { ...result, claimed_pending_draws: claimedPendingDraws });
     }
     if (path.join('/') === 'auth/logout') {
       service.logout(token);
       return ok('logged out', null);
     }
     if (path.join('/') === 'lottery/draw' || path.join('/') === 'blindbox/draw') {
-      return ok('blind box draw completed', service.blindBoxDraw(token, drawSchema.parse(body)));
+      const result = service.blindBoxDraw(token, drawSchema.parse(body), guestDrawToken);
+      if (result.anonymous_draw_token) {
+        await replacePendingAnonymousWins(result.anonymous_draw_token, service.pendingAnonymousWins(result.anonymous_draw_token));
+      }
+      return ok('blind box draw completed', result);
     }
     if (path.join('/') === 'blindbox/exchange-offers') {
       return ok('exchange offer created', service.createExchangeOffer(token, exchangeOfferSchema.parse(body)), 201);
@@ -631,7 +669,11 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     if (path.join('/') === 'auth/wechat/login') {
       const input = wechatCodeSchema.parse(body);
       const result = await service.wechatLogin(input.code);
-      return ok('wechat login succeeded', result);
+      const claimedPendingDraws = service.claimAnonymousWins(guestDrawToken, result.user_id);
+      if (claimedPendingDraws > 0) {
+        await deletePendingAnonymousWins(guestDrawToken);
+      }
+      return ok('wechat login succeeded', { ...result, claimed_pending_draws: claimedPendingDraws });
     }
     if (path.join('/') === 'auth/wechat/phone') {
       const input = wechatPhoneSchema.parse(body);
@@ -677,6 +719,11 @@ export async function PUT(request: Request, context: RouteContext): Promise<Resp
       const pack = service.updateFirstRechargePack(token, path[3], firstRechargePackMutationSchema.parse(body));
       await upsertFirstRechargePack(pack);
       return ok('first recharge pack updated', pack);
+    }
+    if (path.join('/') === 'admin/feature-toggles') {
+      const toggles = service.updateCEndFeatureToggles(token, cEndFeatureTogglesSchema.parse(body));
+      await upsertCEndFeatureToggles(toggles);
+      return ok('admin feature toggles updated', toggles);
     }
 
     throw notFound;

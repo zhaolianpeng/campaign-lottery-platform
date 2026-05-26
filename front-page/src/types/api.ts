@@ -5,6 +5,29 @@ export type MemberLevel = 'normal' | 'silver' | 'gold' | 'diamond';
 export type ExchangeOfferStatus = 'pending' | 'matched' | 'completed' | 'cancelled';
 export type UserStatus = 'pending_phone' | 'active' | 'frozen' | 'disabled' | 'cancelled';
 export type RegisterSource = 'wechat' | 'mobile' | 'guest' | 'admin_import';
+export type TabKey = 'series' | 'inventory' | 'exchange' | 'rank' | 'member' | 'shop' | 'social' | 'puzzle';
+
+export interface CEndFeatureToggles {
+  readonly series: boolean;
+  readonly inventory: boolean;
+  readonly exchange: boolean;
+  readonly rank: boolean;
+  readonly member: boolean;
+  readonly shop: boolean;
+  readonly social: boolean;
+  readonly puzzle: boolean;
+}
+
+export interface PublicConfig {
+  readonly wechat?: {
+    readonly quick_login_enabled?: boolean;
+  };
+  readonly sms?: {
+    readonly provider: string;
+    readonly mock_enabled: boolean;
+  };
+  readonly c_end_features?: CEndFeatureToggles;
+}
 
 export interface User {
   readonly id: string;
@@ -216,6 +239,9 @@ export interface BlindBoxDrawResult {
   readonly draws: readonly SingleDrawResult[];
   readonly remaining_chances: number;
   readonly pity_status?: PityStatus;
+  readonly requires_login?: boolean;
+  readonly anonymous_draw_token?: string;
+  readonly pending_claim_count?: number;
 }
 
 export interface UserInventory {

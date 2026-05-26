@@ -12,7 +12,7 @@ export function corsHeaders(): HeadersInit {
   return {
     'Access-Control-Allow-Origin': getAppConfig().server.corsAllowOrigin,
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Anonymous-Draw-Token',
   };
 }
 
@@ -44,4 +44,8 @@ export function bearerToken(request: Request): string {
     return '';
   }
   return auth.slice(7).trim();
+}
+
+export function anonymousDrawToken(request: Request): string {
+  return request.headers.get('x-anonymous-draw-token')?.trim() ?? '';
 }

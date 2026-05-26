@@ -26,6 +26,7 @@ import type {
   BattlePassInfo,
   Campaign,
   CampaignPublishValidation,
+  CEndFeatureToggles,
   DrawRecord,
   FirstRechargePack,
   FirstRechargePackMutation,
@@ -34,6 +35,7 @@ import type {
   Prize,
   ShopItem,
   ShopItemMutation,
+  TabKey,
   UserStatus,
 } from '@/types/api';
 
@@ -52,7 +54,7 @@ const loginSchema = z.object({
 });
 
 type LoginValues = z.infer<typeof loginSchema>;
-type AdminTab = 'overview' | 'users' | 'campaigns' | 'prizes' | 'pity' | 'delivery' | 'records' | 'monthcard' | 'shop';
+type AdminTab = 'overview' | 'users' | 'campaigns' | 'prizes' | 'pity' | 'delivery' | 'records' | 'monthcard' | 'shop' | 'features';
 
 interface AdminLoginPayload {
   readonly token: string;
@@ -70,11 +72,23 @@ const adminTabs: readonly AdminTabItem[] = [
   { key: 'campaigns', label: '盲盒', icon: Package },
   { key: 'prizes', label: '奖品', icon: Gift },
   { key: 'pity', label: '概率', icon: Settings },
+  { key: 'features', label: '入口', icon: Settings },
   { key: 'delivery', label: '发奖', icon: Truck },
   { key: 'records', label: '记录', icon: ClipboardList },
   { key: 'monthcard', label: '月卡', icon: Boxes },
   { key: 'shop', label: '商店', icon: ShoppingBag },
 ];
+
+const cEndFeatureLabels: Readonly<Record<TabKey, string>> = {
+  series: '系列',
+  inventory: '我的',
+  exchange: '交换',
+  rank: '排行',
+  member: '会员',
+  shop: '商店',
+  social: '社交',
+  puzzle: '拼图',
+};
 
 function statusClass(status: string): string {
   if (status === 'online' || status === 'win' || status === 'fulfilled' || status === 'active') {
@@ -434,6 +448,12 @@ export function AdminApp(): React.ReactNode {
     enabled: Boolean(token) && tab === 'shop',
   });
 
+  const featureTogglesQuery = useQuery({
+    queryKey: ['admin-feature-toggles', token],
+    queryFn: () => apiRequest<CEndFeatureToggles>('/api/v1/admin/feature-toggles', token),
+    enabled: Boolean(token) && tab === 'features',
+  });
+
   const createCampaignMutation = useMutation({
     mutationFn: (payload: Campaign) =>
       apiRequest('/api/v1/admin/campaigns', token, {
@@ -634,6 +654,17 @@ export function AdminApp(): React.ReactNode {
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-first-recharge', token] });
+    },
+  });
+
+  const updateFeatureTogglesMutation = useMutation({
+    mutationFn: (payload: CEndFeatureToggles) =>
+      apiRequest<CEndFeatureToggles>('/api/v1/admin/feature-toggles', token, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: (payload) => {
+      queryClient.setQueryData(['admin-feature-toggles', token], payload);
     },
   });
 
@@ -1304,6 +1335,53 @@ export function AdminApp(): React.ReactNode {
                 <p className="text-sm leading-6 text-zinc-400">先选择活动，再录入软保底、硬保底、UP 奖品和时间窗口。</p>
               )}
             </div>
+          </section>
+        ) : null}
+
+        {tab === 'features' ? (
+          <section className="space-y-4">
+            <div>
+              <h2 className="text-xl font-black text-white">C 端入口开关</h2>
+              <p className="mt-1 text-sm text-zinc-500">控制用户端底部导航中各个入口是否展示。</p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {Object.entries(cEndFeatureLabels).map(([key, label]) => {
+                const featureKey = key as TabKey;
+                const enabled = featureTogglesQuery.data?.[featureKey] ?? false;
+                return (
+                  <article className="rounded-xl border border-zinc-800 bg-[#1a1a24] p-4" key={featureKey}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="font-semibold text-white">{label}</h3>
+                        <p className="mt-1 text-xs text-zinc-500">{enabled ? '当前入口已开放' : '当前入口已关闭'}</p>
+                      </div>
+                      <span className={`rounded px-2 py-1 text-xs ${enabled ? statusClass('active') : statusClass('disabled')}`}>
+                        {enabled ? '已开启' : '已关闭'}
+                      </span>
+                    </div>
+                    <button
+                      className={`mt-4 w-full rounded-md px-3 py-2 text-sm font-bold text-white disabled:opacity-50 ${enabled ? 'bg-amber-600' : 'bg-emerald-600'}`}
+                      disabled={featureTogglesQuery.isLoading || updateFeatureTogglesMutation.isPending}
+                      onClick={() => {
+                        const current = featureTogglesQuery.data;
+                        if (!current) {
+                          return;
+                        }
+                        updateFeatureTogglesMutation.mutate({
+                          ...current,
+                          [featureKey]: !enabled,
+                        });
+                      }}
+                      type="button"
+                    >
+                      {enabled ? '关闭入口' : '开启入口'}
+                    </button>
+                  </article>
+                );
+              })}
+            </div>
+            {featureTogglesQuery.isLoading ? <EmptyAdmin text="正在加载入口配置" /> : null}
+            {featureTogglesQuery.error ? <EmptyAdmin text={`入口配置加载失败：${featureTogglesQuery.error.message}`} /> : null}
           </section>
         ) : null}
 

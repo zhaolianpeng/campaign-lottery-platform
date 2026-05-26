@@ -18,16 +18,17 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { useMemo, useState, type ComponentType } from 'react';
+import { useEffect, useMemo, useState, type ComponentType } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { apiAssetUrl, apiRequest } from '@/client/api';
 import type {
-  BlindBoxDrawResult,
   ActivityListInfo,
   AssistProgress,
   BattlePassInfo,
+  BlindBoxDrawResult,
   CampaignListItem,
+  CEndFeatureToggles,
   ExchangeOffer,
   FirstRechargePack,
   FlashListInfo,
@@ -36,14 +37,16 @@ import type {
   LeaderboardEntry,
   MonthCardStatus,
   PuzzleInfo,
+  PublicConfig,
   Prize,
   SeriesProgress,
   ShopItem,
+  TabKey,
   TeamInfo,
+  UserAccount,
+  UserFirstRecharge,
   UserInventory,
   UserItem,
-  UserFirstRecharge,
-  UserAccount,
   UserMember,
   UserPointsLog,
 } from '@/types/api';
@@ -59,7 +62,6 @@ const exchangeSchema = z.object({
 
 type LoginFormValues = z.infer<typeof loginSchema>;
 type ExchangeFormValues = z.infer<typeof exchangeSchema>;
-type TabKey = 'series' | 'inventory' | 'exchange' | 'rank' | 'member' | 'shop' | 'social' | 'puzzle';
 
 interface LoginPayload {
   readonly user: {
@@ -69,16 +71,7 @@ interface LoginPayload {
   readonly session: {
     readonly token: string;
   };
-}
-
-interface PublicConfig {
-  readonly wechat?: {
-    readonly quick_login_enabled?: boolean;
-  };
-  readonly sms?: {
-    readonly provider: string;
-    readonly mock_enabled: boolean;
-  };
+  readonly claimed_pending_draws?: number;
 }
 
 interface PhoneCodePayload {
@@ -122,6 +115,36 @@ const tabs: readonly TabItem[] = [
   { key: 'social', label: '社交', icon: Users },
   { key: 'puzzle', label: '拼图', icon: Puzzle },
 ];
+
+const defaultCEndFeatureToggles: CEndFeatureToggles = {
+  series: true,
+  inventory: true,
+  exchange: true,
+  rank: true,
+  member: true,
+  shop: true,
+  social: true,
+  puzzle: true,
+};
+
+function normalizeCEndFeatureToggles(toggles?: Partial<CEndFeatureToggles>): CEndFeatureToggles {
+  return {
+    series: toggles?.series ?? defaultCEndFeatureToggles.series,
+    inventory: toggles?.inventory ?? defaultCEndFeatureToggles.inventory,
+    exchange: toggles?.exchange ?? defaultCEndFeatureToggles.exchange,
+    rank: toggles?.rank ?? defaultCEndFeatureToggles.rank,
+    member: toggles?.member ?? defaultCEndFeatureToggles.member,
+    shop: toggles?.shop ?? defaultCEndFeatureToggles.shop,
+    social: toggles?.social ?? defaultCEndFeatureToggles.social,
+    puzzle: toggles?.puzzle ?? defaultCEndFeatureToggles.puzzle,
+  };
+}
+
+const ANONYMOUS_DRAW_TOKEN_KEY = 'campaign-lottery-anonymous-draw-token';
+
+function anonymousDrawHeaders(token: string): HeadersInit | undefined {
+  return token ? { 'X-Anonymous-Draw-Token': token } : undefined;
+}
 
 const rarityStyles: Record<string, { readonly icon: string; readonly label: string; readonly className: string }> = {
   common: { icon: '□', label: '普通', className: 'text-slate-300' },
@@ -198,6 +221,8 @@ function SkeletonCards(): React.ReactNode {
 export function LotteryApp(): React.ReactNode {
   const [token, setToken] = useState('');
   const [nickname, setNickname] = useState('');
+  const [viewerMode, setViewerMode] = useState(false);
+  const [anonymousDrawToken, setAnonymousDrawToken] = useState('');
   const [tab, setTab] = useState<TabKey>('series');
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null);
   const [showBoxModal, setShowBoxModal] = useState(false);
@@ -213,6 +238,27 @@ export function LotteryApp(): React.ReactNode {
   const [phoneLoginForm, setPhoneLoginForm] = useState<PhoneLoginFormValues>({ phone: '', code: '' });
   const [phoneCodeMessage, setPhoneCodeMessage] = useState('');
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const storedToken = window.localStorage.getItem(ANONYMOUS_DRAW_TOKEN_KEY) ?? '';
+    if (storedToken) {
+      setAnonymousDrawToken(storedToken);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (anonymousDrawToken) {
+      window.localStorage.setItem(ANONYMOUS_DRAW_TOKEN_KEY, anonymousDrawToken);
+      return;
+    }
+    window.localStorage.removeItem(ANONYMOUS_DRAW_TOKEN_KEY);
+  }, [anonymousDrawToken]);
+
   // 在组件挂载时检查微信登录回调
   if (typeof window !== 'undefined' && !token && !wechatLoggingIn) {
     const params = new URLSearchParams(window.location.search);
@@ -222,11 +268,13 @@ export function LotteryApp(): React.ReactNode {
       // 清除 URL 中的 code 参数
       window.history.replaceState({}, '', window.location.pathname);
       apiRequest<{ token: string; user_id: string; nickname: string }>(
-        '/api/v1/auth/wechat/login', '', { method: 'POST', body: JSON.stringify({ code }) }
+        '/api/v1/auth/wechat/login', '', { method: 'POST', body: JSON.stringify({ code }), headers: anonymousDrawHeaders(anonymousDrawToken) }
       )
         .then((data) => {
           setToken(data.token);
           setNickname(data.nickname);
+          setViewerMode(false);
+          setAnonymousDrawToken('');
         })
         .catch((err) => {
           setWechatError(err instanceof Error ? err.message : '微信登录失败');
@@ -250,22 +298,55 @@ export function LotteryApp(): React.ReactNode {
   const publicConfigQuery = useQuery({
     queryKey: ['public-config'],
     queryFn: () => apiRequest<PublicConfig>('/api/v1/config/public', ''),
-    enabled: !token,
+    enabled: true,
   });
 
   const smsProvider = publicConfigQuery.data?.sms?.provider?.toLowerCase();
   const isMockSmsProvider = publicConfigQuery.data?.sms?.mock_enabled ?? (smsProvider === 'mock');
   const isWechatQuickLoginEnabled = publicConfigQuery.data?.wechat?.quick_login_enabled === true;
+  const cEndFeatureToggles = useMemo(
+    () => normalizeCEndFeatureToggles(publicConfigQuery.data?.c_end_features),
+    [publicConfigQuery.data?.c_end_features],
+  );
+  const runtimeFeatureToggles = useMemo<CEndFeatureToggles>(
+    () => (token ? cEndFeatureToggles : { ...cEndFeatureToggles, inventory: false, exchange: false, rank: false, member: false, shop: false, social: false, puzzle: false }),
+    [cEndFeatureToggles, token],
+  );
+  const visibleTabs = useMemo(
+    () => tabs.filter((item) => runtimeFeatureToggles[item.key]),
+    [runtimeFeatureToggles],
+  );
+  const activeTab = visibleTabs.some((item) => item.key === tab) ? tab : visibleTabs[0]?.key;
+
+  useEffect(() => {
+    if (!activeTab || tab === activeTab) {
+      return;
+    }
+    setTab(activeTab);
+  }, [activeTab, tab]);
+
+  useEffect(() => {
+    if (!cEndFeatureToggles.series && selectedCampaignId) {
+      setSelectedCampaignId(null);
+      setLastDraw(null);
+    }
+  }, [cEndFeatureToggles.series, selectedCampaignId]);
 
   const loginMutation = useMutation({
     mutationFn: (values: LoginFormValues) =>
       apiRequest<LoginPayload>('/api/v1/auth/guest-login', '', {
         method: 'POST',
         body: JSON.stringify(values),
+        headers: anonymousDrawHeaders(anonymousDrawToken),
       }),
     onSuccess: (payload) => {
       setToken(payload.session.token);
       setNickname(payload.user.nickname);
+      setViewerMode(false);
+      if (payload.claimed_pending_draws) {
+        window.alert(`已将 ${payload.claimed_pending_draws} 个中奖结果放入你的盲盒。`);
+      }
+      setAnonymousDrawToken('');
     },
   });
 
@@ -291,18 +372,25 @@ export function LotteryApp(): React.ReactNode {
         ? apiRequest<LoginPayload>('/api/v1/auth/phone-login', '', {
             method: 'POST',
             body: JSON.stringify({ phone: values.phone }),
+            headers: anonymousDrawHeaders(anonymousDrawToken),
           })
         : apiRequest<LoginPayload>('/api/v1/auth/phone/verify', '', {
             method: 'POST',
             body: JSON.stringify({ phone: values.phone, code: values.code, scene: 'login' }),
+            headers: anonymousDrawHeaders(anonymousDrawToken),
           }),
     onSuccess: (payload) => {
       setToken(payload.session.token);
       setNickname(payload.user.nickname);
+      setViewerMode(false);
       setShowPhoneLogin(false);
       setPhoneLoginForm({ phone: '', code: '' });
       setPhoneCodeMessage('');
       setWechatError('');
+      if (payload.claimed_pending_draws) {
+        window.alert(`已将 ${payload.claimed_pending_draws} 个中奖结果放入你的盲盒。`);
+      }
+      setAnonymousDrawToken('');
     },
     onError: (error) => {
       setWechatError(error instanceof Error ? error.message : '手机号登录失败');
@@ -310,9 +398,9 @@ export function LotteryApp(): React.ReactNode {
   });
 
   const campaignsQuery = useQuery({
-    queryKey: ['campaigns', token],
-    queryFn: () => apiRequest<CampaignListItem[]>('/api/v1/blindbox/campaigns', token),
-    enabled: Boolean(token),
+    queryKey: ['campaigns', token || 'public'],
+    queryFn: () => apiRequest<CampaignListItem[]>(token ? '/api/v1/blindbox/campaigns' : '/api/v1/campaigns', token),
+    enabled: true,
   });
 
   const memberQuery = useQuery({
@@ -330,103 +418,103 @@ export function LotteryApp(): React.ReactNode {
   const inventoryQuery = useQuery({
     queryKey: ['inventory', token],
     queryFn: () => apiRequest<UserInventory[]>('/api/v1/blindbox/inventory', token),
-    enabled: Boolean(token) && (tab === 'inventory' || tab === 'social' || showExchangeModal),
+    enabled: Boolean(token) && (activeTab === 'inventory' || activeTab === 'social' || showExchangeModal),
   });
 
   const exchangeQuery = useQuery({
     queryKey: ['exchange-offers', token],
     queryFn: () => apiRequest<ExchangeOffer[]>('/api/v1/blindbox/exchange-offers', token),
-    enabled: Boolean(token) && tab === 'exchange',
+    enabled: Boolean(token) && activeTab === 'exchange',
   });
 
   const leaderboardQuery = useQuery({
     queryKey: ['leaderboard', token],
     queryFn: () => apiRequest<LeaderboardEntry[]>('/api/v1/blindbox/leaderboard?limit=20', token),
-    enabled: Boolean(token) && tab === 'rank',
+    enabled: Boolean(token) && activeTab === 'rank',
   });
 
   const pointsLogQuery = useQuery({
     queryKey: ['points-log', token],
     queryFn: () => apiRequest<UserPointsLog[]>('/api/v1/blindbox/points-log', token),
-    enabled: Boolean(token) && tab === 'member',
+    enabled: Boolean(token) && activeTab === 'member',
   });
 
   const shopQuery = useQuery({
     queryKey: ['shop-items', token],
     queryFn: () => apiRequest<ShopItem[]>('/api/v1/shop/items', token),
-    enabled: Boolean(token) && tab === 'shop',
+    enabled: Boolean(token) && activeTab === 'shop',
   });
 
   const userItemsQuery = useQuery({
     queryKey: ['user-items', token],
     queryFn: () => apiRequest<UserItem[]>('/api/v1/shop/items/inventory', token),
-    enabled: Boolean(token) && tab === 'shop',
+    enabled: Boolean(token) && activeTab === 'shop',
   });
 
   const firstRechargePacksQuery = useQuery({
     queryKey: ['first-recharge-packs', token],
     queryFn: () => apiRequest<FirstRechargePack[]>('/api/v1/first-recharge/packs', token),
-    enabled: Boolean(token) && tab === 'shop',
+    enabled: Boolean(token) && activeTab === 'shop',
   });
 
   const firstRechargeStatusQuery = useQuery({
     queryKey: ['first-recharge-status', token],
     queryFn: () => apiRequest<UserFirstRecharge>('/api/v1/first-recharge/status', token),
-    enabled: Boolean(token) && tab === 'shop',
+    enabled: Boolean(token) && activeTab === 'shop',
   });
 
   const monthCardQuery = useQuery({
     queryKey: ['month-card', token],
     queryFn: () => apiRequest<MonthCardStatus>('/api/v1/month-card/status', token),
-    enabled: Boolean(token) && tab === 'member',
+    enabled: Boolean(token) && activeTab === 'member',
   });
 
   const battlePassQuery = useQuery({
     queryKey: ['battle-pass', token],
     queryFn: () => apiRequest<BattlePassInfo>('/api/v1/battle-pass/info', token),
-    enabled: Boolean(token) && tab === 'member',
+    enabled: Boolean(token) && activeTab === 'member',
   });
 
   const inviteStatsQuery = useQuery({
     queryKey: ['invite-stats', token],
     queryFn: () => apiRequest<InviteStats>('/api/v1/share/invite-stats', token),
-    enabled: Boolean(token) && tab === 'social',
+    enabled: Boolean(token) && activeTab === 'social',
   });
 
   const assistProgressQuery = useQuery({
     queryKey: ['assist-progress', token],
     queryFn: () => apiRequest<Record<string, AssistProgress>>('/api/v1/share/assist-progress', token),
-    enabled: Boolean(token) && tab === 'social',
+    enabled: Boolean(token) && activeTab === 'social',
   });
 
   const teamQuery = useQuery({
     queryKey: ['team', token],
     queryFn: () => apiRequest<TeamInfo>('/api/v1/team/my', token),
-    enabled: Boolean(token) && tab === 'social',
+    enabled: Boolean(token) && activeTab === 'social',
   });
 
   const giftsQuery = useQuery({
     queryKey: ['incoming-gifts', token],
     queryFn: () => apiRequest<GiftRecord[]>('/api/v1/share/gifts/incoming', token),
-    enabled: Boolean(token) && tab === 'social',
+    enabled: Boolean(token) && activeTab === 'social',
   });
 
   const puzzleQuery = useQuery({
     queryKey: ['puzzles', token],
     queryFn: () => apiRequest<PuzzleInfo[]>('/api/v1/puzzle/my', token),
-    enabled: Boolean(token) && tab === 'puzzle',
+    enabled: Boolean(token) && activeTab === 'puzzle',
   });
 
   const flashQuery = useQuery({
     queryKey: ['flash-list', token],
     queryFn: () => apiRequest<FlashListInfo[]>('/api/v1/flash/list', token),
-    enabled: Boolean(token) && tab === 'puzzle',
+    enabled: Boolean(token) && activeTab === 'puzzle',
   });
 
   const activitiesQuery = useQuery({
     queryKey: ['activities', token],
     queryFn: () => apiRequest<ActivityListInfo[]>('/api/v1/activities', token),
-    enabled: Boolean(token) && tab === 'series',
+    enabled: Boolean(token) && activeTab === 'series',
   });
 
   const selectedCampaign = campaignsQuery.data?.find((item) => item.campaign.id === selectedCampaignId);
@@ -487,16 +575,22 @@ export function LotteryApp(): React.ReactNode {
       apiRequest<BlindBoxDrawResult>('/api/v1/blindbox/draw', token, {
         method: 'POST',
         body: JSON.stringify({ campaign_id: selectedCampaignId, draw_count: drawCount }),
+        headers: anonymousDrawHeaders(anonymousDrawToken),
       }),
     onSuccess: (payload) => {
+      if (payload.anonymous_draw_token) {
+        setAnonymousDrawToken(payload.anonymous_draw_token);
+      }
       window.setTimeout(() => {
         setLastDraw(payload);
         setBoxAnimating(false);
       }, 900);
-      void queryClient.invalidateQueries({ queryKey: ['member', token] });
-      void queryClient.invalidateQueries({ queryKey: ['campaigns', token] });
-      void queryClient.invalidateQueries({ queryKey: ['inventory', token] });
-      void queryClient.invalidateQueries({ queryKey: ['series-progress', token, selectedCampaignId] });
+      if (token) {
+        void queryClient.invalidateQueries({ queryKey: ['member', token] });
+        void queryClient.invalidateQueries({ queryKey: ['inventory', token] });
+        void queryClient.invalidateQueries({ queryKey: ['series-progress', token, selectedCampaignId] });
+      }
+      void queryClient.invalidateQueries({ queryKey: ['campaigns', token || 'public'] });
     },
     onError: () => {
       setBoxAnimating(false);
@@ -700,7 +794,7 @@ export function LotteryApp(): React.ReactNode {
     phoneLoginMutation.mutate({ phone, code });
   }
 
-  if (!token) {
+  if (!token && !viewerMode) {
     return (
       <main className="min-h-screen bg-[linear-gradient(160deg,#0d0f1a_0%,#1a1040_38%,#0f2027_100%)] px-4 py-8 text-violet-50">
         <section className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-[480px] items-center">
@@ -733,6 +827,19 @@ export function LotteryApp(): React.ReactNode {
                 </p>
               ) : null}
             </form>
+            <button
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-3 font-medium text-white hover:bg-white/[0.10]"
+              onClick={() => setViewerMode(true)}
+              type="button"
+            >
+              <Gift size={18} />
+              先试玩抽盒
+            </button>
+            {anonymousDrawToken ? (
+              <p className="mt-3 rounded-xl border border-amber-300/20 bg-amber-500/15 px-4 py-3 text-sm text-amber-100">
+                你有未领取的中奖结果，登录后会自动放入盲盒仓库。
+              </p>
+            ) : null}
 
             {/* 微信登录分隔线 */}
             <div className="mt-5 flex items-center gap-3 text-xs text-violet-100/40">
@@ -880,24 +987,36 @@ export function LotteryApp(): React.ReactNode {
           <div className="min-w-0 flex-1">
             <div className="text-lg font-black tracking-tight text-white">BOX·MAGIC</div>
             <div className="truncate text-xs text-violet-100/60">
-              {accountQuery.data?.user.nickname || nickname ? `用户 ${accountQuery.data?.user.nickname ?? nickname}` : '盲盒收藏家'}
+              {accountQuery.data?.user.nickname || nickname ? `用户 ${accountQuery.data?.user.nickname ?? nickname}` : token ? '盲盒收藏家' : '试玩中 · 登录后可领取中奖结果'}
               {accountQuery.data?.user.mobile ? ` · ${accountQuery.data.user.mobile.replace(/^(\d{3})\d{4}(\d{4})$/, '$1****$2')}` : ''}
             </div>
           </div>
-          <span className="rounded-full bg-[linear-gradient(135deg,#fbbf24,#f59e0b)] px-3 py-1 text-xs font-black text-slate-950">
-            {memberQuery.data?.points ?? 0}
-          </span>
-          <button
-            className="rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-            disabled={checkInMutation.isPending}
-            onClick={() => checkInMutation.mutate()}
-            type="button"
-          >
-            签到
-          </button>
+          {token ? (
+            <>
+              <span className="rounded-full bg-[linear-gradient(135deg,#fbbf24,#f59e0b)] px-3 py-1 text-xs font-black text-slate-950">
+                {memberQuery.data?.points ?? 0}
+              </span>
+              <button
+                className="rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                disabled={checkInMutation.isPending}
+                onClick={() => checkInMutation.mutate()}
+                type="button"
+              >
+                签到
+              </button>
+            </>
+          ) : (
+            <button
+              className="rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white"
+              onClick={() => setViewerMode(false)}
+              type="button"
+            >
+              登录领取
+            </button>
+          )}
         </header>
 
-        {accountQuery.data && accountQuery.data.status !== 'active' ? (
+        {token && accountQuery.data && accountQuery.data.status !== 'active' ? (
           <div className="mb-3 rounded-2xl border border-amber-300/20 bg-amber-500/15 px-4 py-3 text-sm text-amber-50">
             当前账号状态：{accountQuery.data.status}。
             {accountQuery.data.status === 'pending_phone'
@@ -1021,7 +1140,11 @@ export function LotteryApp(): React.ReactNode {
           </section>
         ) : (
           <>
-            {tab === 'series' ? (
+            {!activeTab ? (
+              <EmptyState icon="○" title="当前入口已关闭" description="管理员暂未开放任何 C 端功能入口。" />
+            ) : null}
+
+            {activeTab === 'series' ? (
               <section className="space-y-3">
                 {(activitiesQuery.data ?? []).map((item) => (
                   <article className="rounded-3xl border border-pink-300/30 bg-pink-400/10 p-4" key={item.activity.id}>
@@ -1065,7 +1188,7 @@ export function LotteryApp(): React.ReactNode {
               </section>
             ) : null}
 
-            {tab === 'inventory' ? (
+            {activeTab === 'inventory' ? (
               <section className="space-y-4">
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-black text-white">我的收藏</h2>
@@ -1101,7 +1224,7 @@ export function LotteryApp(): React.ReactNode {
               </section>
             ) : null}
 
-            {tab === 'exchange' ? (
+            {activeTab === 'exchange' ? (
               <section className="space-y-3">
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-black text-white">交换市场</h2>
@@ -1140,7 +1263,7 @@ export function LotteryApp(): React.ReactNode {
               </section>
             ) : null}
 
-            {tab === 'rank' ? (
+            {activeTab === 'rank' ? (
               <section className="space-y-3">
                 <h2 className="text-lg font-black text-white">收集排行榜</h2>
                 {(leaderboardQuery.data ?? []).map((entry, index) => (
@@ -1165,7 +1288,7 @@ export function LotteryApp(): React.ReactNode {
               </section>
             ) : null}
 
-            {tab === 'member' ? (
+            {activeTab === 'member' ? (
               <section className="space-y-4">
                 <div className="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.06] p-6 text-center">
                   <Trophy className="mx-auto text-amber-300" size={48} />
@@ -1222,7 +1345,7 @@ export function LotteryApp(): React.ReactNode {
               </section>
             ) : null}
 
-            {tab === 'shop' ? (
+            {activeTab === 'shop' ? (
               <section className="space-y-4">
                 <h2 className="text-lg font-black text-white">商店</h2>
                 <div className="rounded-3xl border border-amber-300/30 bg-amber-400/10 p-4">
@@ -1280,7 +1403,7 @@ export function LotteryApp(): React.ReactNode {
               </section>
             ) : null}
 
-            {tab === 'social' ? (
+            {activeTab === 'social' ? (
               <section className="space-y-4">
                 <h2 className="text-lg font-black text-white">社交中心</h2>
                 <div className="rounded-3xl border border-white/10 bg-white/[0.06] p-4">
@@ -1328,7 +1451,7 @@ export function LotteryApp(): React.ReactNode {
               </section>
             ) : null}
 
-            {tab === 'puzzle' ? (
+            {activeTab === 'puzzle' ? (
               <section className="space-y-4">
                 <h2 className="text-lg font-black text-white">碎片拼图</h2>
                 {(puzzleQuery.data ?? []).map((item) => (
@@ -1363,10 +1486,13 @@ export function LotteryApp(): React.ReactNode {
       </div>
 
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#0d0f1a]/95 px-1 pb-[calc(6px+env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl">
-        <div className="mx-auto grid max-w-[520px] grid-cols-8 gap-0.5">
-          {tabs.map((item) => {
+        <div
+          className={`mx-auto grid max-w-[520px] gap-0.5 ${visibleTabs.length > 0 ? '' : 'grid-cols-1'}`}
+          style={visibleTabs.length > 0 ? { gridTemplateColumns: `repeat(${visibleTabs.length}, minmax(0, 1fr))` } : undefined}
+        >
+          {visibleTabs.map((item) => {
             const Icon = item.icon;
-            const active = tab === item.key && !selectedCampaignId;
+            const active = activeTab === item.key && !selectedCampaignId;
             return (
               <button
                 className={`flex flex-col items-center gap-1 rounded-xl px-1 py-1.5 text-[10px] transition ${
@@ -1405,7 +1531,10 @@ export function LotteryApp(): React.ReactNode {
                 <p className="mt-6 text-sm text-violet-100/65">正在打开盲盒...</p>
               </div>
             ) : lastDraw ? (
-              <DrawResultView draw={lastDraw} onClose={() => setShowBoxModal(false)} onShare={() => shareMutation.mutate()} />
+              <DrawResultView draw={lastDraw} onClose={() => setShowBoxModal(false)} onRequireLogin={() => {
+                setShowBoxModal(false);
+                setViewerMode(false);
+              }} onShare={() => shareMutation.mutate()} />
             ) : drawMutation.error ? (
               <div className="py-8">
                 <p className="text-sm text-red-100">{drawMutation.error.message}</p>
@@ -1477,10 +1606,12 @@ export function LotteryApp(): React.ReactNode {
 function DrawResultView({
   draw,
   onClose,
+  onRequireLogin,
   onShare,
 }: {
   readonly draw: BlindBoxDrawResult;
   readonly onClose: () => void;
+  readonly onRequireLogin: () => void;
   readonly onShare: () => void;
 }): React.ReactNode {
   const strongest = [...draw.draws].sort((left, right) => levelScore(right.prize_level) - levelScore(left.prize_level))[0];
@@ -1521,17 +1652,32 @@ function DrawResultView({
           ))}
         </div>
       ) : null}
+      {draw.requires_login ? (
+        <p className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-500/15 px-4 py-3 text-sm text-amber-100">
+          已为你保留中奖结果，登录后会自动放入你的盲盒仓库。
+        </p>
+      ) : null}
       <div className="mt-5 grid grid-cols-2 gap-3">
         <button className="rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-bold" onClick={onClose} type="button">
           再来一盒
         </button>
-        <button
-          className="rounded-2xl bg-[linear-gradient(135deg,#f472b6,#a78bfa)] px-4 py-3 text-sm font-bold text-white"
-          onClick={onShare}
-          type="button"
-        >
-          炫耀
-        </button>
+        {draw.requires_login ? (
+          <button
+            className="rounded-2xl bg-[linear-gradient(135deg,#f59e0b,#f472b6)] px-4 py-3 text-sm font-bold text-white"
+            onClick={onRequireLogin}
+            type="button"
+          >
+            登录领取
+          </button>
+        ) : (
+          <button
+            className="rounded-2xl bg-[linear-gradient(135deg,#f472b6,#a78bfa)] px-4 py-3 text-sm font-bold text-white"
+            onClick={onShare}
+            type="button"
+          >
+            炫耀
+          </button>
+        )}
       </div>
     </div>
   );
