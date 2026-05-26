@@ -7,9 +7,14 @@ import {
   insufficientPoints,
   noDrawChances,
   notFound,
+  phoneAlreadyBound,
+  phoneCodeInvalid,
   unauthorized,
+  userStatusForbidden,
 } from './errors';
 import type {
+  AdminUserDetail,
+  AdminUserListResult,
   AdminOverview,
   Activity,
   ActivityListInfo,
@@ -81,17 +86,44 @@ import type {
   TeamMember,
   TeamReward,
   User,
+  UserAccount,
   UserCard,
   UserFirstRecharge,
   UserInventory,
   UserItem,
   UserMember,
+  UserLoginLog,
   UserPointsLog,
+  UserProfile,
+  UserProfileMutation,
+  UserStatus,
+  UserStatusLog,
   UseItemRequest,
   WechatUser,
 } from './types';
 
 const POINTS_PER_DRAW = 100;
+const PHONE_CODE_TTL_MS = 5 * 60 * 1000;
+
+interface PhoneVerificationCode {
+  readonly id: number;
+  readonly phone: string;
+  readonly scene: string;
+  readonly code: string;
+  readonly expires_at: string;
+  readonly created_at: string;
+  readonly verified_at?: string;
+  readonly attempt_count: number;
+}
+
+interface UserWallet {
+  readonly user_id: string;
+  readonly cash_balance: number;
+  readonly frozen_balance: number;
+  readonly currency: string;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
 
 const cardConfigs: Record<CardType, { readonly price: number; readonly durationDays: number; readonly freeDraws: number; readonly discount: number }> = {
   weekly: { price: 990, durationDays: 7, freeDraws: 1, discount: 0.9 },
@@ -182,6 +214,7 @@ function memberLevel(totalSpent: number): UserMember['level'] {
 
 export class MemoryStore {
   private readonly users = new Map<string, User>();
+  private readonly userProfiles = new Map<string, UserProfile>();
   private readonly sessions = new Map<string, Session>();
   private readonly adminSessions = new Map<string, string>();
   private readonly campaignsById = new Map<string, Campaign>();
@@ -192,6 +225,10 @@ export class MemoryStore {
   private readonly exchangeOffers: ExchangeOffer[] = [];
   private readonly members = new Map<string, UserMember>();
   private readonly pointsLogs: UserPointsLog[] = [];
+  private readonly wallets = new Map<string, UserWallet>();
+  private readonly loginLogs: UserLoginLog[] = [];
+  private readonly statusLogs: UserStatusLog[] = [];
+  private readonly phoneCodes: PhoneVerificationCode[] = [];
   private readonly fulfillmentTaskItems: FulfillmentTask[] = [];
   private readonly checkInDates = new Map<string, string>();
   private readonly checkInStreaks = new Map<string, number>();
@@ -236,16 +273,27 @@ export class MemoryStore {
     const user: User = {
       id: randomId('usr'),
       nickname: nickname.trim() || `Guest${Math.floor(Math.random() * 10000)}`,
+      status: 'active',
+      register_source: 'guest',
       created_at: createdAt,
+      updated_at: createdAt,
+      last_login_at: createdAt,
     };
     const session: Session = {
       token: randomId('utk'),
       user_id: user.id,
       expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      session_type: 'normal',
     };
 
     this.users.set(user.id, user);
     this.sessions.set(session.token, session);
+    this.userProfiles.set(user.id, {
+      user_id: user.id,
+      gender: 'unknown',
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
     this.members.set(user.id, {
       user_id: user.id,
       level: 'normal',
@@ -255,26 +303,45 @@ export class MemoryStore {
       created_at: createdAt,
       updated_at: createdAt,
     });
+    this.wallets.set(user.id, {
+      user_id: user.id,
+      cash_balance: 0,
+      frozen_balance: 0,
+      currency: 'CNY',
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
     this.logPoints(user.id, 1000, 1000, 'welcome', '新用户注册赠送');
+    this.logLogin(user.id, 'guest', user.nickname, true);
 
     return { user, session };
   }
 
   public createWechatUser(openid: string, phone: string, nickname: string, avatar: string): { readonly user: User; readonly session: Session; readonly wechatUser: WechatUser } {
     const createdAt = nowISO();
+    const mobile = phone || undefined;
     const user: User = {
       id: randomId('usr'),
       nickname: nickname.trim() || `WeChat${Math.floor(Math.random() * 10000)}`,
+      mobile,
+      phone: mobile,
+      avatar_url: avatar || undefined,
+      status: mobile ? 'active' : 'pending_phone',
+      register_source: 'wechat',
+      mobile_verified_at: mobile ? createdAt : undefined,
+      last_login_at: createdAt,
       created_at: createdAt,
+      updated_at: createdAt,
     };
     const session: Session = {
       token: randomId('utk'),
       user_id: user.id,
       expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      session_type: mobile ? 'normal' : 'limited',
     };
     const wechatUser: WechatUser = {
       openid,
-      phone: phone || undefined,
+      phone: mobile,
       nickname: nickname || undefined,
       avatar: avatar || undefined,
       user_id: user.id,
@@ -285,6 +352,15 @@ export class MemoryStore {
     this.sessions.set(session.token, session);
     this.wechatUsers.set(user.id, wechatUser);
     this.wechatByOpenid.set(openid, wechatUser);
+    if (mobile) {
+      this.phoneByNumber.set(mobile, user.id);
+    }
+    this.userProfiles.set(user.id, {
+      user_id: user.id,
+      gender: 'unknown',
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
     this.members.set(user.id, {
       user_id: user.id,
       level: 'normal',
@@ -294,7 +370,16 @@ export class MemoryStore {
       created_at: createdAt,
       updated_at: createdAt,
     });
+    this.wallets.set(user.id, {
+      user_id: user.id,
+      cash_balance: 0,
+      frozen_balance: 0,
+      currency: 'CNY',
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
     this.logPoints(user.id, 1000, 1000, 'welcome', '新用户注册赠送');
+    this.logLogin(user.id, 'wechat', openid.slice(-6), true);
 
     return { user, session, wechatUser };
   }
@@ -304,12 +389,17 @@ export class MemoryStore {
   }
 
   public createSession(userId: string): Session {
+    const user = this.users.get(userId);
     const session: Session = {
       token: randomId('utk'),
       user_id: userId,
       expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      session_type: user?.status === 'pending_phone' ? 'limited' : 'normal',
     };
     this.sessions.set(session.token, session);
+    if (user) {
+      this.users.set(userId, { ...user, last_login_at: nowISO(), updated_at: nowISO() });
+    }
     return session;
   }
 
@@ -321,13 +411,38 @@ export class MemoryStore {
     return this.wechatSessionKeys.get(openid);
   }
 
-  public bindWechatPhone(openid: string, phone: string): void {
+  public bindWechatPhone(openid: string, phone: string): User {
     const wechatUser = this.wechatByOpenid.get(openid);
-    if (wechatUser) {
-      const updated: WechatUser = { ...wechatUser, phone };
-      this.wechatByOpenid.set(openid, updated);
-      this.wechatUsers.set(wechatUser.user_id, updated);
+    if (!wechatUser) {
+      throw unauthorized;
     }
+    const existingUserId = this.phoneByNumber.get(phone);
+    if (existingUserId && existingUserId !== wechatUser.user_id) {
+      throw phoneAlreadyBound;
+    }
+    const user = this.users.get(wechatUser.user_id);
+    if (!user) {
+      throw unauthorized;
+    }
+    const now = nowISO();
+    const fromStatus = (user.status ?? 'active') as UserStatus;
+    const updatedUser: User = {
+      ...user,
+      mobile: phone,
+      phone,
+      status: 'active',
+      mobile_verified_at: user.mobile_verified_at ?? now,
+      updated_at: now,
+    };
+    const updatedWechat: WechatUser = { ...wechatUser, phone };
+    this.users.set(user.id, updatedUser);
+    this.phoneByNumber.set(phone, user.id);
+    this.wechatByOpenid.set(openid, updatedWechat);
+    this.wechatUsers.set(wechatUser.user_id, updatedWechat);
+    if (fromStatus !== 'active') {
+      this.logStatus(user.id, fromStatus, 'active', '手机号验证完成', 'system');
+    }
+    return updatedUser;
   }
 
   public findUserByPhone(phone: string): User | undefined {
@@ -341,17 +456,30 @@ export class MemoryStore {
     const user: User = {
       id: randomId('usr'),
       nickname: nickname || phone.slice(-4),
+      mobile: phone,
       phone,
+      status: 'active',
+      register_source: 'mobile',
+      mobile_verified_at: createdAt,
+      last_login_at: createdAt,
       created_at: createdAt,
+      updated_at: createdAt,
     };
     const session: Session = {
       token: randomId('utk'),
       user_id: user.id,
       expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      session_type: 'normal',
     };
     this.users.set(user.id, user);
     this.phoneByNumber.set(phone, user.id);
     this.sessions.set(session.token, session);
+    this.userProfiles.set(user.id, {
+      user_id: user.id,
+      gender: 'unknown',
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
     this.members.set(user.id, {
       user_id: user.id,
       level: 'normal',
@@ -361,20 +489,138 @@ export class MemoryStore {
       created_at: createdAt,
       updated_at: createdAt,
     });
+    this.wallets.set(user.id, {
+      user_id: user.id,
+      cash_balance: 0,
+      frozen_balance: 0,
+      currency: 'CNY',
+      created_at: createdAt,
+      updated_at: createdAt,
+    });
     this.logPoints(user.id, 1000, 1000, 'welcome', '新用户注册赠送');
+    this.logLogin(user.id, 'phone_login', phone.replace(/^(\d{3})\d{4}(\d{4})$/, '$1****$2'), true);
     return { user, session };
   }
 
   public userFromToken(token: string): User {
     const session = this.sessions.get(token);
-    if (!session || new Date(session.expires_at).getTime() < Date.now()) {
+    if (!session || session.revoked_at || new Date(session.expires_at).getTime() < Date.now()) {
       throw unauthorized;
     }
     const user = this.users.get(session.user_id);
-    if (!user) {
+    if (!user || user.status === 'disabled' || user.status === 'cancelled') {
       throw unauthorized;
     }
     return user;
+  }
+
+  public logout(token: string): void {
+    const session = this.sessions.get(token);
+    if (session) {
+      this.sessions.set(token, { ...session, revoked_at: nowISO() });
+    }
+  }
+
+  public assertAssetAllowed(userId: string): void {
+    const user = this.users.get(userId);
+    if (!user || user.status === 'pending_phone' || user.status === 'frozen' || user.status === 'disabled' || user.status === 'cancelled') {
+      throw userStatusForbidden;
+    }
+  }
+
+  public updateUserProfile(userId: string, input: UserProfileMutation): UserAccount {
+    const user = this.users.get(userId);
+    if (!user) {
+      throw unauthorized;
+    }
+    const now = nowISO();
+    const updatedUser: User = {
+      ...user,
+      nickname: input.nickname?.trim() || user.nickname,
+      avatar_url: input.avatar_url ?? user.avatar_url,
+      updated_at: now,
+    };
+    const currentProfile = this.userProfiles.get(userId) ?? {
+      user_id: userId,
+      gender: 'unknown' as const,
+      created_at: now,
+      updated_at: now,
+    };
+    const updatedProfile: UserProfile = {
+      ...currentProfile,
+      gender: input.gender ?? currentProfile.gender,
+      birthday: input.birthday ?? currentProfile.birthday,
+      province: input.province ?? currentProfile.province,
+      city: input.city ?? currentProfile.city,
+      bio: input.bio ?? currentProfile.bio,
+      updated_at: now,
+    };
+    this.users.set(userId, updatedUser);
+    this.userProfiles.set(userId, updatedProfile);
+    return this.userAccount(userId);
+  }
+
+  public userAccount(userId: string): UserAccount {
+    const user = this.users.get(userId);
+    if (!user) {
+      throw unauthorized;
+    }
+    const wallet = this.wallets.get(userId) ?? {
+      user_id: userId,
+      cash_balance: 0,
+      frozen_balance: 0,
+      currency: 'CNY',
+      created_at: user.created_at,
+      updated_at: user.updated_at ?? user.created_at,
+    };
+    this.wallets.set(userId, wallet);
+    return {
+      user: { ...user },
+      profile: this.userProfiles.get(userId) ? { ...this.userProfiles.get(userId)! } : undefined,
+      member: this.getUserMember(userId),
+      cash_balance: wallet.cash_balance,
+      frozen_balance: wallet.frozen_balance,
+      status: (user.status ?? 'active') as UserStatus,
+    };
+  }
+
+  public sendPhoneCode(phone: string, scene = 'login'): { readonly sent: boolean; readonly provider: string; readonly expires_in: number; readonly dev_code?: string; readonly message: string } {
+    const config = getAppConfig();
+    const code = '123456';
+    const createdAt = nowISO();
+    this.phoneCodes.unshift({
+      id: this.phoneCodes.length + 1,
+      phone,
+      scene,
+      code,
+      expires_at: new Date(Date.now() + PHONE_CODE_TTL_MS).toISOString(),
+      created_at: createdAt,
+      attempt_count: 0,
+    });
+    const isMock = !config.sms.accessKeyId || config.sms.provider === 'mock';
+    return {
+      sent: true,
+      provider: config.sms.provider || 'mock',
+      expires_in: PHONE_CODE_TTL_MS / 1000,
+      dev_code: isMock ? code : undefined,
+      message: isMock ? '短信服务未配置，已使用开发验证码。' : '验证码发送请求已记录，等待接入短信服务商。',
+    };
+  }
+
+  public verifyPhoneCode(phone: string, code: string, scene = 'login'): { readonly user: User; readonly session: Session } {
+    const matched = this.phoneCodes.find((item) => item.phone === phone && item.scene === scene && !item.verified_at);
+    if (!matched || matched.code !== code || new Date(matched.expires_at).getTime() < Date.now()) {
+      throw phoneCodeInvalid;
+    }
+    const index = this.phoneCodes.findIndex((item) => item.id === matched.id);
+    this.phoneCodes[index] = { ...matched, verified_at: nowISO() };
+    const existing = this.findUserByPhone(phone);
+    if (existing) {
+      const session = this.createSession(existing.id);
+      this.logLogin(existing.id, 'mobile_code', phone.replace(/^(\d{3})\d{4}(\d{4})$/, '$1****$2'), true);
+      return { user: existing, session };
+    }
+    return this.createPhoneUser(phone);
   }
 
   public campaigns(): readonly Campaign[] {
@@ -835,6 +1081,137 @@ export class MemoryStore {
   public adminDrawRecords(token: string): readonly DrawRecord[] {
     this.ensureAdmin(token);
     return this.drawRecords.map((record) => ({ ...record }));
+  }
+
+  public adminUsers(token: string, query: { readonly page?: number; readonly page_size?: number; readonly keyword?: string; readonly status?: string; readonly register_source?: string }): AdminUserListResult {
+    this.ensureAdmin(token);
+    const page = Math.max(1, query.page ?? 1);
+    const pageSize = Math.min(100, Math.max(1, query.page_size ?? 20));
+    const keyword = (query.keyword ?? '').trim().toLowerCase();
+    const filtered = [...this.users.values()].filter((user) => {
+      const member = this.members.get(user.id);
+      const matchesKeyword =
+        !keyword ||
+        user.id.toLowerCase().includes(keyword) ||
+        user.nickname.toLowerCase().includes(keyword) ||
+        (user.mobile ?? user.phone ?? '').includes(keyword);
+      const matchesStatus = !query.status || (user.status ?? 'active') === query.status;
+      const matchesSource = !query.register_source || (user.register_source ?? 'guest') === query.register_source;
+      return Boolean(member) && matchesKeyword && matchesStatus && matchesSource;
+    });
+    const items = filtered.slice((page - 1) * pageSize, page * pageSize).map((user) => {
+      const member = this.getUserMember(user.id);
+      const wallet = this.wallets.get(user.id);
+      return {
+        id: user.id,
+        nickname: user.nickname,
+        mobile: user.mobile ?? user.phone,
+        avatar_url: user.avatar_url,
+        status: (user.status ?? 'active') as UserStatus,
+        register_source: user.register_source ?? 'guest',
+        member_level: member.level,
+        points_balance: member.points,
+        cash_balance: wallet?.cash_balance ?? 0,
+        total_draws: member.total_draws,
+        total_spent: member.total_spent,
+        last_login_at: user.last_login_at,
+        created_at: user.created_at,
+      };
+    });
+    return { items, page, page_size: pageSize, total: filtered.length };
+  }
+
+  public adminUserDetail(token: string, userId: string): AdminUserDetail {
+    this.ensureAdmin(token);
+    const user = this.users.get(userId);
+    if (!user) {
+      throw notFound;
+    }
+    const account = this.userAccount(userId);
+    return {
+      user: account.user,
+      profile: account.profile,
+      member: account.member,
+      cash_balance: account.cash_balance,
+      frozen_balance: account.frozen_balance,
+      identities: this.wechatUsers.get(userId) ? [{ ...this.wechatUsers.get(userId)! }] : [],
+      recent_draws: this.drawRecords.filter((record) => record.user_id === userId).slice(0, 20).map((record) => ({ ...record })),
+      points_logs: this.getPointsLog(userId).slice(0, 20),
+      login_logs: this.loginLogs.filter((log) => log.user_id === userId).slice(0, 20).map((log) => ({ ...log })),
+      status_logs: this.statusLogs.filter((log) => log.user_id === userId).slice(0, 20).map((log) => ({ ...log })),
+    };
+  }
+
+  public updateUserStatus(token: string, userId: string, status: UserStatus, reason: string): User {
+    this.ensureAdmin(token);
+    const user = this.users.get(userId);
+    if (!user) {
+      throw notFound;
+    }
+    const fromStatus = (user.status ?? 'active') as UserStatus;
+    const updated: User = {
+      ...user,
+      status,
+      updated_at: nowISO(),
+      ...(status === 'cancelled'
+        ? {
+            mobile: undefined,
+            phone: undefined,
+            nickname: `已注销用户${user.id.slice(-4)}`,
+            avatar_url: undefined,
+          }
+        : {}),
+    };
+    this.users.set(userId, updated);
+    if (status === 'disabled' || status === 'cancelled') {
+      this.revokeUserSessions(token, userId);
+    }
+    this.logStatus(userId, fromStatus, status, reason, this.adminUser);
+    return { ...updated };
+  }
+
+  public adjustUserPoints(token: string, userId: string, points: number, reason: string, remark = ''): UserMember {
+    this.ensureAdmin(token);
+    const member = this.getUserMember(userId);
+    const nextPoints = member.points + points;
+    if (nextPoints < 0) {
+      throw insufficientPoints;
+    }
+    const updated: UserMember = {
+      ...member,
+      points: nextPoints,
+      updated_at: nowISO(),
+    };
+    this.updateUserMember(updated);
+    this.logPoints(userId, points, updated.points, 'admin_adjust', `${reason}${remark ? `：${remark}` : ''}`);
+    return updated;
+  }
+
+  public adminUserPointsLog(token: string, userId: string): readonly UserPointsLog[] {
+    this.ensureAdmin(token);
+    return this.getPointsLog(userId);
+  }
+
+  public adminUserLoginLogs(token: string, userId: string): readonly UserLoginLog[] {
+    this.ensureAdmin(token);
+    return this.loginLogs.filter((log) => log.user_id === userId).map((log) => ({ ...log }));
+  }
+
+  public adminUserStatusLogs(token: string, userId: string): readonly UserStatusLog[] {
+    this.ensureAdmin(token);
+    return this.statusLogs.filter((log) => log.user_id === userId).map((log) => ({ ...log }));
+  }
+
+  public revokeUserSessions(token: string, userId: string): number {
+    this.ensureAdmin(token);
+    let count = 0;
+    for (const [sessionToken, session] of this.sessions.entries()) {
+      if (session.user_id === userId && !session.revoked_at) {
+        this.sessions.set(sessionToken, { ...session, revoked_at: nowISO() });
+        count += 1;
+      }
+    }
+    return count;
   }
 
   public fulfillmentTasks(token: string): readonly FulfillmentTask[] {
@@ -1787,6 +2164,30 @@ export class MemoryStore {
       balance,
       reason,
       remark,
+      created_at: nowISO(),
+    });
+  }
+
+  private logLogin(userId: string | undefined, loginType: UserLoginLog['login_type'], loginAccount: string | undefined, success: boolean, failReason?: string): void {
+    this.loginLogs.unshift({
+      id: this.loginLogs.length + 1,
+      user_id: userId,
+      login_type: loginType,
+      login_account: loginAccount,
+      success,
+      fail_reason: failReason,
+      created_at: nowISO(),
+    });
+  }
+
+  private logStatus(userId: string, fromStatus: UserStatus, toStatus: UserStatus, reason: string, operatorId?: string): void {
+    this.statusLogs.unshift({
+      id: this.statusLogs.length + 1,
+      user_id: userId,
+      from_status: fromStatus,
+      to_status: toStatus,
+      reason,
+      operator_id: operatorId,
       created_at: nowISO(),
     });
   }

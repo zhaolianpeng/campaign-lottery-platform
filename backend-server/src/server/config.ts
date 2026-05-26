@@ -1,11 +1,27 @@
 import { z } from 'zod';
 
+const envBoolean = z.preprocess((value) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) {
+    return true;
+  }
+  if (['false', '0', 'no', 'off', ''].includes(normalized)) {
+    return false;
+  }
+
+  return value;
+}, z.boolean());
+
 const envSchema = z.object({
   ADMIN_USER: z.string().default('admin'),
   ADMIN_PASSWORD: z.string().default(''),
   CORS_ALLOW_ORIGIN: z.string().default('*'),
 
-  MYSQL_ENABLED: z.coerce.boolean().default(false),
+  MYSQL_ENABLED: envBoolean.default(false),
   MYSQL_DSN: z.string().optional(),
   MYSQL_HOST: z.string().default('127.0.0.1'),
   MYSQL_PORT: z.coerce.number().int().positive().default(3306),
@@ -15,7 +31,7 @@ const envSchema = z.object({
   MYSQL_CHARSET: z.string().default('utf8mb4'),
   MYSQL_CONNECTION_LIMIT: z.coerce.number().int().positive().default(10),
 
-  REDIS_ENABLED: z.coerce.boolean().default(false),
+  REDIS_ENABLED: envBoolean.default(false),
   REDIS_URL: z.string().optional(),
   REDIS_HOST: z.string().default('127.0.0.1'),
   REDIS_PORT: z.coerce.number().int().positive().default(6379),
@@ -23,10 +39,20 @@ const envSchema = z.object({
   REDIS_DATABASE: z.coerce.number().int().nonnegative().default(0),
   REDIS_KEY_PREFIX: z.string().default(''),
 
+  WECHAT_QUICK_LOGIN_ENABLED: envBoolean.default(false),
   WECHAT_APP_ID: z.string().default(''),
   WECHAT_APP_SECRET: z.string().default(''),
   WECHAT_TOKEN: z.string().default(''),
   WECHAT_REDIRECT_URI: z.string().default(''),
+
+  SMS_PROVIDER: z.string().default('mock'),
+  SMS_ACCESS_KEY_ID: z.string().default(''),
+  SMS_ACCESS_KEY_SECRET: z.string().default(''),
+  SMS_SIGN_NAME: z.string().default(''),
+  SMS_TEMPLATE_CODE: z.string().default(''),
+  CARRIER_AUTH_PROVIDER: z.string().default(''),
+  CARRIER_AUTH_APP_ID: z.string().default(''),
+  CARRIER_AUTH_API_KEY: z.string().default(''),
 });
 
 export interface AppConfig {
@@ -58,10 +84,23 @@ export interface AppConfig {
     readonly keyPrefix: string;
   };
   readonly wechat: {
+    readonly quickLoginEnabled: boolean;
     readonly appId: string;
     readonly appSecret: string;
     readonly token: string;
     readonly redirectUri: string;
+  };
+  readonly sms: {
+    readonly provider: string;
+    readonly accessKeyId: string;
+    readonly accessKeySecret: string;
+    readonly signName: string;
+    readonly templateCode: string;
+  };
+  readonly carrierAuth: {
+    readonly provider: string;
+    readonly appId: string;
+    readonly apiKey: string;
   };
 }
 
@@ -102,10 +141,23 @@ export function getAppConfig(): AppConfig {
       keyPrefix: env.REDIS_KEY_PREFIX,
     },
     wechat: {
+      quickLoginEnabled: env.WECHAT_QUICK_LOGIN_ENABLED,
       appId: env.WECHAT_APP_ID,
       appSecret: env.WECHAT_APP_SECRET,
       token: env.WECHAT_TOKEN,
       redirectUri: env.WECHAT_REDIRECT_URI,
+    },
+    sms: {
+      provider: env.SMS_PROVIDER,
+      accessKeyId: env.SMS_ACCESS_KEY_ID,
+      accessKeySecret: env.SMS_ACCESS_KEY_SECRET,
+      signName: env.SMS_SIGN_NAME,
+      templateCode: env.SMS_TEMPLATE_CODE,
+    },
+    carrierAuth: {
+      provider: env.CARRIER_AUTH_PROVIDER,
+      appId: env.CARRIER_AUTH_APP_ID,
+      apiKey: env.CARRIER_AUTH_API_KEY,
     },
   };
 

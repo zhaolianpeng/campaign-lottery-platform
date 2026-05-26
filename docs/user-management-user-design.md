@@ -1,49 +1,48 @@
-# 用户管理模块设计文档
+# 用户端用户功能设计文档
 
 ## 1. 背景与依据
 
-本设计基于当前仓库已有文档和代码：
+本设计聚焦普通用户在前台 H5/小程序侧的注册、登录、资料、账户资产和状态感知能力。
 
-- API 约定来自 [`docs/api-design.md`](api-design.md)：所有业务接口位于 `/api/v1`，统一响应 `{ code, message, data }`，用户端和管理端都使用 `Authorization: Bearer <token>`。
-- 数据库设计来自 [`docs/database-design.md`](database-design.md)：已有 `users`、`user_sessions`、`user_members`、`user_points_logs` 等生产化逻辑表。
-- 模块边界来自 [`docs/modules.md`](modules.md)：后端入口为 `backend-server/app/api/v1/[...path]/route.ts`，服务层为 `backend-server/src/server/lottery-service.ts`，当前仍使用 `MemoryStore`。
-- 登录升级记录来自 [`changelog/2026-05-25-登录系统升级.md`](../changelog/2026-05-25-登录系统升级.md)：当前已存在微信 OAuth、微信手机号解密绑定、手机号登录和游客登录。
+现有依据：
 
-当前代码中的关键现状：
+- [`api-design.md`](api-design.md)：接口统一位于 `/api/v1`，响应统一为 `{ code, message, data }`，用户端使用 `Authorization: Bearer <token>`。
+- [`database-design.md`](database-design.md)：已有 `users`、`user_sessions`、`user_members`、`user_points_logs` 等生产化逻辑表。
+- [`modules.md`](modules.md)：用户端入口是 `front-page/app/page.tsx`，核心实现位于 `front-page/src/features/lottery/lottery-app.tsx`。
+- [`../changelog/2026-05-25-登录系统升级.md`](../changelog/2026-05-25-登录系统升级.md)：当前已存在微信 OAuth、微信手机号解密绑定、手机号登录和游客登录。
 
-- 已有接口：`POST /api/v1/auth/guest-login`、`POST /api/v1/auth/wechat/login`、`POST /api/v1/auth/wechat/phone`、`POST /api/v1/auth/phone-login`、`GET /api/v1/me`。
-- 当前 `User` 仅包含 `id`、`nickname`、可选 `phone`、`created_at`；数据库设计中规划了 `mobile`、`status`。
-- 账户余额当前主要对应积分：`UserMember.points` 和 `UserPointsLog.balance`。现金余额、充值、退款、钱包流水尚未成体系。
-- 当前手机号登录只做手机号格式校验并自动创建用户，尚未接入短信验证码、运营商一键登录或微信手机号授权的强校验闭环。
+当前代码中的用户侧现状：
 
-## 2. 设计目标
+- 已有 `POST /api/v1/auth/guest-login`、`POST /api/v1/auth/wechat/login`、`POST /api/v1/auth/wechat/phone`、`POST /api/v1/auth/phone-login`、`GET /api/v1/me`。
+- 当前 `User` 仅包含 `id`、`nickname`、可选 `phone`、`created_at`，需要扩展为手机号账号、头像、状态等完整用户模型。
+- 当前“账户余额”主要是积分余额：`UserMember.points` 和 `UserPointsLog.balance`。
+- 当前手机号登录只校验手机号格式，尚未具备短信验证码、运营商一键登录或微信手机号授权的完整验证闭环。
 
-用户管理模块以“手机号作为平台账号”为核心身份规则：
+## 2. 用户端设计目标
 
-- 用户先通过微信快速登录降低进入门槛，再完成手机验证。
-- 手机号验证成功后，平台账号以手机号为唯一登录账号，微信 `openid` 作为第三方身份绑定关系。
-- 用户资料支持昵称、头像、基本信息、手机号、账户状态、会员积分、账户余额等字段管理。
-- 用户状态支持正常、待验证、冻结、注销等业务状态，并对抽奖、支付、兑换、社交行为做统一拦截。
-- 后台支持用户查询、详情、状态调整、余额/积分流水查询与人工调整审计。
-- 兼容当前内存实现，同时为后续 MySQL/Redis 生产化落库预留事务边界。
+用户端以“手机号作为平台账号”为核心身份规则：
 
-## 3. 模块范围
+- 用户通过微信快速登录降低进入门槛，再完成手机验证。
+- 手机号验证成功后，平台账号以手机号为唯一账号，微信 `openid` 作为第三方身份绑定。
+- 用户可以查看和维护昵称、头像、基本资料、手机号、账号状态、积分余额、现金余额等信息。
+- 用户状态对抽奖、购买、兑换、赠礼、活动领奖等资产行为产生统一限制。
+- 第一阶段兼容当前 `MemoryStore` 实现，后续平滑迁移到 MySQL/Redis。
+
+## 3. 用户端能力范围
 
 包含：
 
 - 注册：微信快速登录、手机验证、账号创建、微信身份绑定。
 - 登录：微信登录、手机号验证码登录、会话续期、退出登录。
-- 用户信息：昵称、头像、性别、生日、地区、手机号、账号状态、注册来源、最近登录信息。
+- 用户资料：昵称、头像、性别、生日、地区、手机号、注册来源、最近登录信息。
 - 账户资产：积分余额、现金余额、会员等级、累计消费、抽奖次数、积分/余额流水。
-- 后台管理：用户列表、用户详情、状态管理、余额/积分调整、登录记录和操作审计。
-- 风控与合规：验证码频控、IP/设备限制、未验证账号权限限制、未成年人/实名能力预留。
+- 状态感知：待验证、正常、冻结、禁用、注销状态下的前端提示和业务按钮限制。
+- 安全与合规：验证码频控、设备/IP 限制、实名和未成年人限制预留。
 
-不在第一期强制实现但需要预留：
+不包含：
 
-- 身份证实名验证。
-- 未成年人消费限制和夜间禁抽。
-- 多微信账号合并、换绑手机号申诉。
-- 第三方支付充值、退款、提现。
+- 后台用户列表、状态调整、人工积分调整和审计，见 [`user-management-admin-design.md`](user-management-admin-design.md)。
+- 管理员账号、后台权限和后台操作日志。
 
 ## 4. 身份与账号模型
 
@@ -51,25 +50,25 @@
 
 - `mobile` 是平台登录账号，必须全局唯一。
 - `user_id` 是系统内部主键，不对用户展示。
-- 微信 `openid` 是第三方身份，不作为主账号；同一 `openid` 只能绑定一个 `user_id`。
-- 如后续接入多个微信应用，应增加 `unionid` 或 `app_id + openid` 维度避免冲突。
+- 微信 `openid` 是第三方身份，不作为主账号。
+- 同一 `openid` 只能绑定一个 `user_id`。
+- 如后续接入多个微信应用，应使用 `provider_app_id + openid` 或 `unionid` 避免冲突。
 
-推荐用户状态：
+用户状态：
 
-- `pending_phone`：微信快速登录后，尚未验证手机号，只允许完成绑定流程和查看有限页面。
+- `pending_phone`：微信快速登录后尚未验证手机号，只允许完成绑定流程和查看有限页面。
 - `active`：手机号已验证，账号正常可用。
-- `frozen`：后台冻结，禁止抽奖、支付、兑换、提现、社交赠送等资产行为。
-- `disabled`：长期封禁或风控禁用，禁止登录或登录后只能看到受限提示。
-- `cancelled`：用户注销，保留必要审计和订单/奖品记录，个人资料脱敏。
+- `frozen`：允许登录和查看资料，但禁止抽奖、支付、兑换、提现、社交赠送等资产行为。
+- `disabled`：长期封禁或风控禁用，禁止登录或登录后只展示受限提示。
+- `cancelled`：用户已注销，禁止登录，历史业务记录保留但个人信息脱敏。
 
-推荐身份类型：
+身份类型：
 
 - `wechat`：微信 OAuth 或小程序身份。
 - `mobile`：手机号验证码身份。
-- `guest`：开发或低风险体验态，可逐步降级为仅本地调试。
-- `admin`：管理端账号，继续与普通用户账号隔离。
+- `guest`：开发、演示或低风险体验态。
 
-## 5. 注册流程设计
+## 5. 用户注册流程
 
 核心流程：微信快速登录后验证手机号，手机号作为账号。
 
@@ -101,17 +100,17 @@ sequenceDiagram
 - 新微信用户登录后，如果没有绑定手机号，创建 `pending_phone` 用户，并返回临时 token。
 - 临时 token 只能调用 `GET /me`、`POST /auth/phone/verify`、`POST /auth/logout` 等最小接口。
 - 手机号验证成功后，如果手机号不存在，当前用户转为 `active`，手机号成为账号。
-- 如果手机号已存在且未绑定当前微信，需进入账号合并/绑定确认流程，不能静默覆盖。
-- 微信昵称和头像可作为首次资料默认值，用户后续可修改昵称和头像。
+- 如果手机号已存在且未绑定当前微信，进入账号合并或绑定确认流程，不能静默覆盖。
+- 微信昵称和头像可作为首次资料默认值，用户后续可修改。
 - 新注册用户赠送积分应写入 `user_members` 和 `user_points_logs`，与现有“新用户 1000 积分”规则一致。
 
 手机号验证方式优先级：
 
 - 微信内环境：优先使用微信手机号授权，复用当前 `wechatBindPhone(openid, encryptedData, iv)` 能力。
 - 普通 H5：使用短信验证码，新增发送和校验接口。
-- 真正“一键登录”：需要接入闪验、阿里云号码认证等运营商 SDK；不能依赖浏览器直接获取本机号码。
+- 真正“一键登录”：需要接入闪验、阿里云号码认证等运营商 SDK，不能依赖浏览器直接获取本机号码。
 
-## 6. 登录流程设计
+## 6. 用户登录流程
 
 微信登录：
 
@@ -125,7 +124,7 @@ sequenceDiagram
 - 新增 `POST /api/v1/auth/phone/code` 发送验证码。
 - 新增 `POST /api/v1/auth/phone/verify` 校验验证码并登录。
 - 验证通过后，如果手机号已存在，签发 session。
-- 如果手机号不存在，不建议直接创建完整账号；应要求用户先走微信快速登录，或创建 `pending_profile` 用户并提示补充基础资料。结合本需求，推荐第一期强制“微信快速登录 + 手机验证”作为注册入口。
+- 如果手机号不存在，第一期建议要求用户先走微信快速登录，再验证手机号完成注册。
 
 游客登录：
 
@@ -136,11 +135,11 @@ sequenceDiagram
 退出与会话：
 
 - 新增 `POST /api/v1/auth/logout` 删除当前 token。
-- 后续生产化建议将 `user_sessions` 存入 Redis 或数据库，支持过期、踢下线、设备列表和风控撤销。
+- 后续生产化建议将热会话存入 Redis，同时在数据库保留会话审计和撤销状态。
 
-## 7. 用户信息管理
+## 7. 用户资料管理
 
-用户资料字段建议：
+用户资料字段：
 
 - 基础身份：`id`、`mobile`、`nickname`、`avatar_url`、`status`、`register_source`。
 - 基本信息：`gender`、`birthday`、`province`、`city`、`bio`。
@@ -163,9 +162,9 @@ sequenceDiagram
 - 手机号使用大陆手机号规则时继续沿用当前正则 `^1[3-9]\d{9}$`，生产化应支持区号扩展。
 - 手机号、余额、状态等敏感字段不能由普通用户直接更新。
 
-## 8. 账户余额与积分设计
+## 8. 账户余额与积分
 
-当前系统已经有积分体系：
+当前系统已有积分体系：
 
 - `UserMember.points` 表示积分余额。
 - `UserPointsLog.points` 表示本次变动值。
@@ -185,15 +184,62 @@ sequenceDiagram
 
 现金钱包预留：
 
-- `user_wallets`：`user_id`、`cash_balance`、`frozen_balance`、`currency`、`updated_at`。
-- `wallet_transactions`：`id`、`user_id`、`amount`、`balance_after`、`type`、`biz_type`、`biz_id`、`status`、`created_at`。
+- `user_wallets`：用户现金余额。
+- `wallet_transactions`：现金余额流水。
 - 如接入微信支付，应另设 `payment_orders`、`refund_orders`，钱包只记录支付成功后的平台内余额变化。
 
-## 9. 数据库设计
+## 9. 用户状态与前端限制
 
-数据库设计沿用 [`docs/database-design.md`](database-design.md) 的约定：字段使用 `snake_case`，时间字段统一为 `created_at`、`updated_at`，核心业务表增加软删除或状态字段。用户管理模块建议优先落 MySQL；`user_sessions` 和验证码频控可同时接入 Redis 做过期加速，但 MySQL 仍保留审计记录。
+前端和服务层都需要识别用户状态，但最终限制必须以后端校验为准。
 
-### 9.1 ER 关系
+状态行为：
+
+- `pending_phone`：只允许绑定手机号、查看基础页面，不允许抽盒、兑换、购买、赠礼、领取奖品。
+- `active`：正常使用。
+- `frozen`：允许登录和查看资料，但禁止资产变动类操作。
+- `disabled`：禁止登录或登录后只返回禁用原因。
+- `cancelled`：禁止登录，历史业务记录保留但个人信息脱敏。
+
+需要拦截的用户端资产行为：
+
+- 抽盒扣积分。
+- 积分兑换。
+- 商店购买。
+- 月卡、战令、首充。
+- 礼物赠送和领取。
+- 活动奖励领取。
+
+## 10. 用户端 API 设计
+
+认证接口：
+
+- `GET /api/v1/auth/wechat/oauth-url`：获取微信 OAuth 地址。
+- `POST /api/v1/auth/wechat/login`：微信 code 登录，返回用户、token、是否需要手机号验证。
+- `POST /api/v1/auth/wechat/phone`：微信手机号解密绑定，现有接口可保留并增强为完成注册。
+- `POST /api/v1/auth/phone/code`：发送短信验证码。
+- `POST /api/v1/auth/phone/verify`：校验验证码，完成绑定或手机号登录。
+- `POST /api/v1/auth/logout`：退出登录。
+
+用户接口：
+
+- `GET /api/v1/me`：当前用户基础资料和状态。
+- `PATCH /api/v1/me/profile`：修改昵称、头像、基础信息。
+- `GET /api/v1/me/account`：返回积分余额、现金余额、会员等级、累计消费。
+- `GET /api/v1/me/account/transactions`：账户流水，整合积分和现金流水视图。
+- `POST /api/v1/me/mobile/change`：手机号换绑发起。
+- `POST /api/v1/me/mobile/change/confirm`：手机号换绑确认。
+
+响应兼容：
+
+- 保持 `{ code, message, data }`。
+- 登录成功返回 `user`、`session` 或 `token`、`expires_at`。
+- 需要手机号验证时返回 `need_phone=true`、`status=pending_phone`、`bind_token` 或受限 session。
+
+## 11. 用户端数据库设计
+
+数据库设计沿用 [`database-design.md`](database-design.md) 的约定：字段使用 `snake_case`，时间字段统一为 `created_at`、`updated_at`。
+
+### 11.1 ER 关系
 
 ```mermaid
 erDiagram
@@ -205,13 +251,10 @@ erDiagram
   users ||--|| user_wallets : owns
   users ||--o{ wallet_transactions : records
   users ||--o{ user_login_logs : logs
-  users ||--o{ user_status_logs : changes
   users ||--o{ phone_verification_codes : verifies
 ```
 
-### 9.2 核心用户表
-
-#### `users`
+### 11.2 `users`
 
 用户主表，保存账号级核心字段。手机号是平台账号，微信身份放在 `user_identities`。
 
@@ -240,13 +283,7 @@ erDiagram
 - `KEY idx_users_mobile_hash(mobile_hash)`
 - `KEY idx_users_created_at(created_at)`
 
-约束：
-
-- `active` 用户必须有 `mobile` 和 `mobile_verified_at`。
-- `pending_phone` 用户允许 `mobile` 为空，但不允许进行资产类操作。
-- `cancelled` 用户需要脱敏 `mobile`、`nickname`、`avatar_url`，保留 `mobile_hash` 用于审计。
-
-#### `user_profiles`
+### 11.3 `user_profiles`
 
 用户可选资料表，避免 `users` 过宽。
 
@@ -265,11 +302,9 @@ erDiagram
 
 - `PRIMARY KEY(user_id)`
 
-### 9.3 第三方身份与会话
+### 11.4 `user_identities`
 
-#### `user_identities`
-
-记录微信、手机号、游客等身份绑定。微信 `openid` 不直接写入 `users`，便于后续支持多端和 `unionid`。
+记录微信、手机号、游客等身份绑定。
 
 | 字段 | 类型 | 约束 | 说明 |
 |---|---|---|---|
@@ -294,15 +329,15 @@ erDiagram
 - `KEY idx_identity_user_id(user_id)`
 - `KEY idx_identity_unionid(unionid)`
 
-#### `user_sessions`
+### 11.5 `user_sessions`
 
-用户会话表，兼容当前 7 天 token 机制。生产化可把热数据放 Redis，MySQL 保留会话记录和撤销状态。
+用户会话表，兼容当前 7 天 token 机制。
 
 | 字段 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | `token` | `varchar(128)` | PK | Bearer token |
 | `user_id` | `varchar(32)` | FK, not null | 用户 ID |
-| `session_type` | `varchar(32)` | not null | `normal`、`limited`、`admin` |
+| `session_type` | `varchar(32)` | not null | `normal`、`limited` |
 | `device_id` | `varchar(128)` | nullable | 设备标识 |
 | `ip` | `varchar(64)` | nullable | 登录 IP |
 | `user_agent` | `varchar(512)` | nullable | UA |
@@ -316,9 +351,7 @@ erDiagram
 - `KEY idx_user_sessions_user_id(user_id)`
 - `KEY idx_user_sessions_expires_at(expires_at)`
 
-### 9.4 手机验证与登录日志
-
-#### `phone_verification_codes`
+### 11.6 `phone_verification_codes`
 
 验证码审计表，验证码明文不能入库，只保存哈希。
 
@@ -345,35 +378,9 @@ erDiagram
 - `KEY idx_phone_codes_ip(send_ip, created_at)`
 - `KEY idx_phone_codes_expires_at(expires_at)`
 
-#### `user_login_logs`
+### 11.7 `user_members` 与 `user_points_logs`
 
-登录日志表，用于风控和后台排查。
-
-| 字段 | 类型 | 约束 | 说明 |
-|---|---|---|---|
-| `id` | `bigint unsigned` | PK, auto increment | 日志 ID |
-| `user_id` | `varchar(32)` | nullable, index | 登录成功时关联用户 |
-| `login_type` | `varchar(32)` | not null | `wechat`、`mobile_code`、`guest`、`admin` |
-| `login_account` | `varchar(128)` | nullable | 脱敏手机号、openid 后 6 位等 |
-| `success` | `tinyint(1)` | not null | 是否成功 |
-| `fail_reason` | `varchar(128)` | nullable | 失败原因 |
-| `ip` | `varchar(64)` | nullable | IP |
-| `device_id` | `varchar(128)` | nullable | 设备标识 |
-| `user_agent` | `varchar(512)` | nullable | UA |
-| `created_at` | `datetime` | not null | 创建时间 |
-
-索引：
-
-- `PRIMARY KEY(id)`
-- `KEY idx_login_logs_user_id(user_id, created_at)`
-- `KEY idx_login_logs_ip(ip, created_at)`
-- `KEY idx_login_logs_device(device_id, created_at)`
-
-### 9.5 会员积分与余额
-
-#### `user_members`
-
-沿用现有会员积分模型，作为积分余额主表。
+`user_members` 是积分余额主表：
 
 | 字段 | 类型 | 约束 | 说明 |
 |---|---|---|---|
@@ -385,14 +392,7 @@ erDiagram
 | `created_at` | `datetime` | not null | 创建时间 |
 | `updated_at` | `datetime` | not null | 更新时间 |
 
-索引：
-
-- `PRIMARY KEY(user_id)`
-- `KEY idx_user_members_level(level)`
-
-#### `user_points_logs`
-
-积分流水表。现有 `points` 和 `balance` 语义保留，补充业务单号和操作来源。
+`user_points_logs` 是积分流水表：
 
 | 字段 | 类型 | 约束 | 说明 |
 |---|---|---|---|
@@ -400,7 +400,7 @@ erDiagram
 | `user_id` | `varchar(32)` | FK, not null | 用户 ID |
 | `points` | `int` | not null | 正数为增加，负数为扣减 |
 | `balance` | `int` | not null | 变动后积分余额 |
-| `reason` | `varchar(64)` | not null | `register_bonus`、`draw`、`checkin`、`share_reward`、`admin_adjust` |
+| `reason` | `varchar(64)` | not null | 变动原因 |
 | `biz_type` | `varchar(64)` | nullable | 关联业务类型 |
 | `biz_id` | `varchar(64)` | nullable | 关联业务单号 |
 | `request_id` | `varchar(64)` | nullable | 幂等键 |
@@ -410,14 +410,15 @@ erDiagram
 
 索引：
 
-- `PRIMARY KEY(id)`
+- `PRIMARY KEY(user_id)` on `user_members`
+- `PRIMARY KEY(id)` on `user_points_logs`
 - `KEY idx_points_logs_user_id(user_id, created_at)`
 - `UNIQUE KEY uk_points_request(request_id)`
 - `KEY idx_points_logs_biz(biz_type, biz_id)`
 
-#### `user_wallets`
+### 11.8 `user_wallets` 与 `wallet_transactions`
 
-现金余额钱包表。若第一期“账户余额”仅指积分，可以先建表预留或暂不启用。
+现金余额钱包表：
 
 | 字段 | 类型 | 约束 | 说明 |
 |---|---|---|---|
@@ -428,13 +429,7 @@ erDiagram
 | `created_at` | `datetime` | not null | 创建时间 |
 | `updated_at` | `datetime` | not null | 更新时间 |
 
-索引：
-
-- `PRIMARY KEY(user_id)`
-
-#### `wallet_transactions`
-
-现金余额流水表。
+现金余额流水表：
 
 | 字段 | 类型 | 约束 | 说明 |
 |---|---|---|---|
@@ -454,196 +449,13 @@ erDiagram
 
 索引：
 
-- `PRIMARY KEY(id)`
+- `PRIMARY KEY(user_id)` on `user_wallets`
+- `PRIMARY KEY(id)` on `wallet_transactions`
 - `KEY idx_wallet_tx_user_id(user_id, created_at)`
 - `KEY idx_wallet_tx_biz(biz_type, biz_id)`
 - `UNIQUE KEY uk_wallet_tx_request(request_id)`
 
-### 9.6 用户状态与审计
-
-#### `user_status_logs`
-
-记录冻结、解冻、禁用、注销等状态变化。
-
-| 字段 | 类型 | 约束 | 说明 |
-|---|---|---|---|
-| `id` | `bigint unsigned` | PK, auto increment | 日志 ID |
-| `user_id` | `varchar(32)` | FK, not null | 用户 ID |
-| `from_status` | `varchar(32)` | not null | 原状态 |
-| `to_status` | `varchar(32)` | not null | 新状态 |
-| `reason` | `varchar(255)` | not null | 变更原因 |
-| `operator_id` | `varchar(32)` | nullable | 后台操作人或系统 |
-| `created_at` | `datetime` | not null | 创建时间 |
-
-索引：
-
-- `PRIMARY KEY(id)`
-- `KEY idx_status_logs_user_id(user_id, created_at)`
-- `KEY idx_status_logs_operator(operator_id, created_at)`
-
-### 9.7 后台账号表
-
-当前管理端使用环境变量账号密码，生产化建议使用表驱动。
-
-#### `admin_users`
-
-| 字段 | 类型 | 约束 | 说明 |
-|---|---|---|---|
-| `id` | `varchar(32)` | PK | 后台用户 ID |
-| `username` | `varchar(64)` | UNIQUE, not null | 登录名 |
-| `password_hash` | `varchar(255)` | not null | 密码哈希 |
-| `display_name` | `varchar(64)` | not null | 展示名 |
-| `role` | `varchar(32)` | not null | `super_admin`、`operator`、`viewer` |
-| `status` | `varchar(32)` | not null | `active`、`disabled` |
-| `last_login_at` | `datetime` | nullable | 最近登录时间 |
-| `created_at` | `datetime` | not null | 创建时间 |
-| `updated_at` | `datetime` | not null | 更新时间 |
-
-索引：
-
-- `PRIMARY KEY(id)`
-- `UNIQUE KEY uk_admin_username(username)`
-- `KEY idx_admin_status(status)`
-
-### 9.8 状态枚举与字段规范
-
-用户状态：
-
-- `pending_phone`：微信登录后待验证手机号。
-- `active`：正常。
-- `frozen`：冻结资产行为。
-- `disabled`：禁用登录和业务行为。
-- `cancelled`：已注销并脱敏。
-
-注册来源：
-
-- `wechat`：微信快速登录。
-- `mobile`：手机号验证码登录或绑定。
-- `guest`：游客体验。
-- `admin_import`：后台导入。
-
-积分流水原因：
-
-- `register_bonus`：注册赠送。
-- `draw_cost`：抽盒消耗。
-- `checkin_reward`：签到奖励。
-- `share_reward`：分享奖励。
-- `activity_reward`：活动奖励。
-- `redeem_cost`：兑换消耗。
-- `admin_adjust`：后台调整。
-
-### 9.9 事务边界
-
-用户注册激活事务：
-
-- 校验手机号未被其他 `active` 用户占用。
-- 更新 `users.mobile`、`mobile_verified_at`、`status=active`。
-- 写入或更新 `user_identities`。
-- 初始化 `user_members`、`user_wallets`。
-- 发放注册积分并写 `user_points_logs`。
-- 写 `user_login_logs`。
-
-积分变动事务：
-
-- 锁定 `user_members` 当前行。
-- 校验余额不为负。
-- 更新 `points`、`total_spent`、`level`。
-- 写入 `user_points_logs`，用 `request_id` 保证幂等。
-
-状态变更事务：
-
-- 锁定 `users` 当前行。
-- 更新 `status`。
-- 写入 `user_status_logs`。
-- 如变更为 `disabled` 或 `cancelled`，撤销未过期 `user_sessions`。
-
-注销事务：
-
-- 校验无未完成发奖、退款、提现等流程。
-- 脱敏 `users.mobile`、`nickname`、`avatar_url` 和可选资料。
-- 保留 `mobile_hash`、订单、奖品、积分、钱包流水。
-- 更新 `status=cancelled`、`cancelled_at`。
-- 写状态日志并撤销所有 session。
-
-## 10. API 设计建议
-
-认证接口沿用当前 `/auth` 前缀：
-
-- `GET /api/v1/auth/wechat/oauth-url`：获取微信 OAuth 地址。
-- `POST /api/v1/auth/wechat/login`：微信 code 登录，返回用户、token、是否需要手机号验证。
-- `POST /api/v1/auth/wechat/phone`：微信手机号解密绑定，现有接口可保留并增强为完成注册。
-- `POST /api/v1/auth/phone/code`：发送短信验证码。
-- `POST /api/v1/auth/phone/verify`：校验验证码，完成绑定或手机号登录。
-- `POST /api/v1/auth/logout`：退出登录。
-
-用户接口：
-
-- `GET /api/v1/me`：当前用户基础资料和状态。
-- `PATCH /api/v1/me/profile`：修改昵称、头像、基础信息。
-- `GET /api/v1/me/account`：返回积分余额、现金余额、会员等级、累计消费。
-- `GET /api/v1/me/account/transactions`：账户流水，整合积分和现金流水视图。
-- `POST /api/v1/me/mobile/change`：手机号换绑发起。
-- `POST /api/v1/me/mobile/change/confirm`：手机号换绑确认。
-
-管理端接口：
-
-- `GET /api/v1/admin/users`：用户列表，支持手机号、昵称、状态、注册时间筛选。
-- `GET /api/v1/admin/users/:id`：用户详情。
-- `PATCH /api/v1/admin/users/:id/status`：冻结、解冻、禁用、注销标记。
-- `GET /api/v1/admin/users/:id/points-log`：积分流水。
-- `POST /api/v1/admin/users/:id/points-adjust`：人工积分调整，必须写审计。
-- `GET /api/v1/admin/users/:id/login-logs`：登录记录。
-
-响应兼容：
-
-- 保持 `{ code, message, data }`。
-- 登录成功返回 `user`、`session` 或 `token`、`expires_at`。
-- 需要手机号验证时返回明确状态：`need_phone=true`、`status=pending_phone`、`bind_token` 或受限 session。
-
-## 11. 权限与状态拦截
-
-用户状态应在服务层统一校验：
-
-- `pending_phone`：只允许绑定手机号、查看基础页面，不允许抽盒、兑换、购买、赠礼、领取奖品。
-- `active`：正常使用。
-- `frozen`：允许登录和查看资料，但禁止资产变动类操作。
-- `disabled`：禁止登录或登录后只返回禁用原因。
-- `cancelled`：禁止登录，历史业务记录保留但个人信息脱敏。
-
-需要统一拦截的资产行为：
-
-- 抽盒扣积分。
-- 积分兑换。
-- 商店购买。
-- 月卡、战令、首充。
-- 礼物赠送和领取。
-- 活动奖励领取。
-- 后台人工调整除外，但必须记录操作审计。
-
-## 12. 前端交互设计
-
-注册登录入口：
-
-- 首屏优先展示“微信快速登录”。
-- 微信登录成功但未绑定手机号时，弹出手机号验证步骤。
-- 微信环境中优先走微信手机号授权；普通浏览器走短信验证码。
-- 手机号验证后进入正式登录态，并刷新用户信息、会员积分和活动进度。
-
-用户中心：
-
-- 展示头像、昵称、手机号脱敏、账号状态、会员等级、积分余额、现金余额。
-- 提供编辑昵称、头像、基础信息入口。
-- 展示积分流水、抽奖记录、库存、兑换记录、活动参与记录。
-- 账号冻结或待验证时，在用户中心和关键业务按钮上显示原因与下一步动作。
-
-后台用户管理：
-
-- 用户列表支持按手机号、昵称、状态、注册来源、注册时间查询。
-- 用户详情展示基础资料、微信绑定、积分余额、现金余额、抽奖统计、流水和登录日志。
-- 状态变更需要填写原因。
-- 人工调整积分需要二次确认并生成审计日志。
-
-## 13. 安全、风控与合规
+## 12. 安全、风控与合规
 
 验证码安全：
 
@@ -671,9 +483,9 @@ erDiagram
 - 未成年人限制预留年龄、实名状态、消费限额和夜间禁抽校验。
 - 注销流程需支持个人信息脱敏，同时保留法律要求的订单、奖品、资金流水记录。
 
-## 14. 与当前实现的差异和落地顺序
+## 13. 用户端落地顺序
 
-第一期建议：
+第一期：
 
 - 扩展 `User` 类型，增加 `mobile`、`avatar_url`、`status`、`updated_at`。
 - 将当前 `phone` 字段统一为数据库文档中的 `mobile`，前后端类型同步。
@@ -682,23 +494,15 @@ erDiagram
 - 新增短信验证码接口，替代当前直接 `phone-login` 的生产路径。
 - 增加 `GET /me/account` 或扩展 `GET /me` 返回会员积分和状态。
 
-第二期建议：
+第二期：
 
-- 后台增加用户列表、详情、冻结/解冻、积分调整和审计。
-- 增加登录日志、状态日志、验证码频控。
+- 增加登录日志、验证码频控和设备/IP 风控。
 - 抽奖、兑换、商店、赠礼、活动领取统一接入用户状态校验。
 - 把用户、session、积分、验证码从 `MemoryStore` 迁移到 MySQL/Redis。
 
-第三期建议：
+第三期：
 
 - 接入真实微信配置和 HTTPS 回调域名。
 - 接入运营商一键登录或第三方号码认证。
 - 接入微信支付、充值订单、现金钱包和退款。
 - 接入实名、未成年人限制和更完整的风控策略。
-
-## 15. 待确认事项
-
-- 手机号登录是否允许“无微信直接注册”。本设计默认第一期不允许，注册必须先微信快速登录再验证手机号。
-- “账户余额”是否指现金余额，还是当前积分余额。当前代码已有积分余额；现金余额建议作为钱包二期能力单独设计。
-- 游客登录是否保留给正式用户。建议生产环境弱化为演示入口或关闭。
-- 用户注销后手机号是否允许立即重新注册。建议先不立即复用，至少保留冷却期和审计哈希。

@@ -3,18 +3,151 @@ export type CampaignStatus = 'draft' | 'online' | 'offline' | 'soldout';
 export type DrawResultType = 'win' | 'miss';
 export type MemberLevel = 'normal' | 'silver' | 'gold' | 'diamond';
 export type ExchangeOfferStatus = 'pending' | 'matched' | 'completed' | 'cancelled';
+export type UserStatus = 'pending_phone' | 'active' | 'frozen' | 'disabled' | 'cancelled';
+export type RegisterSource = 'wechat' | 'mobile' | 'guest' | 'admin_import';
+export type LoginType = 'wechat' | 'mobile_code' | 'phone_login' | 'guest' | 'admin';
 
 export interface User {
   readonly id: string;
   readonly nickname: string;
+  readonly mobile?: string;
   readonly phone?: string;
+  readonly avatar_url?: string;
+  readonly status?: UserStatus;
+  readonly register_source?: RegisterSource;
+  readonly mobile_verified_at?: string;
+  readonly last_login_at?: string;
+  readonly last_login_ip?: string;
+  readonly last_device_id?: string;
   readonly created_at: string;
+  readonly updated_at?: string;
 }
 
 export interface Session {
   readonly token: string;
   readonly user_id: string;
   readonly expires_at: string;
+  readonly session_type?: 'normal' | 'limited' | 'admin';
+  readonly revoked_at?: string;
+}
+
+export interface UserProfile {
+  readonly user_id: string;
+  readonly gender?: 'unknown' | 'male' | 'female' | 'other';
+  readonly birthday?: string;
+  readonly province?: string;
+  readonly city?: string;
+  readonly bio?: string;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+export interface UserProfileMutation {
+  readonly nickname?: string;
+  readonly avatar_url?: string;
+  readonly gender?: 'unknown' | 'male' | 'female' | 'other';
+  readonly birthday?: string;
+  readonly province?: string;
+  readonly city?: string;
+  readonly bio?: string;
+}
+
+export interface UserAccount {
+  readonly user: User;
+  readonly profile?: UserProfile;
+  readonly member: UserMember;
+  readonly cash_balance: number;
+  readonly frozen_balance: number;
+  readonly status: UserStatus;
+}
+
+export interface UserLoginLog {
+  readonly id: number;
+  readonly user_id?: string;
+  readonly login_type: LoginType;
+  readonly login_account?: string;
+  readonly success: boolean;
+  readonly fail_reason?: string;
+  readonly ip?: string;
+  readonly device_id?: string;
+  readonly user_agent?: string;
+  readonly created_at: string;
+}
+
+export interface UserStatusLog {
+  readonly id: number;
+  readonly user_id: string;
+  readonly from_status: UserStatus;
+  readonly to_status: UserStatus;
+  readonly reason: string;
+  readonly operator_id?: string;
+  readonly created_at: string;
+}
+
+export interface AdminUserListItem {
+  readonly id: string;
+  readonly nickname: string;
+  readonly mobile?: string;
+  readonly avatar_url?: string;
+  readonly status: UserStatus;
+  readonly register_source: RegisterSource;
+  readonly member_level: MemberLevel;
+  readonly points_balance: number;
+  readonly cash_balance: number;
+  readonly total_draws: number;
+  readonly total_spent: number;
+  readonly last_login_at?: string;
+  readonly created_at: string;
+}
+
+export interface AdminUserListResult {
+  readonly items: readonly AdminUserListItem[];
+  readonly page: number;
+  readonly page_size: number;
+  readonly total: number;
+}
+
+export interface AdminUserDetail {
+  readonly user: User;
+  readonly profile?: UserProfile;
+  readonly member: UserMember;
+  readonly cash_balance: number;
+  readonly frozen_balance: number;
+  readonly identities: readonly WechatUser[];
+  readonly recent_draws: readonly DrawRecord[];
+  readonly points_logs: readonly UserPointsLog[];
+  readonly login_logs: readonly UserLoginLog[];
+  readonly status_logs: readonly UserStatusLog[];
+}
+
+export interface UserStatusMutation {
+  readonly status: UserStatus;
+  readonly reason: string;
+}
+
+export interface PointsAdjustMutation {
+  readonly points: number;
+  readonly reason: string;
+  readonly remark?: string;
+}
+
+export interface PhoneCodeRequest {
+  readonly phone: string;
+  readonly scene?: 'register' | 'login' | 'bind' | 'change_mobile';
+}
+
+export interface PhoneCodeResult {
+  readonly sent: boolean;
+  readonly provider: string;
+  readonly expires_in: number;
+  readonly dev_code?: string;
+  readonly message: string;
+}
+
+export interface PhoneVerifyRequest {
+  readonly phone: string;
+  readonly code: string;
+  readonly scene?: 'register' | 'login' | 'bind' | 'change_mobile';
 }
 
 export interface PityConfig {
@@ -778,6 +911,7 @@ export interface WechatLoginResult {
   readonly user_id: string;
   readonly token: string;
   readonly nickname: string;
+  readonly need_phone?: boolean;
   readonly is_new: boolean;
 }
 

@@ -29,7 +29,7 @@ interface WechatUserInfoResult {
  */
 export function getOauthUrl(scope: 'snsapi_base' | 'snsapi_userinfo' = 'snsapi_userinfo', state = ''): string {
   const config = getAppConfig().wechat;
-  if (!config.appId || !config.redirectUri) {
+  if (!config.quickLoginEnabled || !config.appId || !config.redirectUri) {
     throw wechatAuthFailed;
   }
 
@@ -42,7 +42,7 @@ export function getOauthUrl(scope: 'snsapi_base' | 'snsapi_userinfo' = 'snsapi_u
  */
 export async function exchangeCode(code: string): Promise<WechatAccessTokenResult> {
   const config = getAppConfig().wechat;
-  if (!config.appId || !config.appSecret) {
+  if (!config.quickLoginEnabled || !config.appId || !config.appSecret) {
     throw wechatAuthFailed;
   }
 
@@ -136,6 +136,10 @@ async function getJsTicket(): Promise<string> {
  */
 export async function getJssdkConfig(pageUrl: string): Promise<JssdkConfig> {
   const config = getAppConfig().wechat;
+  if (!config.quickLoginEnabled || !config.appId || !config.appSecret) {
+    throw wechatAuthFailed;
+  }
+
   const ticket = await getJsTicket();
   const nonceStr = randomBytes(8).toString('hex');
   const timestamp = Math.floor(Date.now() / 1000);

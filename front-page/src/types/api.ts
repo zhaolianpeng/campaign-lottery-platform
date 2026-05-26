@@ -3,6 +3,98 @@ export type CampaignStatus = 'draft' | 'online' | 'offline' | 'soldout';
 export type DrawResultType = 'win' | 'miss';
 export type MemberLevel = 'normal' | 'silver' | 'gold' | 'diamond';
 export type ExchangeOfferStatus = 'pending' | 'matched' | 'completed' | 'cancelled';
+export type UserStatus = 'pending_phone' | 'active' | 'frozen' | 'disabled' | 'cancelled';
+export type RegisterSource = 'wechat' | 'mobile' | 'guest' | 'admin_import';
+
+export interface User {
+  readonly id: string;
+  readonly nickname: string;
+  readonly mobile?: string;
+  readonly phone?: string;
+  readonly avatar_url?: string;
+  readonly status?: UserStatus;
+  readonly register_source?: RegisterSource;
+  readonly mobile_verified_at?: string;
+  readonly last_login_at?: string;
+  readonly created_at: string;
+  readonly updated_at?: string;
+}
+
+export interface UserProfile {
+  readonly user_id: string;
+  readonly gender?: 'unknown' | 'male' | 'female' | 'other';
+  readonly birthday?: string;
+  readonly province?: string;
+  readonly city?: string;
+  readonly bio?: string;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+export interface UserAccount {
+  readonly user: User;
+  readonly profile?: UserProfile;
+  readonly member: UserMember;
+  readonly cash_balance: number;
+  readonly frozen_balance: number;
+  readonly status: UserStatus;
+}
+
+export interface UserLoginLog {
+  readonly id: number;
+  readonly user_id?: string;
+  readonly login_type: string;
+  readonly login_account?: string;
+  readonly success: boolean;
+  readonly fail_reason?: string;
+  readonly created_at: string;
+}
+
+export interface UserStatusLog {
+  readonly id: number;
+  readonly user_id: string;
+  readonly from_status: UserStatus;
+  readonly to_status: UserStatus;
+  readonly reason: string;
+  readonly operator_id?: string;
+  readonly created_at: string;
+}
+
+export interface AdminUserListItem {
+  readonly id: string;
+  readonly nickname: string;
+  readonly mobile?: string;
+  readonly avatar_url?: string;
+  readonly status: UserStatus;
+  readonly register_source: RegisterSource;
+  readonly member_level: MemberLevel;
+  readonly points_balance: number;
+  readonly cash_balance: number;
+  readonly total_draws: number;
+  readonly total_spent: number;
+  readonly last_login_at?: string;
+  readonly created_at: string;
+}
+
+export interface AdminUserListResult {
+  readonly items: readonly AdminUserListItem[];
+  readonly page: number;
+  readonly page_size: number;
+  readonly total: number;
+}
+
+export interface AdminUserDetail {
+  readonly user: User;
+  readonly profile?: UserProfile;
+  readonly member: UserMember;
+  readonly cash_balance: number;
+  readonly frozen_balance: number;
+  readonly identities: readonly { readonly openid: string; readonly phone?: string; readonly nickname?: string; readonly avatar?: string }[];
+  readonly recent_draws: readonly DrawRecord[];
+  readonly points_logs: readonly UserPointsLog[];
+  readonly login_logs: readonly UserLoginLog[];
+  readonly status_logs: readonly UserStatusLog[];
+}
 
 export interface Campaign {
   readonly id: string;

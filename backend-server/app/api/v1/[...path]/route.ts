@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { bearerToken, corsHeaders, fail, ok } from '@/server/api-response';
+import { getAppConfig } from '@/server/config';
 import { notFound } from '@/server/errors';
 import { getService } from '@/server/singleton';
 import { getOauthUrl, getJssdkConfig } from '@/server/wechat-service';
@@ -162,6 +163,36 @@ const wechatPhoneSchema = z.object({
   iv: z.string().min(1),
 });
 
+const phoneCodeSchema = z.object({
+  phone: z.string().regex(/^1[3-9]\d{9}$/),
+  scene: z.enum(['register', 'login', 'bind', 'change_mobile']).optional().default('login'),
+});
+
+const phoneVerifySchema = phoneCodeSchema.extend({
+  code: z.string().min(4).max(8),
+});
+
+const profileSchema = z.object({
+  nickname: z.string().min(1).max(20).optional(),
+  avatar_url: z.string().url().optional(),
+  gender: z.enum(['unknown', 'male', 'female', 'other']).optional(),
+  birthday: z.string().optional(),
+  province: z.string().max(64).optional(),
+  city: z.string().max(64).optional(),
+  bio: z.string().max(200).optional(),
+});
+
+const userStatusSchema = z.object({
+  status: z.enum(['pending_phone', 'active', 'frozen', 'disabled', 'cancelled']),
+  reason: z.string().min(1).max(255),
+});
+
+const pointsAdjustSchema = z.object({
+  points: z.number().int(),
+  reason: z.string().min(1).max(120),
+  remark: z.string().max(255).optional().default(''),
+});
+
 type RouteContext = {
   readonly params: { readonly path?: readonly string[] } | Promise<{ readonly path?: readonly string[] }>;
 };
@@ -188,11 +219,22 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
     const service = getService();
     const token = bearerToken(request);
 
+    if (path.join('/') === 'config/public') {
+      const config = getAppConfig();
+      return ok('public config', {
+        wechat: {
+          quick_login_enabled: config.wechat.quickLoginEnabled,
+        },
+      });
+    }
     if (path.join('/') === 'campaigns') {
       return ok('campaign list', service.campaignList());
     }
     if (path.join('/') === 'me') {
       return ok('current user', service.currentUser(token));
+    }
+    if (path.join('/') === 'me/account') {
+      return ok('current user account', service.currentUserAccount(token));
     }
     if (path.join('/') === 'me/draw-records') {
       return ok('user draw records', service.drawRecords(token));
@@ -249,6 +291,27 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
     }
     if (path.join('/') === 'admin/statistics') {
       return ok('statistics', service.drawStatistics(token, searchParam(request, 'campaign_id')));
+    }
+    if (path.join('/') === 'admin/users') {
+      return ok('admin users', service.adminUsers(token, {
+        page: Number(searchParam(request, 'page') || 1),
+        page_size: Number(searchParam(request, 'page_size') || 20),
+        keyword: searchParam(request, 'keyword'),
+        status: searchParam(request, 'status'),
+        register_source: searchParam(request, 'register_source'),
+      }));
+    }
+    if (path[0] === 'admin' && path[1] === 'users' && path[2] && path.length === 3) {
+      return ok('admin user detail', service.adminUserDetail(token, path[2]));
+    }
+    if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'points-log') {
+      return ok('admin user points log', service.adminUserPointsLog(token, path[2]));
+    }
+    if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'login-logs') {
+      return ok('admin user login logs', service.adminUserLoginLogs(token, path[2]));
+    }
+    if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'status-logs') {
+      return ok('admin user status logs', service.adminUserStatusLogs(token, path[2]));
     }
     if (path.join('/') === 'battle-pass/info') {
       return ok('battle pass info', service.battlePassInfo(token));
@@ -350,6 +413,18 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     if (path.join('/') === 'auth/phone-login') {
       const phoneSchema = z.object({ phone: z.string().regex(/^1[3-9]\d{9}$/) });
       return ok('phone login succeeded', service.phoneLogin(phoneSchema.parse(body).phone));
+    }
+    if (path.join('/') === 'auth/phone/code') {
+      const input = phoneCodeSchema.parse(body);
+      return ok('phone code sent', service.sendPhoneCode(input.phone, input.scene));
+    }
+    if (path.join('/') === 'auth/phone/verify') {
+      const input = phoneVerifySchema.parse(body);
+      return ok('phone verified', service.verifyPhoneCode(input.phone, input.code, input.scene));
+    }
+    if (path.join('/') === 'auth/logout') {
+      service.logout(token);
+      return ok('logged out', null);
     }
     if (path.join('/') === 'lottery/draw' || path.join('/') === 'blindbox/draw') {
       return ok('blind box draw completed', service.blindBoxDraw(token, drawSchema.parse(body)));
@@ -469,6 +544,13 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
       );
       return ok('delivery approved', results);
     }
+    if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'points-adjust') {
+      const input = pointsAdjustSchema.parse(body);
+      return ok('points adjusted', service.adjustUserPoints(token, path[2], input.points, input.reason, input.remark));
+    }
+    if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'kick-sessions') {
+      return ok('user sessions revoked', service.revokeUserSessions(token, path[2]));
+    }
     if (path.join('/') === 'auth/wechat/login') {
       const input = wechatCodeSchema.parse(body);
       const result = await service.wechatLogin(input.code);
@@ -517,11 +599,18 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
     const token = bearerToken(request);
     const body = await readJson(request);
 
+    if (path.join('/') === 'me/profile') {
+      return ok('profile updated', service.updateCurrentUserProfile(token, profileSchema.parse(body)));
+    }
     if (path[0] === 'admin' && path[1] === 'fulfillment-tasks' && path[2]) {
       return ok(
         'fulfillment task updated',
         service.updateFulfillmentTask(token, Number(path[2]), fulfillmentMutationSchema.parse(body)),
       );
+    }
+    if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'status') {
+      const input = userStatusSchema.parse(body);
+      return ok('user status updated', service.updateUserStatus(token, path[2], input.status, input.reason));
     }
 
     throw notFound;

@@ -13,12 +13,25 @@ import {
   Settings,
   ShoppingBag,
   Truck,
+  UserRound,
 } from 'lucide-react';
 import { useState, type ComponentType } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { apiRequest } from '@/client/api';
-import type { AdminOverview, BattlePassInfo, Campaign, DrawRecord, FirstRechargePack, FulfillmentTask, Prize, ShopItem } from '@/types/api';
+import type {
+  AdminOverview,
+  AdminUserDetail,
+  AdminUserListResult,
+  BattlePassInfo,
+  Campaign,
+  DrawRecord,
+  FirstRechargePack,
+  FulfillmentTask,
+  Prize,
+  ShopItem,
+  UserStatus,
+} from '@/types/api';
 
 const loginSchema = z.object({
   username: z.string().min(1),
@@ -26,7 +39,7 @@ const loginSchema = z.object({
 });
 
 type LoginValues = z.infer<typeof loginSchema>;
-type AdminTab = 'overview' | 'campaigns' | 'prizes' | 'pity' | 'delivery' | 'records' | 'monthcard' | 'shop';
+type AdminTab = 'overview' | 'users' | 'campaigns' | 'prizes' | 'pity' | 'delivery' | 'records' | 'monthcard' | 'shop';
 
 interface AdminLoginPayload {
   readonly token: string;
@@ -40,6 +53,7 @@ interface AdminTabItem {
 
 const adminTabs: readonly AdminTabItem[] = [
   { key: 'overview', label: '总览', icon: BarChart3 },
+  { key: 'users', label: '用户', icon: UserRound },
   { key: 'campaigns', label: '活动', icon: Package },
   { key: 'prizes', label: '礼品', icon: Gift },
   { key: 'pity', label: '概率', icon: Settings },
@@ -50,10 +64,10 @@ const adminTabs: readonly AdminTabItem[] = [
 ];
 
 function statusClass(status: string): string {
-  if (status === 'online' || status === 'win' || status === 'fulfilled') {
+  if (status === 'online' || status === 'win' || status === 'fulfilled' || status === 'active') {
     return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
   }
-  if (status === 'draft' || status === 'pending') {
+  if (status === 'draft' || status === 'pending' || status === 'pending_phone' || status === 'frozen') {
     return 'border-amber-500/30 bg-amber-500/10 text-amber-300';
   }
   return 'border-red-500/30 bg-red-500/10 text-red-300';
@@ -67,6 +81,8 @@ export function AdminApp(): React.ReactNode {
   const [token, setToken] = useState('');
   const [tab, setTab] = useState<AdminTab>('overview');
   const [selectedCampaignId, setSelectedCampaignId] = useState('');
+  const [userKeyword, setUserKeyword] = useState('');
+  const [selectedUserId, setSelectedUserId] = useState('');
   const queryClient = useQueryClient();
 
   const loginForm = useForm<LoginValues>({
@@ -96,6 +112,22 @@ export function AdminApp(): React.ReactNode {
     queryKey: ['admin-campaigns', token],
     queryFn: () => apiRequest<Campaign[]>('/api/v1/admin/campaigns', token),
     enabled: Boolean(token),
+  });
+
+  const usersQuery = useQuery({
+    queryKey: ['admin-users', token, userKeyword],
+    queryFn: () =>
+      apiRequest<AdminUserListResult>(
+        `/api/v1/admin/users?page=1&page_size=50${userKeyword ? `&keyword=${encodeURIComponent(userKeyword)}` : ''}`,
+        token,
+      ),
+    enabled: Boolean(token) && tab === 'users',
+  });
+
+  const userDetailQuery = useQuery({
+    queryKey: ['admin-user-detail', token, selectedUserId],
+    queryFn: () => apiRequest<AdminUserDetail>(`/api/v1/admin/users/${selectedUserId}`, token),
+    enabled: Boolean(token && selectedUserId) && tab === 'users',
   });
 
   const prizesQuery = useQuery({
@@ -195,6 +227,31 @@ export function AdminApp(): React.ReactNode {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-delivery', token] });
       void queryClient.invalidateQueries({ queryKey: ['admin-overview', token] });
+    },
+  });
+
+  const updateUserStatusMutation = useMutation({
+    mutationFn: ({ userId, status }: { readonly userId: string; readonly status: UserStatus }) =>
+      apiRequest(`/api/v1/admin/users/${userId}/status`, token, {
+        method: 'PATCH',
+        body: JSON.stringify({ status, reason: `管理端设置为 ${status}` }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-users', token] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-user-detail', token, selectedUserId] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-overview', token] });
+    },
+  });
+
+  const adjustPointsMutation = useMutation({
+    mutationFn: ({ userId, points }: { readonly userId: string; readonly points: number }) =>
+      apiRequest(`/api/v1/admin/users/${userId}/points-adjust`, token, {
+        method: 'POST',
+        body: JSON.stringify({ points, reason: '管理端人工调整', remark: 'MVP 后台操作' }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-users', token] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-user-detail', token, selectedUserId] });
     },
   });
 
@@ -323,6 +380,130 @@ export function AdminApp(): React.ReactNode {
                 />
               ))}
             </AdminList>
+          </section>
+        ) : null}
+
+        {tab === 'users' ? (
+          <section className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-xl font-black text-white">用户管理</h2>
+              <input
+                className="w-full rounded-lg border border-zinc-700 bg-[#222] px-3 py-2 text-sm text-zinc-100 outline-none focus:border-orange-500 md:w-72"
+                onChange={(event) => setUserKeyword(event.target.value)}
+                placeholder="搜索手机号 / 昵称 / 用户ID"
+                value={userKeyword}
+              />
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="space-y-2">
+                {(usersQuery.data?.items ?? []).map((user) => (
+                  <DataCard
+                    action={
+                      <button
+                        className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300"
+                        onClick={() => setSelectedUserId(user.id)}
+                        type="button"
+                      >
+                        详情
+                      </button>
+                    }
+                    badge={user.status}
+                    badgeClass={statusClass(user.status)}
+                    key={user.id}
+                    subtitle={`${user.mobile?.replace(/^(\d{3})\d{4}(\d{4})$/, '$1****$2') ?? '未绑定手机号'} · ${user.register_source} · ${user.points_balance}积分 · 抽奖${user.total_draws}次`}
+                    title={user.nickname}
+                  />
+                ))}
+                {usersQuery.data?.items.length === 0 ? <EmptyAdmin text="暂无匹配用户" /> : null}
+              </div>
+
+              <aside className="rounded-xl border border-zinc-800 bg-[#1a1a24] p-4">
+                {userDetailQuery.data ? (
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="text-lg font-black text-white">{userDetailQuery.data.user.nickname}</h3>
+                      <p className="mt-1 text-xs text-zinc-500">{userDetailQuery.data.user.id}</p>
+                      <p className="mt-2 text-sm text-zinc-300">
+                        手机：{userDetailQuery.data.user.mobile?.replace(/^(\d{3})\d{4}(\d{4})$/, '$1****$2') ?? '未绑定'}
+                      </p>
+                      <p className="text-sm text-zinc-300">状态：{userDetailQuery.data.user.status ?? 'active'}</p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-center text-sm">
+                      <div className="rounded-lg bg-white/[0.04] p-3">
+                        <div className="text-xl font-black text-orange-400">{userDetailQuery.data.member.points}</div>
+                        <div className="text-xs text-zinc-500">积分</div>
+                      </div>
+                      <div className="rounded-lg bg-white/[0.04] p-3">
+                        <div className="text-xl font-black text-orange-400">{userDetailQuery.data.member.total_draws}</div>
+                        <div className="text-xs text-zinc-500">抽奖次数</div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50"
+                        disabled={updateUserStatusMutation.isPending}
+                        onClick={() => updateUserStatusMutation.mutate({ userId: userDetailQuery.data.user.id, status: 'active' })}
+                        type="button"
+                      >
+                        解冻/启用
+                      </button>
+                      <button
+                        className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50"
+                        disabled={updateUserStatusMutation.isPending}
+                        onClick={() => updateUserStatusMutation.mutate({ userId: userDetailQuery.data.user.id, status: 'frozen' })}
+                        type="button"
+                      >
+                        冻结
+                      </button>
+                      <button
+                        className="rounded-md bg-red-700 px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50"
+                        disabled={updateUserStatusMutation.isPending}
+                        onClick={() => updateUserStatusMutation.mutate({ userId: userDetailQuery.data.user.id, status: 'disabled' })}
+                        type="button"
+                      >
+                        禁用
+                      </button>
+                      <button
+                        className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 disabled:opacity-50"
+                        disabled={adjustPointsMutation.isPending}
+                        onClick={() => {
+                          const value = Number(window.prompt('输入积分调整数，正数增加，负数扣减', '100') ?? 0);
+                          if (value) {
+                            adjustPointsMutation.mutate({ userId: userDetailQuery.data.user.id, points: value });
+                          }
+                        }}
+                        type="button"
+                      >
+                        调整积分
+                      </button>
+                    </div>
+
+                    <AdminList title="最近积分流水">
+                      {userDetailQuery.data.points_logs.slice(0, 5).map((log) => (
+                        <DataCard
+                          badge={log.points > 0 ? `+${log.points}` : `${log.points}`}
+                          badgeClass={log.points > 0 ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-red-500/30 bg-red-500/10 text-red-300'}
+                          key={log.id}
+                          subtitle={`${log.reason} · 余额 ${log.balance}`}
+                          title={log.remark}
+                        />
+                      ))}
+                    </AdminList>
+
+                    <AdminList title="状态记录">
+                      {userDetailQuery.data.status_logs.slice(0, 5).map((log) => (
+                        <DataCard key={log.id} subtitle={log.reason} title={`${log.from_status} -> ${log.to_status}`} />
+                      ))}
+                    </AdminList>
+                  </div>
+                ) : (
+                  <EmptyAdmin text="选择左侧用户查看详情" />
+                )}
+              </aside>
+            </div>
           </section>
         ) : null}
 

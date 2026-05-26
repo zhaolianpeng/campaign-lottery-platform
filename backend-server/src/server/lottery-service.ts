@@ -8,6 +8,8 @@ import type {
   ActivityListInfo,
   ActivityParticipation,
   ActivityReward,
+  AdminUserDetail,
+  AdminUserListResult,
   AssistClaimResult,
   AssistProgress,
   AssistType,
@@ -69,7 +71,13 @@ import type {
   UserMember,
   UserPointsLog,
   User,
+  UserAccount,
   WechatLoginResult,
+  PhoneCodeResult,
+  UserLoginLog,
+  UserProfileMutation,
+  UserStatus,
+  UserStatusLog,
 } from './types';
 
 export class LotteryService {
@@ -96,6 +104,7 @@ export class LotteryService {
         user_id: existing.user_id,
         token: session.token,
         nickname: existing.nickname ?? '',
+        need_phone: !existing.phone,
         is_new: false,
       };
     }
@@ -112,18 +121,19 @@ export class LotteryService {
       user_id: created.user.id,
       token: created.session.token,
       nickname: created.user.nickname,
+      need_phone: created.user.status === 'pending_phone',
       is_new: true,
     };
   }
 
-  public wechatBindPhone(openid: string, encryptedData: string, iv: string): { readonly phone: string } {
+  public wechatBindPhone(openid: string, encryptedData: string, iv: string): { readonly phone: string; readonly user: User } {
     const sessionKey = this.store.getWechatSessionKey(openid);
     if (!sessionKey) {
       throw wechatPhoneRequired;
     }
     const phone = decryptPhoneNumber(sessionKey, encryptedData, iv);
-    this.store.bindWechatPhone(openid, phone);
-    return { phone };
+    const user = this.store.bindWechatPhone(openid, phone);
+    return { phone, user };
   }
 
   public phoneLogin(phone: string): ReturnType<MemoryStore['createPhoneUser']> {
@@ -135,6 +145,14 @@ export class LotteryService {
     return this.store.createPhoneUser(phone);
   }
 
+  public sendPhoneCode(phone: string, scene?: string): PhoneCodeResult {
+    return this.store.sendPhoneCode(phone, scene);
+  }
+
+  public verifyPhoneCode(phone: string, code: string, scene?: string): ReturnType<MemoryStore['verifyPhoneCode']> {
+    return this.store.verifyPhoneCode(phone, code, scene);
+  }
+
   public campaignList(): readonly CampaignListItem[] {
     return this.store.campaigns().map((campaign) => ({
       campaign,
@@ -144,6 +162,20 @@ export class LotteryService {
 
   public currentUser(token: string): User {
     return this.store.userFromToken(token);
+  }
+
+  public updateCurrentUserProfile(token: string, input: UserProfileMutation): UserAccount {
+    const user = this.store.userFromToken(token);
+    return this.store.updateUserProfile(user.id, input);
+  }
+
+  public currentUserAccount(token: string): UserAccount {
+    const user = this.store.userFromToken(token);
+    return this.store.userAccount(user.id);
+  }
+
+  public logout(token: string): void {
+    this.store.logout(token);
   }
 
   public campaignListWithProgress(token: string): readonly CampaignListItem[] {
@@ -177,7 +209,7 @@ export class LotteryService {
   }
 
   public blindBoxDraw(token: string, config: DrawConfig): BlindBoxDrawResult {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     const campaign = this.store.getCampaign(config.campaign_id);
     const now = Date.now();
     if (
@@ -291,7 +323,7 @@ export class LotteryService {
   }
 
   public createExchangeOffer(token: string, input: ExchangeOfferMutation): ExchangeOffer {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     return this.store.createExchangeOffer(user.id, input);
   }
 
@@ -301,7 +333,7 @@ export class LotteryService {
   }
 
   public acceptExchangeOffer(token: string, offerId: string): ExchangeOffer {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     return this.store.acceptExchangeOffer(user.id, offerId);
   }
 
@@ -316,17 +348,17 @@ export class LotteryService {
   }
 
   public redeemPrize(token: string, input: RedeemRequest): RedeemResult {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     return this.store.redeemPrize(user.id, input);
   }
 
   public dailyCheckIn(token: string): CheckInResult {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     return this.store.dailyCheckIn(user.id);
   }
 
   public shareReward(token: string): ShareRewardResult {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     return this.store.shareReward(user.id);
   }
 
@@ -403,6 +435,38 @@ export class LotteryService {
     return this.store.drawStatistics(token, campaignId);
   }
 
+  public adminUsers(token: string, query: { readonly page?: number; readonly page_size?: number; readonly keyword?: string; readonly status?: string; readonly register_source?: string }): AdminUserListResult {
+    return this.store.adminUsers(token, query);
+  }
+
+  public adminUserDetail(token: string, userId: string): AdminUserDetail {
+    return this.store.adminUserDetail(token, userId);
+  }
+
+  public updateUserStatus(token: string, userId: string, status: UserStatus, reason: string): User {
+    return this.store.updateUserStatus(token, userId, status, reason);
+  }
+
+  public adjustUserPoints(token: string, userId: string, points: number, reason: string, remark = ''): UserMember {
+    return this.store.adjustUserPoints(token, userId, points, reason, remark);
+  }
+
+  public adminUserPointsLog(token: string, userId: string): readonly UserPointsLog[] {
+    return this.store.adminUserPointsLog(token, userId);
+  }
+
+  public adminUserLoginLogs(token: string, userId: string): readonly UserLoginLog[] {
+    return this.store.adminUserLoginLogs(token, userId);
+  }
+
+  public adminUserStatusLogs(token: string, userId: string): readonly UserStatusLog[] {
+    return this.store.adminUserStatusLogs(token, userId);
+  }
+
+  public revokeUserSessions(token: string, userId: string): { readonly revoked: number } {
+    return { revoked: this.store.revokeUserSessions(token, userId) };
+  }
+
   public blendPrizes(token: string, input: BlendRequest): BlendResult {
     const user = this.store.userFromToken(token);
     return this.store.blendPrizes(user.id, input);
@@ -413,7 +477,7 @@ export class LotteryService {
   }
 
   public buyCard(token: string, input: BuyCardRequest): BuyCardResult {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     return this.store.buyCard(user.id, input);
   }
 
@@ -428,7 +492,7 @@ export class LotteryService {
   }
 
   public buyMonthCard(token: string, cardType: CardType): MonthCardPurchaseResult {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     return this.store.buyMonthCard(user.id, cardType);
   }
 
@@ -438,12 +502,12 @@ export class LotteryService {
   }
 
   public buyBattlePass(token: string): BattlePass {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     return this.store.buyBattlePass(user.id);
   }
 
   public claimBattlePassReward(token: string, level: number): boolean {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     return this.store.claimBattlePassReward(user.id, level);
   }
 
@@ -452,7 +516,7 @@ export class LotteryService {
   }
 
   public buyShopItem(token: string, input: BuyShopItemRequest): BuyShopItemResult {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     return this.store.buyShopItem(user.id, input);
   }
 
@@ -462,7 +526,7 @@ export class LotteryService {
   }
 
   public useItem(token: string, input: UseItemRequest): { readonly item_type: string; readonly remaining: number; readonly message: string } {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     return this.store.useItem(user.id, input);
   }
 
@@ -476,7 +540,7 @@ export class LotteryService {
   }
 
   public claimFirstRecharge(token: string, input: ClaimFirstRechargeRequest): ClaimFirstRechargeResult {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     return this.store.claimFirstRecharge(user.id, input);
   }
 
@@ -541,12 +605,12 @@ export class LotteryService {
   }
 
   public sendGift(token: string, input: SendGiftRequest): GiftRecord {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     return this.store.sendGift(user.id, input);
   }
 
   public receiveGift(token: string, giftId: string): ReturnType<MemoryStore['receiveGift']> {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     return this.store.receiveGift(user.id, giftId);
   }
 
@@ -576,7 +640,7 @@ export class LotteryService {
   }
 
   public composePuzzle(token: string, templateId: string): ComposePuzzleResult {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     return this.store.composePuzzle(user.id, templateId);
   }
 
@@ -611,7 +675,7 @@ export class LotteryService {
   }
 
   public purchaseFlash(token: string, flashId: string): FlashPurchaseResult {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     return this.store.purchaseFlash(user.id, flashId);
   }
 
@@ -636,7 +700,7 @@ export class LotteryService {
   }
 
   public claimActivityReward(token: string, input: ClaimActivityRewardRequest): ActivityReward {
-    const user = this.store.userFromToken(token);
+    const user = this.assetUserFromToken(token);
     return this.store.claimActivityReward(user.id, input);
   }
 
@@ -698,5 +762,11 @@ export class LotteryService {
     } catch {
       return null;
     }
+  }
+
+  private assetUserFromToken(token: string): User {
+    const user = this.store.userFromToken(token);
+    this.store.assertAssetAllowed(user.id);
+    return user;
   }
 }

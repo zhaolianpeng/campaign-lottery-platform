@@ -43,6 +43,7 @@ import type {
   UserInventory,
   UserItem,
   UserFirstRecharge,
+  UserAccount,
   UserMember,
   UserPointsLog,
 } from '@/types/api';
@@ -84,6 +85,10 @@ interface TabItem {
   readonly key: TabKey;
   readonly label: string;
   readonly icon: ComponentType<{ readonly size?: number; readonly className?: string }>;
+}
+
+interface NavigatorWithMobileNumber extends Navigator {
+  readonly getMobileNumber?: () => Promise<{ readonly number?: string }>;
 }
 
 const tabs: readonly TabItem[] = [
@@ -166,11 +171,9 @@ export function LotteryApp(): React.ReactNode {
   const [wechatError, setWechatError] = useState('');
 
   // 在组件挂载时检查微信登录回调
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (typeof window !== 'undefined' && !token && !wechatLoggingIn) {
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
-    const state = params.get('state');
     if (code) {
       setWechatLoggingIn(true);
       // 清除 URL 中的 code 参数
@@ -222,6 +225,12 @@ export function LotteryApp(): React.ReactNode {
   const memberQuery = useQuery({
     queryKey: ['member', token],
     queryFn: () => apiRequest<UserMember>('/api/v1/blindbox/member', token),
+    enabled: Boolean(token),
+  });
+
+  const accountQuery = useQuery({
+    queryKey: ['me-account', token],
+    queryFn: () => apiRequest<UserAccount>('/api/v1/me/account', token),
     enabled: Boolean(token),
   });
 
@@ -612,8 +621,9 @@ export function LotteryApp(): React.ReactNode {
                 let phone = '';
                 // 尝试 WebOTP API 自动获取本机号码（仅 HTTPS 且部分运营商支持）
                 try {
-                  if ('getMobileNumber' in navigator) {
-                    const result = await (navigator as any).getMobileNumber();
+                  const mobileNavigator = navigator as NavigatorWithMobileNumber;
+                  if (mobileNavigator.getMobileNumber) {
+                    const result = await mobileNavigator.getMobileNumber();
                     if (result?.number) {
                       phone = result.number;
                     }
@@ -673,7 +683,10 @@ export function LotteryApp(): React.ReactNode {
         <header className="sticky top-0 z-40 flex items-center gap-2 bg-[linear-gradient(180deg,#0d0f1a_68%,rgba(13,15,26,0))] py-3">
           <div className="min-w-0 flex-1">
             <div className="text-lg font-black tracking-tight text-white">BOX·MAGIC</div>
-            <div className="truncate text-xs text-violet-100/60">{nickname ? `用户 ${nickname}` : '盲盒收藏家'}</div>
+            <div className="truncate text-xs text-violet-100/60">
+              {accountQuery.data?.user.nickname || nickname ? `用户 ${accountQuery.data?.user.nickname ?? nickname}` : '盲盒收藏家'}
+              {accountQuery.data?.user.mobile ? ` · ${accountQuery.data.user.mobile.replace(/^(\d{3})\d{4}(\d{4})$/, '$1****$2')}` : ''}
+            </div>
           </div>
           <span className="rounded-full bg-[linear-gradient(135deg,#fbbf24,#f59e0b)] px-3 py-1 text-xs font-black text-slate-950">
             {memberQuery.data?.points ?? 0}
@@ -687,6 +700,15 @@ export function LotteryApp(): React.ReactNode {
             签到
           </button>
         </header>
+
+        {accountQuery.data && accountQuery.data.status !== 'active' ? (
+          <div className="mb-3 rounded-2xl border border-amber-300/20 bg-amber-500/15 px-4 py-3 text-sm text-amber-50">
+            当前账号状态：{accountQuery.data.status}。
+            {accountQuery.data.status === 'pending_phone'
+              ? '请完成手机号验证后再进行抽盒、兑换、购买和领奖。'
+              : '部分资产相关操作可能受限。'}
+          </div>
+        ) : null}
 
         <section className="mb-3 rounded-3xl border border-violet-300/20 bg-[linear-gradient(135deg,rgba(167,139,250,0.16),rgba(244,114,182,0.16))] p-3">
           <div className="flex gap-3 overflow-x-auto [scrollbar-width:none]">
