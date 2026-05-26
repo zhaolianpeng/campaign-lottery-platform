@@ -53,3 +53,10 @@ export async function apiRequest<T>(
   }
   return payload.data;
 }
+
+export function apiPostRequest<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
+  return apiRequest<T>(path, token, {
+    ...init,
+    method: init.method ?? 'POST',
+  });
+}

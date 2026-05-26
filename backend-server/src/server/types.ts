@@ -905,6 +905,7 @@ export interface FlashListInfo {
 }
 
 export interface ActivityRules {
+  readonly campaign_id?: string;
   readonly up_prize_id?: string;
   readonly up_multiplier?: number;
   readonly up_level?: string;

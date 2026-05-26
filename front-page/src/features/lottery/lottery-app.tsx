@@ -21,7 +21,7 @@ import {
 import { useEffect, useMemo, useState, type ComponentType } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
-import { ApiRequestError, apiAssetUrl, apiRequest } from '@/client/api';
+import { ApiRequestError, apiAssetUrl, apiPostRequest, apiRequest } from '@/client/api';
 import type {
   ActivityListInfo,
   AssistProgress,
@@ -304,7 +304,7 @@ export function LotteryApp(): React.ReactNode {
 
   const publicConfigQuery = useQuery({
     queryKey: ['public-config'],
-    queryFn: () => apiRequest<PublicConfig>('/api/v1/config/public', ''),
+    queryFn: () => apiPostRequest<PublicConfig>('/api/v1/config/public', ''),
     enabled: true,
   });
 
@@ -406,130 +406,140 @@ export function LotteryApp(): React.ReactNode {
 
   const campaignsQuery = useQuery({
     queryKey: ['campaigns', token || 'public'],
-    queryFn: () => apiRequest<CampaignListItem[]>(token ? '/api/v1/blindbox/campaigns' : '/api/v1/campaigns', token),
+    queryFn: () => apiPostRequest<CampaignListItem[]>(token ? '/api/v1/blindbox/campaigns' : '/api/v1/campaigns', token),
     enabled: true,
   });
 
   const memberQuery = useQuery({
     queryKey: ['member', token],
-    queryFn: () => apiRequest<UserMember>('/api/v1/blindbox/member', token),
+    queryFn: () => apiPostRequest<UserMember>('/api/v1/blindbox/member', token),
     enabled: Boolean(token),
   });
 
   const accountQuery = useQuery({
     queryKey: ['me-account', token],
-    queryFn: () => apiRequest<UserAccount>('/api/v1/me/account', token),
+    queryFn: () => apiPostRequest<UserAccount>('/api/v1/me/account', token),
     enabled: Boolean(token),
   });
 
   const inventoryQuery = useQuery({
     queryKey: ['inventory', token],
-    queryFn: () => apiRequest<UserInventory[]>('/api/v1/blindbox/inventory', token),
+    queryFn: () => apiPostRequest<UserInventory[]>('/api/v1/blindbox/inventory', token),
     enabled: Boolean(token) && (activeTab === 'inventory' || activeTab === 'social' || showExchangeModal),
   });
 
   const exchangeQuery = useQuery({
     queryKey: ['exchange-offers', token],
-    queryFn: () => apiRequest<ExchangeOffer[]>('/api/v1/blindbox/exchange-offers', token),
+    queryFn: () => apiPostRequest<ExchangeOffer[]>('/api/v1/blindbox/exchange-offers', token),
     enabled: Boolean(token) && activeTab === 'exchange',
   });
 
   const leaderboardQuery = useQuery({
     queryKey: ['leaderboard', token],
-    queryFn: () => apiRequest<LeaderboardEntry[]>('/api/v1/blindbox/leaderboard?limit=20', token),
+    queryFn: () => apiPostRequest<LeaderboardEntry[]>('/api/v1/blindbox/leaderboard?limit=20', token),
     enabled: Boolean(token) && activeTab === 'rank',
   });
 
   const pointsLogQuery = useQuery({
     queryKey: ['points-log', token],
-    queryFn: () => apiRequest<UserPointsLog[]>('/api/v1/blindbox/points-log', token),
+    queryFn: () => apiPostRequest<UserPointsLog[]>('/api/v1/blindbox/points-log', token),
     enabled: Boolean(token) && activeTab === 'member',
   });
 
   const shopQuery = useQuery({
     queryKey: ['shop-items', token],
-    queryFn: () => apiRequest<ShopItem[]>('/api/v1/shop/items', token),
+    queryFn: () => apiPostRequest<ShopItem[]>('/api/v1/shop/items', token),
     enabled: Boolean(token) && activeTab === 'shop',
   });
 
   const userItemsQuery = useQuery({
     queryKey: ['user-items', token],
-    queryFn: () => apiRequest<UserItem[]>('/api/v1/shop/items/inventory', token),
+    queryFn: () => apiPostRequest<UserItem[]>('/api/v1/shop/items/inventory', token),
     enabled: Boolean(token) && activeTab === 'shop',
   });
 
   const firstRechargePacksQuery = useQuery({
     queryKey: ['first-recharge-packs', token],
-    queryFn: () => apiRequest<FirstRechargePack[]>('/api/v1/first-recharge/packs', token),
+    queryFn: () => apiPostRequest<FirstRechargePack[]>('/api/v1/first-recharge/packs', token),
     enabled: Boolean(token) && activeTab === 'shop',
   });
 
   const firstRechargeStatusQuery = useQuery({
     queryKey: ['first-recharge-status', token],
-    queryFn: () => apiRequest<UserFirstRecharge>('/api/v1/first-recharge/status', token),
+    queryFn: () => apiPostRequest<UserFirstRecharge>('/api/v1/first-recharge/status', token),
     enabled: Boolean(token) && activeTab === 'shop',
   });
 
   const monthCardQuery = useQuery({
     queryKey: ['month-card', token],
-    queryFn: () => apiRequest<MonthCardStatus>('/api/v1/month-card/status', token),
+    queryFn: () => apiPostRequest<MonthCardStatus>('/api/v1/month-card/status', token),
     enabled: Boolean(token) && activeTab === 'member',
   });
 
   const battlePassQuery = useQuery({
     queryKey: ['battle-pass', token],
-    queryFn: () => apiRequest<BattlePassInfo>('/api/v1/battle-pass/info', token),
+    queryFn: () => apiPostRequest<BattlePassInfo>('/api/v1/battle-pass/info', token),
     enabled: Boolean(token) && activeTab === 'member',
   });
 
   const inviteStatsQuery = useQuery({
     queryKey: ['invite-stats', token],
-    queryFn: () => apiRequest<InviteStats>('/api/v1/share/invite-stats', token),
+    queryFn: () => apiPostRequest<InviteStats>('/api/v1/share/invite-stats', token),
     enabled: Boolean(token) && activeTab === 'social',
   });
 
   const assistProgressQuery = useQuery({
     queryKey: ['assist-progress', token],
-    queryFn: () => apiRequest<Record<string, AssistProgress>>('/api/v1/share/assist-progress', token),
+    queryFn: () => apiPostRequest<Record<string, AssistProgress>>('/api/v1/share/assist-progress', token),
     enabled: Boolean(token) && activeTab === 'social',
   });
 
   const teamQuery = useQuery({
     queryKey: ['team', token],
-    queryFn: () => apiRequest<TeamInfo>('/api/v1/team/my', token),
+    queryFn: () => apiPostRequest<TeamInfo>('/api/v1/team/my', token),
     enabled: Boolean(token) && activeTab === 'social',
   });
 
   const giftsQuery = useQuery({
     queryKey: ['incoming-gifts', token],
-    queryFn: () => apiRequest<GiftRecord[]>('/api/v1/share/gifts/incoming', token),
+    queryFn: () => apiPostRequest<GiftRecord[]>('/api/v1/share/gifts/incoming', token),
     enabled: Boolean(token) && activeTab === 'social',
   });
 
   const puzzleQuery = useQuery({
     queryKey: ['puzzles', token],
-    queryFn: () => apiRequest<PuzzleInfo[]>('/api/v1/puzzle/my', token),
+    queryFn: () => apiPostRequest<PuzzleInfo[]>('/api/v1/puzzle/my', token),
     enabled: Boolean(token) && activeTab === 'puzzle',
   });
 
   const flashQuery = useQuery({
     queryKey: ['flash-list', token],
-    queryFn: () => apiRequest<FlashListInfo[]>('/api/v1/flash/list', token),
+    queryFn: () => apiPostRequest<FlashListInfo[]>('/api/v1/flash/list', token),
     enabled: Boolean(token) && activeTab === 'puzzle',
   });
 
   const activitiesQuery = useQuery({
     queryKey: ['activities', token],
-    queryFn: () => apiRequest<ActivityListInfo[]>('/api/v1/activities', token),
+    queryFn: () => apiPostRequest<ActivityListInfo[]>('/api/v1/activities', token),
     enabled: Boolean(token) && activeTab === 'series',
   });
+
+  function activityTargetCampaignId(item: ActivityListInfo): string | null {
+    const campaigns = campaignsQuery.data ?? [];
+    const targetId = item.activity.rules?.campaign_id ?? item.activity.rules?.up_campaign_id;
+    if (!targetId) {
+      return null;
+    }
+    const matched = campaigns.find((campaignItem) => campaignItem.campaign.id === targetId || campaignItem.campaign.slug === targetId);
+    return matched?.campaign.id ?? null;
+  }
 
   const selectedCampaign = campaignsQuery.data?.find((item) => item.campaign.id === selectedCampaignId);
 
   const progressQuery = useQuery({
     queryKey: ['series-progress', token, selectedCampaignId],
     queryFn: () =>
-      apiRequest<SeriesProgress>(
+      apiPostRequest<SeriesProgress>(
         `/api/v1/blindbox/series-progress?campaign_id=${selectedCampaignId ?? ''}`,
         token,
       ),
@@ -539,7 +549,7 @@ export function LotteryApp(): React.ReactNode {
   const probabilityQuery = useQuery({
     queryKey: ['campaign-probabilities', token, selectedCampaignId],
     queryFn: () =>
-      apiRequest<CampaignProbabilities>(
+      apiPostRequest<CampaignProbabilities>(
         `/api/v1/blindbox/campaigns/${selectedCampaignId ?? ''}/probabilities`,
         token,
       ),
@@ -864,12 +874,12 @@ export function LotteryApp(): React.ReactNode {
               <button
                 type="button"
                 onClick={() => {
-                  apiRequest<{ url: string }>('/api/v1/auth/wechat/oauth-url', '')
+                  apiPostRequest<{ url: string }>('/api/v1/auth/wechat/oauth-url', '')
                     .then((data) => {
                       window.location.href = data.url;
                     })
-                    .catch(() => {
-                      window.location.href = `/api/v1/auth/wechat/oauth-url`;
+                    .catch((error) => {
+                      setWechatError(error instanceof Error ? error.message : '获取微信授权地址失败');
                     });
                 }}
                 className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-3 font-medium text-white hover:bg-white/[0.10]"
@@ -1158,16 +1168,32 @@ export function LotteryApp(): React.ReactNode {
 
             {activeTab === 'series' ? (
               <section className="space-y-3">
-                {(activitiesQuery.data ?? []).map((item) => (
-                  <article className="rounded-3xl border border-pink-300/30 bg-pink-400/10 p-4" key={item.activity.id}>
-                    <div className="text-xs font-bold text-pink-200">{item.activity.type}</div>
-                    <h3 className="mt-1 font-black text-white">{item.activity.name}</h3>
-                    <p className="mt-1 text-sm text-violet-100/65">{item.activity.description}</p>
-                    {item.rewards?.[0] ? (
-                      <div className="mt-2 text-xs text-pink-100/80">奖励：{item.rewards[0].reward_name} x{item.rewards[0].reward_qty}</div>
-                    ) : null}
-                  </article>
-                ))}
+                {(activitiesQuery.data ?? []).map((item) => {
+                  const targetCampaignId = activityTargetCampaignId(item);
+                  return (
+                    <button
+                      className="w-full rounded-3xl border border-pink-300/30 bg-pink-400/10 p-4 text-left transition active:scale-[0.98] disabled:cursor-default disabled:opacity-80"
+                      disabled={!targetCampaignId}
+                      key={item.activity.id}
+                      onClick={() => {
+                        if (targetCampaignId) {
+                          openCampaign(targetCampaignId);
+                        }
+                      }}
+                      type="button"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-xs font-bold text-pink-200">{item.activity.type}</div>
+                        {targetCampaignId ? <div className="text-[11px] font-semibold text-pink-100/80">点击前往盲盒活动</div> : null}
+                      </div>
+                      <h3 className="mt-1 font-black text-white">{item.activity.name}</h3>
+                      <p className="mt-1 text-sm text-violet-100/65">{item.activity.description}</p>
+                      {item.rewards?.[0] ? (
+                        <div className="mt-2 text-xs text-pink-100/80">奖励：{item.rewards[0].reward_name} x{item.rewards[0].reward_qty}</div>
+                      ) : null}
+                    </button>
+                  );
+                })}
                 {campaignsQuery.isLoading ? <SkeletonCards /> : null}
                 {(campaignsQuery.data ?? []).map((item) => (
                   <button

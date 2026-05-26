@@ -489,6 +489,15 @@ export interface ActivityListInfo {
     readonly name: string;
     readonly description: string;
     readonly type: string;
+    readonly banner_url?: string;
+    readonly rules?: {
+      readonly campaign_id?: string;
+      readonly up_campaign_id?: string;
+      readonly up_prize_id?: string;
+      readonly up_multiplier?: number;
+      readonly up_level?: string;
+      readonly checkin_multiplier?: number;
+    };
     readonly status: string;
   };
   readonly joined: boolean;

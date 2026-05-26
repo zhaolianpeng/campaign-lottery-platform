@@ -273,201 +273,209 @@ function searchParam(request: Request, name: string): string {
   return new URL(request.url).searchParams.get(name) ?? '';
 }
 
+async function handleReadRequest(request: Request, context: RouteContext): Promise<Response | null> {
+  const path = await segments(context);
+  const service = await getService();
+  const token = bearerToken(request);
+
+  if (path.join('/') === 'config/public') {
+    const config = getAppConfig();
+    return ok('public config', {
+      wechat: {
+        quick_login_enabled: config.wechat.quickLoginEnabled,
+      },
+      sms: {
+        provider: config.sms.provider || 'mock',
+        mock_enabled: config.sms.provider.toLowerCase() === 'mock',
+      },
+      c_end_features: service.cEndFeatureToggles(),
+    });
+  }
+  if (path.join('/') === 'campaigns') {
+    return ok('campaign list', service.campaignList());
+  }
+  if (path.join('/') === 'me') {
+    return ok('current user', service.currentUser(token));
+  }
+  if (path.join('/') === 'me/account') {
+    return ok('current user account', service.currentUserAccount(token));
+  }
+  if (path.join('/') === 'me/draw-records') {
+    return ok('user draw records', service.drawRecords(token));
+  }
+  if (path.join('/') === 'blindbox/campaigns') {
+    return ok('campaign list with progress', service.campaignListWithProgress(token));
+  }
+  if (path[0] === 'blindbox' && path[1] === 'campaigns' && path[3] === 'probabilities' && path[2]) {
+    return ok('campaign probabilities', service.campaignProbabilities(path[2]));
+  }
+  if (path.join('/') === 'blindbox/pity-status') {
+    return ok('pity status', service.pityStatus(token, searchParam(request, 'campaign_id')));
+  }
+  if (path.join('/') === 'blindbox/inventory') {
+    return ok('user inventory', service.userInventory(token));
+  }
+  if (path.join('/') === 'blindbox/series-progress') {
+    return ok('series progress', service.seriesProgress(token, searchParam(request, 'campaign_id')));
+  }
+  if (path.join('/') === 'blindbox/exchange-offers') {
+    return ok('exchange offers', service.exchangeOffers());
+  }
+  if (path.join('/') === 'blindbox/member') {
+    return ok('member info', service.userMember(token));
+  }
+  if (path.join('/') === 'blindbox/points-log') {
+    return ok('points log', service.pointsLog(token));
+  }
+  if (path.join('/') === 'blindbox/leaderboard') {
+    const limit = Number(searchParam(request, 'limit') || 20);
+    return ok('leaderboard', service.leaderboard(limit));
+  }
+  if (path.join('/') === 'admin/overview') {
+    return ok('admin overview', service.adminOverview(token));
+  }
+  if (path.join('/') === 'admin/shop-items') {
+    return ok('admin shop items', service.adminShopItems(token));
+  }
+  if (path.join('/') === 'admin/first-recharge/packs') {
+    return ok('admin first recharge packs', service.adminFirstRechargePacks(token));
+  }
+  if (path.join('/') === 'admin/campaigns') {
+    return ok('admin campaigns', service.adminCampaigns(token));
+  }
+  if (path.join('/') === 'admin/feature-toggles') {
+    return ok('admin feature toggles', service.adminCEndFeatureToggles(token));
+  }
+  if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path.length === 3) {
+    return ok('admin campaign', service.adminCampaigns(token).find((campaign) => campaign.id === path[2]) ?? null);
+  }
+  if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path[3] === 'prizes') {
+    return ok('admin prizes', service.adminPrizes(token, path[2]));
+  }
+  if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path[3] === 'pity-config') {
+    const campaign = service.adminCampaigns(token).find((item) => item.id === path[2]);
+    return ok('pity config', campaign?.pity_config ?? null);
+  }
+  if (path.join('/') === 'admin/fulfillment-tasks' || path.join('/') === 'admin/delivery/pending') {
+    return ok('fulfillment tasks', service.fulfillmentTasks(token));
+  }
+  if (path.join('/') === 'admin/draw-records' || path.join('/') === 'admin/lottery-logs') {
+    return ok('draw records', service.adminDrawRecords(token));
+  }
+  if (path.join('/') === 'admin/statistics') {
+    return ok('statistics', service.drawStatistics(token, searchParam(request, 'campaign_id')));
+  }
+  if (path.join('/') === 'admin/users') {
+    return ok('admin users', service.adminUsers(token, {
+      page: Number(searchParam(request, 'page') || 1),
+      page_size: Number(searchParam(request, 'page_size') || 20),
+      keyword: searchParam(request, 'keyword'),
+      status: searchParam(request, 'status'),
+      register_source: searchParam(request, 'register_source'),
+    }));
+  }
+  if (path[0] === 'admin' && path[1] === 'users' && path[2] && path.length === 3) {
+    return ok('admin user detail', service.adminUserDetail(token, path[2]));
+  }
+  if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'points-log') {
+    return ok('admin user points log', service.adminUserPointsLog(token, path[2]));
+  }
+  if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'login-logs') {
+    return ok('admin user login logs', service.adminUserLoginLogs(token, path[2]));
+  }
+  if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'status-logs') {
+    return ok('admin user status logs', service.adminUserStatusLogs(token, path[2]));
+  }
+  if (path.join('/') === 'battle-pass/info') {
+    return ok('battle pass info', service.battlePassInfo(token));
+  }
+  if (path.join('/') === 'month-card/status') {
+    return ok('month card status', service.monthCardStatus(token));
+  }
+  if (path.join('/') === 'blindbox/my-card') {
+    return ok('user card', service.userCard(token));
+  }
+  if (path[0] === 'blindbox' && path[1] === 'hint' && path[2]) {
+    return ok('campaign hint', service.campaignHint(path[2]));
+  }
+  if (path[0] === 'blindbox' && path[1] === 'up-pool' && path[2]) {
+    return ok('up pool info', service.campaignProbabilities(path[2]));
+  }
+  if (path.join('/') === 'shop/items') {
+    return ok('shop items', service.shopItems());
+  }
+  if (path.join('/') === 'shop/items/inventory') {
+    return ok('user items', service.userItems(token));
+  }
+  if (path.join('/') === 'first-recharge/packs') {
+    return ok('first recharge packs', service.firstRechargePacks());
+  }
+  if (path.join('/') === 'first-recharge/status') {
+    return ok('first recharge status', service.firstRechargeStatus(token));
+  }
+  if (path.join('/') === 'share/cards') {
+    return ok('share cards', service.shareCards(token));
+  }
+  if (path.join('/') === 'share/invitees') {
+    return ok('invite records', service.inviteRecords(token));
+  }
+  if (path.join('/') === 'share/invite-stats') {
+    return ok('invite stats', service.inviteStats(token));
+  }
+  if (path.join('/') === 'share/assist-progress') {
+    return ok('assist progress', service.assistProgress(token));
+  }
+  if (path.join('/') === 'team/my') {
+    return ok('my team', service.myTeam(token));
+  }
+  if (path.join('/') === 'share/gifts/incoming') {
+    return ok('incoming gifts', service.incomingGifts(token));
+  }
+  if (path.join('/') === 'share/gifts/sent') {
+    return ok('sent gifts', service.sentGifts(token));
+  }
+  if (path.join('/') === 'puzzle/templates') {
+    return ok('puzzle templates', service.puzzleTemplates(token));
+  }
+  if (path[0] === 'puzzle' && path[1] === 'progress' && path[2]) {
+    return ok('puzzle progress', service.puzzleInfo(token, path[2]));
+  }
+  if (path.join('/') === 'puzzle/my') {
+    return ok('all puzzle progress', service.allPuzzleInfo(token));
+  }
+  if (path.join('/') === 'puzzle/team/my') {
+    return ok('my puzzle teams', service.myPuzzleTeams(token));
+  }
+  if (path.join('/') === 'flash/list') {
+    return ok('flash list', service.flashList(token));
+  }
+  if (path.join('/') === 'flash/my') {
+    return ok('my flash subscriptions', service.myFlashSubscriptions(token));
+  }
+  if (path.join('/') === 'activities') {
+    return ok('activity list', service.activityList(token));
+  }
+  if (path[0] === 'activities' && path[1]) {
+    return ok('activity detail', service.activityInfo(token, path[1]));
+  }
+  if (path.join('/') === 'auth/wechat/oauth-url') {
+    return ok('oauth url', { url: getOauthUrl() });
+  }
+  if (path.join('/') === 'auth/wechat/jssdk-config') {
+    const url = searchParam(request, 'url') || request.headers.get('referer') || '';
+    const config = await getJssdkConfig(url);
+    return ok('jssdk config', config);
+  }
+
+  return null;
+}
+
 export async function GET(request: Request, context: RouteContext): Promise<Response> {
   try {
-    const path = await segments(context);
-    const service = await getService();
-    const token = bearerToken(request);
-
-    if (path.join('/') === 'config/public') {
-      const config = getAppConfig();
-      return ok('public config', {
-        wechat: {
-          quick_login_enabled: config.wechat.quickLoginEnabled,
-        },
-        sms: {
-          provider: config.sms.provider || 'mock',
-          mock_enabled: config.sms.provider.toLowerCase() === 'mock',
-        },
-        c_end_features: service.cEndFeatureToggles(),
-      });
+    const response = await handleReadRequest(request, context);
+    if (response) {
+      return response;
     }
-    if (path.join('/') === 'campaigns') {
-      return ok('campaign list', service.campaignList());
-    }
-    if (path.join('/') === 'me') {
-      return ok('current user', service.currentUser(token));
-    }
-    if (path.join('/') === 'me/account') {
-      return ok('current user account', service.currentUserAccount(token));
-    }
-    if (path.join('/') === 'me/draw-records') {
-      return ok('user draw records', service.drawRecords(token));
-    }
-    if (path.join('/') === 'blindbox/campaigns') {
-      return ok('campaign list with progress', service.campaignListWithProgress(token));
-    }
-    if (path[0] === 'blindbox' && path[1] === 'campaigns' && path[3] === 'probabilities' && path[2]) {
-      return ok('campaign probabilities', service.campaignProbabilities(path[2]));
-    }
-    if (path.join('/') === 'blindbox/pity-status') {
-      return ok('pity status', service.pityStatus(token, searchParam(request, 'campaign_id')));
-    }
-    if (path.join('/') === 'blindbox/inventory') {
-      return ok('user inventory', service.userInventory(token));
-    }
-    if (path.join('/') === 'blindbox/series-progress') {
-      return ok('series progress', service.seriesProgress(token, searchParam(request, 'campaign_id')));
-    }
-    if (path.join('/') === 'blindbox/exchange-offers') {
-      return ok('exchange offers', service.exchangeOffers());
-    }
-    if (path.join('/') === 'blindbox/member') {
-      return ok('member info', service.userMember(token));
-    }
-    if (path.join('/') === 'blindbox/points-log') {
-      return ok('points log', service.pointsLog(token));
-    }
-    if (path.join('/') === 'blindbox/leaderboard') {
-      const limit = Number(searchParam(request, 'limit') || 20);
-      return ok('leaderboard', service.leaderboard(limit));
-    }
-    if (path.join('/') === 'admin/overview') {
-      return ok('admin overview', service.adminOverview(token));
-    }
-    if (path.join('/') === 'admin/shop-items') {
-      return ok('admin shop items', service.adminShopItems(token));
-    }
-    if (path.join('/') === 'admin/first-recharge/packs') {
-      return ok('admin first recharge packs', service.adminFirstRechargePacks(token));
-    }
-    if (path.join('/') === 'admin/campaigns') {
-      return ok('admin campaigns', service.adminCampaigns(token));
-    }
-    if (path.join('/') === 'admin/feature-toggles') {
-      return ok('admin feature toggles', service.adminCEndFeatureToggles(token));
-    }
-    if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path.length === 3) {
-      return ok('admin campaign', service.adminCampaigns(token).find((campaign) => campaign.id === path[2]) ?? null);
-    }
-    if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path[3] === 'prizes') {
-      return ok('admin prizes', service.adminPrizes(token, path[2]));
-    }
-    if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path[3] === 'pity-config') {
-      const campaign = service.adminCampaigns(token).find((item) => item.id === path[2]);
-      return ok('pity config', campaign?.pity_config ?? null);
-    }
-    if (path.join('/') === 'admin/fulfillment-tasks' || path.join('/') === 'admin/delivery/pending') {
-      return ok('fulfillment tasks', service.fulfillmentTasks(token));
-    }
-    if (path.join('/') === 'admin/draw-records' || path.join('/') === 'admin/lottery-logs') {
-      return ok('draw records', service.adminDrawRecords(token));
-    }
-    if (path.join('/') === 'admin/statistics') {
-      return ok('statistics', service.drawStatistics(token, searchParam(request, 'campaign_id')));
-    }
-    if (path.join('/') === 'admin/users') {
-      return ok('admin users', service.adminUsers(token, {
-        page: Number(searchParam(request, 'page') || 1),
-        page_size: Number(searchParam(request, 'page_size') || 20),
-        keyword: searchParam(request, 'keyword'),
-        status: searchParam(request, 'status'),
-        register_source: searchParam(request, 'register_source'),
-      }));
-    }
-    if (path[0] === 'admin' && path[1] === 'users' && path[2] && path.length === 3) {
-      return ok('admin user detail', service.adminUserDetail(token, path[2]));
-    }
-    if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'points-log') {
-      return ok('admin user points log', service.adminUserPointsLog(token, path[2]));
-    }
-    if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'login-logs') {
-      return ok('admin user login logs', service.adminUserLoginLogs(token, path[2]));
-    }
-    if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'status-logs') {
-      return ok('admin user status logs', service.adminUserStatusLogs(token, path[2]));
-    }
-    if (path.join('/') === 'battle-pass/info') {
-      return ok('battle pass info', service.battlePassInfo(token));
-    }
-    if (path.join('/') === 'month-card/status') {
-      return ok('month card status', service.monthCardStatus(token));
-    }
-    if (path.join('/') === 'blindbox/my-card') {
-      return ok('user card', service.userCard(token));
-    }
-    if (path[0] === 'blindbox' && path[1] === 'hint' && path[2]) {
-      return ok('campaign hint', service.campaignHint(path[2]));
-    }
-    if (path[0] === 'blindbox' && path[1] === 'up-pool' && path[2]) {
-      return ok('up pool info', service.campaignProbabilities(path[2]));
-    }
-    if (path.join('/') === 'shop/items') {
-      return ok('shop items', service.shopItems());
-    }
-    if (path.join('/') === 'shop/items/inventory') {
-      return ok('user items', service.userItems(token));
-    }
-    if (path.join('/') === 'first-recharge/packs') {
-      return ok('first recharge packs', service.firstRechargePacks());
-    }
-    if (path.join('/') === 'first-recharge/status') {
-      return ok('first recharge status', service.firstRechargeStatus(token));
-    }
-    if (path.join('/') === 'share/cards') {
-      return ok('share cards', service.shareCards(token));
-    }
-    if (path.join('/') === 'share/invitees') {
-      return ok('invite records', service.inviteRecords(token));
-    }
-    if (path.join('/') === 'share/invite-stats') {
-      return ok('invite stats', service.inviteStats(token));
-    }
-    if (path.join('/') === 'share/assist-progress') {
-      return ok('assist progress', service.assistProgress(token));
-    }
-    if (path.join('/') === 'team/my') {
-      return ok('my team', service.myTeam(token));
-    }
-    if (path.join('/') === 'share/gifts/incoming') {
-      return ok('incoming gifts', service.incomingGifts(token));
-    }
-    if (path.join('/') === 'share/gifts/sent') {
-      return ok('sent gifts', service.sentGifts(token));
-    }
-    if (path.join('/') === 'puzzle/templates') {
-      return ok('puzzle templates', service.puzzleTemplates(token));
-    }
-    if (path[0] === 'puzzle' && path[1] === 'progress' && path[2]) {
-      return ok('puzzle progress', service.puzzleInfo(token, path[2]));
-    }
-    if (path.join('/') === 'puzzle/my') {
-      return ok('all puzzle progress', service.allPuzzleInfo(token));
-    }
-    if (path.join('/') === 'puzzle/team/my') {
-      return ok('my puzzle teams', service.myPuzzleTeams(token));
-    }
-    if (path.join('/') === 'flash/list') {
-      return ok('flash list', service.flashList(token));
-    }
-    if (path.join('/') === 'flash/my') {
-      return ok('my flash subscriptions', service.myFlashSubscriptions(token));
-    }
-    if (path.join('/') === 'activities') {
-      return ok('activity list', service.activityList(token));
-    }
-    if (path[0] === 'activities' && path[1]) {
-      return ok('activity detail', service.activityInfo(token, path[1]));
-    }
-    if (path.join('/') === 'auth/wechat/oauth-url') {
-      return ok('oauth url', { url: getOauthUrl() });
-    }
-    if (path.join('/') === 'auth/wechat/jssdk-config') {
-      const url = searchParam(request, 'url') || request.headers.get('referer') || '';
-      const config = await getJssdkConfig(url);
-      return ok('jssdk config', config);
-    }
-
     throw notFound;
   } catch (error) {
     return fail(error);
@@ -476,6 +484,11 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
 
 export async function POST(request: Request, context: RouteContext): Promise<Response> {
   try {
+    const readResponse = await handleReadRequest(request, context);
+    if (readResponse) {
+      return readResponse;
+    }
+
     const path = await segments(context);
     const service = await getService();
     const token = bearerToken(request);
