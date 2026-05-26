@@ -157,9 +157,9 @@ export class LotteryService {
   }
 
   public campaignList(): readonly CampaignListItem[] {
-    return this.store.campaigns().map((campaign) => ({
+    return this.visibleCampaignItems().map(({ campaign, prizes }) => ({
       campaign,
-      prizes: this.store.prizeList(campaign.id),
+      prizes,
     }));
   }
 
@@ -183,11 +183,25 @@ export class LotteryService {
 
   public campaignListWithProgress(token: string): readonly CampaignListItem[] {
     const user = token ? this.safeUserFromToken(token) : null;
-    return this.store.campaigns().map((campaign) => ({
+    return this.visibleCampaignItems().map(({ campaign, prizes }) => ({
       campaign,
-      prizes: this.store.prizeList(campaign.id),
+      prizes,
       progress: user ? this.store.getSeriesProgress(user.id, campaign.id, campaign.name) : undefined,
     }));
+  }
+
+  private visibleCampaignItems(): readonly { readonly campaign: Campaign; readonly prizes: readonly Prize[] }[] {
+    return this.store
+      .campaigns()
+      .map((campaign) => ({
+        campaign,
+        prizes: this.store.prizeList(campaign.id),
+      }))
+      .filter(
+        ({ campaign, prizes }) =>
+          campaign.status === 'online' &&
+          prizes.some((prize) => prize.status === 'active' && prize.stock > 0 && prize.probability_weight > 0),
+      );
   }
 
   public campaignProbabilities(campaignId: string): Record<string, unknown> {

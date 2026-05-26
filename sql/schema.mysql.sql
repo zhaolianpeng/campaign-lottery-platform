@@ -215,10 +215,80 @@ CREATE TABLE IF NOT EXISTS first_recharge_packs (
 -- ============================================================
 -- v1.1 迁移: campaigns 表加 pity_config JSON 字段
 -- ============================================================
-ALTER TABLE campaigns ADD COLUMN pity_config JSON NULL COMMENT '保底概率配置' AFTER campaign_summary;
-ALTER TABLE prizes ADD COLUMN image_url VARCHAR(255) NOT NULL DEFAULT '' AFTER status;
-ALTER TABLE shop_items ADD COLUMN image_url VARCHAR(255) NOT NULL DEFAULT '' AFTER description;
-ALTER TABLE first_recharge_packs ADD COLUMN image_url VARCHAR(255) NOT NULL DEFAULT '' AFTER description;
+SET @schema_name := DATABASE();
+
+SET @ddl := IF(
+  EXISTS(
+    SELECT 1
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = @schema_name
+      AND TABLE_NAME = 'campaigns'
+      AND COLUMN_NAME = 'pity_config'
+  ),
+  'SELECT 1',
+  "ALTER TABLE campaigns ADD COLUMN pity_config JSON NULL COMMENT '保底概率配置' AFTER campaign_summary"
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @ddl := IF(
+  EXISTS(
+    SELECT 1
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = @schema_name
+      AND TABLE_NAME = 'prizes'
+      AND COLUMN_NAME = 'image_url'
+  ),
+  'SELECT 1',
+  "ALTER TABLE prizes ADD COLUMN image_url VARCHAR(255) NOT NULL DEFAULT '' AFTER status"
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @ddl := IF(
+  EXISTS(
+    SELECT 1
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = @schema_name
+      AND TABLE_NAME = 'shop_items'
+      AND COLUMN_NAME = 'image_url'
+  ),
+  'SELECT 1',
+  "ALTER TABLE shop_items ADD COLUMN image_url VARCHAR(255) NOT NULL DEFAULT '' AFTER description"
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @ddl := IF(
+  EXISTS(
+    SELECT 1
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = @schema_name
+      AND TABLE_NAME = 'first_recharge_packs'
+      AND COLUMN_NAME = 'image_url'
+  ),
+  'SELECT 1',
+  "ALTER TABLE first_recharge_packs ADD COLUMN image_url VARCHAR(255) NOT NULL DEFAULT '' AFTER description"
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- user_inventories 表加索引
-ALTER TABLE user_inventories ADD INDEX idx_ui_user_campaign (user_id, campaign_id);
+SET @ddl := IF(
+  EXISTS(
+    SELECT 1
+    FROM information_schema.STATISTICS
+    WHERE TABLE_SCHEMA = @schema_name
+      AND TABLE_NAME = 'user_inventories'
+      AND INDEX_NAME = 'idx_ui_user_campaign'
+  ),
+  'SELECT 1',
+  'ALTER TABLE user_inventories ADD INDEX idx_ui_user_campaign (user_id, campaign_id)'
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;

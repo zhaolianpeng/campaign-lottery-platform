@@ -117,6 +117,17 @@ type PityEditorValues = {
   readonly up_end_at: string;
 };
 
+type CampaignEditorValues = {
+  readonly name: string;
+  readonly slug: string;
+  readonly starts_at: string;
+  readonly ends_at: string;
+  readonly daily_draw_limit: string;
+  readonly miss_weight: string;
+  readonly banner_image_url: string;
+  readonly campaign_summary: string;
+};
+
 type ShopItemEditorValues = {
   readonly name: string;
   readonly description: string;
@@ -214,6 +225,34 @@ function toPityPayload(values: PityEditorValues): PityConfig {
   };
 }
 
+function createCampaignEditorValues(initial?: Campaign): CampaignEditorValues {
+  return {
+    name: initial?.name ?? `运营盲盒 ${Date.now().toString().slice(-4)}`,
+    slug: initial?.slug ?? `box-${Date.now()}`,
+    starts_at: toDatetimeLocalValue(initial?.starts_at ?? new Date().toISOString()),
+    ends_at: toDatetimeLocalValue(initial?.ends_at ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()),
+    daily_draw_limit: String(initial?.daily_draw_limit ?? 5),
+    miss_weight: String(initial?.miss_weight ?? 70),
+    banner_image_url: initial?.banner_image_url ?? '',
+    campaign_summary: initial?.campaign_summary ?? '管理端创建的盲盒草稿，请补充奖品后再上线。',
+  };
+}
+
+function toCampaignPayload(campaign: Campaign | null, values: CampaignEditorValues): Campaign {
+  return {
+    ...(campaign ?? { id: '', status: 'draft' as const }),
+    name: values.name.trim(),
+    slug: values.slug.trim(),
+    starts_at: toIsoValue(values.starts_at) ?? campaign?.starts_at ?? new Date().toISOString(),
+    ends_at: toIsoValue(values.ends_at) ?? campaign?.ends_at ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    daily_draw_limit: Number(values.daily_draw_limit),
+    miss_weight: Number(values.miss_weight),
+    banner_image_url: values.banner_image_url.trim(),
+    campaign_summary: values.campaign_summary.trim(),
+    pity_config: campaign?.pity_config,
+  };
+}
+
 function createShopItemEditorValues(initial?: ShopItem): ShopItemEditorValues {
   return {
     name: initial?.name ?? '新商品',
@@ -292,6 +331,7 @@ export function AdminApp(): React.ReactNode {
   const [selectedCampaignId, setSelectedCampaignId] = useState('');
   const [userKeyword, setUserKeyword] = useState('');
   const [selectedUserId, setSelectedUserId] = useState('');
+  const [campaignEditor, setCampaignEditor] = useState<{ readonly campaign?: Campaign; readonly values: CampaignEditorValues } | null>(null);
   const [prizeEditor, setPrizeEditor] = useState<{ readonly prizeId?: string; readonly values: PrizeEditorValues } | null>(null);
   const [pityEditor, setPityEditor] = useState<PityEditorValues | null>(null);
   const [shopItemEditor, setShopItemEditor] = useState<{ readonly itemId?: string; readonly values: ShopItemEditorValues } | null>(null);
@@ -380,23 +420,41 @@ export function AdminApp(): React.ReactNode {
   });
 
   const createCampaignMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (payload: Campaign) =>
       apiRequest('/api/v1/admin/campaigns', token, {
         method: 'POST',
-        body: JSON.stringify({
-          name: `运营盲盒 ${Date.now().toString().slice(-4)}`,
-          slug: `box-${Date.now()}`,
-          status: 'draft',
-          starts_at: new Date().toISOString(),
-          ends_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-          daily_draw_limit: 5,
-          miss_weight: 70,
-          campaign_summary: '管理端快速创建的盲盒草稿，请补充奖品后再上线。',
-        }),
+        body: JSON.stringify(payload),
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-campaigns', token] });
       void queryClient.invalidateQueries({ queryKey: ['admin-overview', token] });
+    },
+  });
+
+  const updateCampaignMutation = useMutation({
+    mutationFn: ({ campaignId, payload }: { readonly campaignId: string; readonly payload: Campaign }) =>
+      apiRequest(`/api/v1/admin/campaigns/${campaignId}`, token, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-campaigns', token] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-overview', token] });
+    },
+  });
+
+  const deleteCampaignMutation = useMutation({
+    mutationFn: (campaignId: string) =>
+      apiRequest(`/api/v1/admin/campaigns/${campaignId}`, token, {
+        method: 'DELETE',
+      }),
+    onSuccess: (_, campaignId) => {
+      if (selectedCampaignId === campaignId) {
+        setSelectedCampaignId('');
+      }
+      void queryClient.invalidateQueries({ queryKey: ['admin-campaigns', token] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-overview', token] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-prizes', token, campaignId] });
     },
   });
 
@@ -686,6 +744,54 @@ export function AdminApp(): React.ReactNode {
     createFirstRechargeMutation.mutate(payload, { onSuccess: () => setFirstRechargeEditor(null) });
   }
 
+  async function updateCampaignStatus(campaign: Campaign, status: Campaign['status']): Promise<void> {
+    if (status === 'online') {
+      const validation = await validateCampaignMutation.mutateAsync(campaign.id);
+      if (!validation.can_publish) {
+        window.alert(`当前活动未通过发布校验：${validation.errors.join('；') || '请先补全配置。'}`);
+        return;
+      }
+    }
+
+    await updateCampaignMutation.mutateAsync({
+      campaignId: campaign.id,
+      payload: {
+        ...campaign,
+        status,
+      },
+    });
+  }
+
+  function submitCampaignEditor(): void {
+    if (!campaignEditor) {
+      return;
+    }
+    const payload = toCampaignPayload(campaignEditor.campaign ?? null, campaignEditor.values);
+    if (
+      !payload.name ||
+      !payload.slug ||
+      !payload.starts_at ||
+      !payload.ends_at ||
+      !Number.isInteger(payload.daily_draw_limit) ||
+      !Number.isInteger(payload.miss_weight)
+    ) {
+      window.alert('请完整填写盲盒名称、标识、时间、每日上限和未中权重。');
+      return;
+    }
+    if (new Date(payload.ends_at).getTime() <= new Date(payload.starts_at).getTime()) {
+      window.alert('结束时间必须晚于开始时间。');
+      return;
+    }
+    if (campaignEditor.campaign) {
+      updateCampaignMutation.mutate(
+        { campaignId: campaignEditor.campaign.id, payload },
+        { onSuccess: () => setCampaignEditor(null) },
+      );
+      return;
+    }
+    createCampaignMutation.mutate(payload, { onSuccess: () => setCampaignEditor(null) });
+  }
+
   if (!token) {
     return (
       <main className="min-h-screen bg-[#0f0f13] px-4 py-8 text-zinc-100">
@@ -945,7 +1051,7 @@ export function AdminApp(): React.ReactNode {
               <button
                 className="rounded-md bg-orange-500 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
                 disabled={createCampaignMutation.isPending}
-                onClick={() => createCampaignMutation.mutate()}
+                onClick={() => setCampaignEditor({ values: createCampaignEditorValues() })}
                 type="button"
               >
                 + 新建盲盒
@@ -958,6 +1064,13 @@ export function AdminApp(): React.ReactNode {
                   <div className="flex flex-wrap gap-2">
                     <button
                       className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300"
+                      onClick={() => setCampaignEditor({ campaign, values: createCampaignEditorValues(campaign) })}
+                      type="button"
+                    >
+                      编辑信息
+                    </button>
+                    <button
+                      className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300"
                       onClick={() => {
                         setSelectedCampaignId(campaign.id);
                         setTab('prizes');
@@ -966,6 +1079,29 @@ export function AdminApp(): React.ReactNode {
                     >
                       奖品管理
                     </button>
+                    {campaign.status === 'online' ? (
+                      <button
+                        className="rounded-md border border-amber-700 px-3 py-1.5 text-xs text-amber-300 disabled:opacity-50"
+                        disabled={updateCampaignMutation.isPending}
+                        onClick={() => {
+                          void updateCampaignStatus(campaign, 'offline');
+                        }}
+                        type="button"
+                      >
+                        下线活动
+                      </button>
+                    ) : (
+                      <button
+                        className="rounded-md border border-emerald-700 px-3 py-1.5 text-xs text-emerald-300 disabled:opacity-50"
+                        disabled={updateCampaignMutation.isPending || validateCampaignMutation.isPending}
+                        onClick={() => {
+                          void updateCampaignStatus(campaign, 'online');
+                        }}
+                        type="button"
+                      >
+                        上线活动
+                      </button>
+                    )}
                     <button
                       className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 disabled:opacity-50"
                       disabled={validateCampaignMutation.isPending}
@@ -973,6 +1109,18 @@ export function AdminApp(): React.ReactNode {
                       type="button"
                     >
                       发布校验
+                    </button>
+                    <button
+                      className="rounded-md border border-red-800 px-3 py-1.5 text-xs text-red-300 disabled:opacity-50"
+                      disabled={deleteCampaignMutation.isPending}
+                      onClick={() => {
+                        if (window.confirm(`确认删除盲盒活动「${campaign.name}」吗？此操作会同时删除该活动下的奖品配置。`)) {
+                          deleteCampaignMutation.mutate(campaign.id);
+                        }
+                      }}
+                      type="button"
+                    >
+                      删除活动
                     </button>
                   </div>
                 }
@@ -1233,78 +1381,131 @@ export function AdminApp(): React.ReactNode {
                 </button>
               </div>
             </div>
-            <AdminList title="商品列表">
-              {(shopQuery.data ?? []).map((item) => (
-                <DataCard
-                  action={
-                    <div className="flex gap-2">
-                      <button
-                        className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 disabled:opacity-50"
-                        disabled={updateShopItemMutation.isPending}
-                        onClick={() => setShopItemEditor({ itemId: item.id, values: createShopItemEditorValues(item) })}
-                        type="button"
-                      >
-                        编辑
-                      </button>
-                      <button
-                        className="rounded-md border border-red-800 px-3 py-1.5 text-xs text-red-300 disabled:opacity-50"
-                        disabled={deleteShopItemMutation.isPending}
-                        onClick={() => {
-                          if (window.confirm(`确认删除商品「${item.name}」吗？`)) {
-                            deleteShopItemMutation.mutate(item.id);
-                          }
-                        }}
-                        type="button"
-                      >
-                        删除
-                      </button>
-                    </div>
-                  }
-                  badge={`${item.price_points}积分`}
-                  badgeClass="border-amber-500/30 bg-amber-500/10 text-amber-300"
-                  coverUrl={item.image_url}
-                  key={item.id}
-                  subtitle={`${item.description} · 库存 ${item.stock < 0 ? '不限' : item.stock}`}
-                  title={item.name}
-                />
-              ))}
-            </AdminList>
-            <AdminList title="首充礼包">
-              {(firstRechargeQuery.data ?? []).map((pack) => (
-                <DataCard
-                  action={
-                    <div className="flex gap-2">
-                      <button
-                        className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 disabled:opacity-50"
-                        disabled={updateFirstRechargeMutation.isPending}
-                        onClick={() => setFirstRechargeEditor({ packId: pack.id, values: createFirstRechargeEditorValues(pack) })}
-                        type="button"
-                      >
-                        编辑
-                      </button>
-                      <button
-                        className="rounded-md border border-red-800 px-3 py-1.5 text-xs text-red-300 disabled:opacity-50"
-                        disabled={deleteFirstRechargeMutation.isPending}
-                        onClick={() => {
-                          if (window.confirm(`确认删除礼包「${pack.name}」吗？`)) {
-                            deleteFirstRechargeMutation.mutate(pack.id);
-                          }
-                        }}
-                        type="button"
-                      >
-                        删除
-                      </button>
-                    </div>
-                  }
-                  coverUrl={pack.image_url}
-                  key={pack.id}
-                  subtitle={`${pack.description} · ${pack.price_points}积分 / ¥${(pack.cash_price / 100).toFixed(2)} · ${pack.items.map((item) => `${item.name}x${item.qty}`).join('、')}`}
-                  title={pack.name}
-                />
-              ))}
-            </AdminList>
+            <section>
+              <h3 className="mb-3 font-bold text-white">商品列表</h3>
+              <div className="grid gap-3 lg:grid-cols-2">
+                {(shopQuery.data ?? []).map((item) => (
+                  <CatalogCard
+                    action={
+                      <div className="flex gap-2">
+                        <button
+                          className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 disabled:opacity-50"
+                          disabled={updateShopItemMutation.isPending}
+                          onClick={() => setShopItemEditor({ itemId: item.id, values: createShopItemEditorValues(item) })}
+                          type="button"
+                        >
+                          编辑
+                        </button>
+                        <button
+                          className="rounded-md border border-red-800 px-3 py-1.5 text-xs text-red-300 disabled:opacity-50"
+                          disabled={deleteShopItemMutation.isPending}
+                          onClick={() => {
+                            if (window.confirm(`确认删除商品「${item.name}」吗？`)) {
+                              deleteShopItemMutation.mutate(item.id);
+                            }
+                          }}
+                          type="button"
+                        >
+                          删除
+                        </button>
+                      </div>
+                    }
+                    badge={`${item.price_points}积分`}
+                    badgeClass="border-amber-500/30 bg-amber-500/10 text-amber-300"
+                    coverUrl={item.image_url}
+                    description={item.description}
+                    key={item.id}
+                    meta={[
+                      { label: '库存', value: item.stock < 0 ? '不限' : String(item.stock) },
+                      { label: '类型', value: item.item_type },
+                      { label: '数量', value: `${item.item_qty} 个` },
+                      { label: '分类', value: item.category || '未分类' },
+                    ]}
+                    title={item.name}
+                  />
+                ))}
+              </div>
+              {(shopQuery.data ?? []).length === 0 ? <EmptyAdmin text="暂无商品配置" /> : null}
+            </section>
+            <section>
+              <h3 className="mb-3 font-bold text-white">首充礼包</h3>
+              <div className="grid gap-3 lg:grid-cols-2">
+                {(firstRechargeQuery.data ?? []).map((pack) => (
+                  <CatalogCard
+                    action={
+                      <div className="flex gap-2">
+                        <button
+                          className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 disabled:opacity-50"
+                          disabled={updateFirstRechargeMutation.isPending}
+                          onClick={() => setFirstRechargeEditor({ packId: pack.id, values: createFirstRechargeEditorValues(pack) })}
+                          type="button"
+                        >
+                          编辑
+                        </button>
+                        <button
+                          className="rounded-md border border-red-800 px-3 py-1.5 text-xs text-red-300 disabled:opacity-50"
+                          disabled={deleteFirstRechargeMutation.isPending}
+                          onClick={() => {
+                            if (window.confirm(`确认删除礼包「${pack.name}」吗？`)) {
+                              deleteFirstRechargeMutation.mutate(pack.id);
+                            }
+                          }}
+                          type="button"
+                        >
+                          删除
+                        </button>
+                      </div>
+                    }
+                    badge={`¥${(pack.cash_price / 100).toFixed(2)}`}
+                    badgeClass="border-sky-500/30 bg-sky-500/10 text-sky-300"
+                    coverUrl={pack.image_url}
+                    description={pack.description}
+                    key={pack.id}
+                    meta={[
+                      { label: '积分', value: `${pack.price_points} 分` },
+                      { label: '现金', value: `¥${(pack.cash_price / 100).toFixed(2)}` },
+                      { label: '内容', value: pack.items.map((item) => `${item.name}x${item.qty}`).join('、') },
+                    ]}
+                    title={pack.name}
+                  />
+                ))}
+              </div>
+              {(firstRechargeQuery.data ?? []).length === 0 ? <EmptyAdmin text="暂无首充礼包配置" /> : null}
+            </section>
           </section>
         ) : null}
+
+        <AdminModal
+          isOpen={Boolean(campaignEditor)}
+          isSubmitting={createCampaignMutation.isPending || updateCampaignMutation.isPending}
+          onClose={() => setCampaignEditor(null)}
+          onSubmit={submitCampaignEditor}
+          submitText={campaignEditor?.campaign ? '保存盲盒信息' : '创建盲盒'}
+          title={campaignEditor?.campaign ? `编辑盲盒：${campaignEditor.campaign.name}` : '新建盲盒'}
+        >
+          {campaignEditor ? (
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="盲盒名称"><input className="admin-input" value={campaignEditor.values.name} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, name: event.target.value } } : current)} /></Field>
+              <Field label="盲盒标识"><input className="admin-input" value={campaignEditor.values.slug} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, slug: event.target.value } } : current)} /></Field>
+              <Field label="开始时间"><input className="admin-input" type="datetime-local" value={campaignEditor.values.starts_at} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, starts_at: event.target.value } } : current)} /></Field>
+              <Field label="结束时间"><input className="admin-input" type="datetime-local" value={campaignEditor.values.ends_at} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, ends_at: event.target.value } } : current)} /></Field>
+              <Field label="每日抽取上限"><input className="admin-input" min={0} type="number" value={campaignEditor.values.daily_draw_limit} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, daily_draw_limit: event.target.value } } : current)} /></Field>
+              <Field label="未中权重"><input className="admin-input" min={0} type="number" value={campaignEditor.values.miss_weight} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, miss_weight: event.target.value } } : current)} /></Field>
+              <Field label="Banner 图片 URL"><input className="admin-input" placeholder="https://... 或 /api/v1/uploads/..." value={campaignEditor.values.banner_image_url} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, banner_image_url: event.target.value } } : current)} /></Field>
+              <Field label="当前状态"><input className="admin-input" disabled value={campaignEditor.campaign?.status ?? 'draft'} /></Field>
+              <Field label="盲盒简介">
+                <textarea className="admin-input min-h-28 md:col-span-2" value={campaignEditor.values.campaign_summary} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, campaign_summary: event.target.value } } : current)} />
+              </Field>
+              <Field label="Banner 预览">
+                {campaignEditor.values.banner_image_url ? (
+                  <img alt={campaignEditor.values.name} className="h-40 w-full rounded-xl border border-zinc-800 object-cover" src={apiAssetUrl(campaignEditor.values.banner_image_url)} />
+                ) : (
+                  <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-zinc-800 bg-black/10 text-xs text-zinc-500">暂无 Banner</div>
+                )}
+              </Field>
+            </div>
+          ) : null}
+        </AdminModal>
 
         <AdminModal
           isOpen={Boolean(prizeEditor)}
@@ -1540,6 +1741,55 @@ function DataCard({
           </div>
         </div>
         {action}
+      </div>
+    </article>
+  );
+}
+
+function CatalogCard({
+  title,
+  description,
+  badge,
+  badgeClass,
+  action,
+  coverUrl,
+  meta,
+}: {
+  readonly title: string;
+  readonly description: string;
+  readonly badge?: string;
+  readonly badgeClass?: string;
+  readonly action?: React.ReactNode;
+  readonly coverUrl?: string;
+  readonly meta: readonly { readonly label: string; readonly value: string }[];
+}): React.ReactNode {
+  return (
+    <article className="overflow-hidden rounded-2xl border border-zinc-800 bg-[#1a1a24] shadow-[0_18px_48px_rgba(0,0,0,0.22)]">
+      <div className="relative h-44 overflow-hidden border-b border-zinc-800 bg-[radial-gradient(circle_at_top,#3f3f46_0%,#18181b_55%,#111113_100%)]">
+        {coverUrl ? (
+          <img alt={title} className="h-full w-full object-cover" src={apiAssetUrl(coverUrl)} />
+        ) : (
+          <div className="flex h-full items-center justify-center text-sm font-medium text-zinc-500">暂无图片</div>
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+        {badge ? <span className={`absolute left-3 top-3 rounded-full border px-2.5 py-1 text-[11px] font-bold backdrop-blur ${badgeClass ?? ''}`}>{badge}</span> : null}
+      </div>
+      <div className="space-y-4 p-4">
+        <div className="space-y-2">
+          <div className="flex items-start justify-between gap-3">
+            <h3 className="line-clamp-1 text-base font-semibold text-zinc-100">{title}</h3>
+            {action ? <div className="shrink-0">{action}</div> : null}
+          </div>
+          <p className="line-clamp-2 text-sm leading-6 text-zinc-400">{description}</p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {meta.map((item) => (
+            <div className="rounded-xl border border-zinc-800 bg-black/10 px-3 py-2" key={`${item.label}-${item.value}`}>
+              <div className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">{item.label}</div>
+              <div className="mt-1 line-clamp-2 text-sm font-medium text-zinc-200">{item.value}</div>
+            </div>
+          ))}
+        </div>
       </div>
     </article>
   );
