@@ -433,11 +433,14 @@ export function AdminApp(): React.ReactNode {
 
   const updateCampaignMutation = useMutation({
     mutationFn: ({ campaignId, payload }: { readonly campaignId: string; readonly payload: Campaign }) =>
-      apiRequest(`/api/v1/admin/campaigns/${campaignId}`, token, {
+      apiRequest<Campaign>(`/api/v1/admin/campaigns/${campaignId}`, token, {
         method: 'PUT',
         body: JSON.stringify(payload),
       }),
-    onSuccess: () => {
+    onSuccess: (campaign) => {
+      queryClient.setQueryData<Campaign[]>(['admin-campaigns', token], (current) =>
+        (current ?? []).map((item) => (item.id === campaign.id ? campaign : item)),
+      );
       void queryClient.invalidateQueries({ queryKey: ['admin-campaigns', token] });
       void queryClient.invalidateQueries({ queryKey: ['admin-overview', token] });
     },
@@ -745,21 +748,26 @@ export function AdminApp(): React.ReactNode {
   }
 
   async function updateCampaignStatus(campaign: Campaign, status: Campaign['status']): Promise<void> {
-    if (status === 'online') {
-      const validation = await validateCampaignMutation.mutateAsync(campaign.id);
-      if (!validation.can_publish) {
-        window.alert(`当前活动未通过发布校验：${validation.errors.join('；') || '请先补全配置。'}`);
-        return;
+    try {
+      if (status === 'online') {
+        const validation = await validateCampaignMutation.mutateAsync(campaign.id);
+        if (!validation.can_publish) {
+          window.alert(`当前活动未通过发布校验：${validation.errors.join('；') || '请先补全配置。'}`);
+          return;
+        }
       }
-    }
 
-    await updateCampaignMutation.mutateAsync({
-      campaignId: campaign.id,
-      payload: {
-        ...campaign,
-        status,
-      },
-    });
+      await updateCampaignMutation.mutateAsync({
+        campaignId: campaign.id,
+        payload: {
+          ...campaign,
+          status,
+        },
+      });
+      window.alert(status === 'online' ? '活动已上线。' : '活动已下线。');
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : '活动状态更新失败，请稍后重试。');
+    }
   }
 
   function submitCampaignEditor(): void {
