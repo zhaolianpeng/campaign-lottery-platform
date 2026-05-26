@@ -21,7 +21,7 @@ import {
 import { useEffect, useMemo, useState, type ComponentType } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
-import { apiAssetUrl, apiRequest } from '@/client/api';
+import { ApiRequestError, apiAssetUrl, apiRequest } from '@/client/api';
 import type {
   ActivityListInfo,
   AssistProgress,
@@ -141,6 +141,13 @@ function normalizeCEndFeatureToggles(toggles?: Partial<CEndFeatureToggles>): CEn
 }
 
 const ANONYMOUS_DRAW_TOKEN_KEY = 'campaign-lottery-anonymous-draw-token';
+
+function mapDrawErrorMessage(error: unknown): Error {
+  if (error instanceof ApiRequestError && error.code === 'no_draw_chances') {
+    return new Error('当前活动今日抽奖次数已用完，请明天再试。若你在试玩模式下联调，可清空浏览器本地试玩记录后重新进入。');
+  }
+  return error instanceof Error ? error : new Error('抽奖失败，请稍后重试');
+}
 
 function anonymousDrawHeaders(token: string): HeadersInit | undefined {
   return token ? { 'X-Anonymous-Draw-Token': token } : undefined;
@@ -571,12 +578,17 @@ export function LotteryApp(): React.ReactNode {
   }, [inventoryQuery.data]);
 
   const drawMutation = useMutation({
-    mutationFn: (drawCount: number) =>
-      apiRequest<BlindBoxDrawResult>('/api/v1/blindbox/draw', token, {
-        method: 'POST',
-        body: JSON.stringify({ campaign_id: selectedCampaignId, draw_count: drawCount }),
-        headers: anonymousDrawHeaders(anonymousDrawToken),
-      }),
+    mutationFn: async (drawCount: number) => {
+      try {
+        return await apiRequest<BlindBoxDrawResult>('/api/v1/blindbox/draw', token, {
+          method: 'POST',
+          body: JSON.stringify({ campaign_id: selectedCampaignId, draw_count: drawCount }),
+          headers: anonymousDrawHeaders(anonymousDrawToken),
+        });
+      } catch (error) {
+        throw mapDrawErrorMessage(error);
+      }
+    },
     onSuccess: (payload) => {
       if (payload.anonymous_draw_token) {
         setAnonymousDrawToken(payload.anonymous_draw_token);

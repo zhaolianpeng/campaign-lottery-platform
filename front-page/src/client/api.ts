@@ -4,6 +4,18 @@ export interface ApiEnvelope<T> {
   readonly data: T;
 }
 
+export class ApiRequestError extends Error {
+  public readonly code: string;
+  public readonly status: number;
+
+  public constructor(code: string, message: string, status: number) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
 
 function apiUrl(path: string): string {
@@ -37,7 +49,7 @@ export async function apiRequest<T>(
   });
   const payload = (await response.json()) as ApiEnvelope<T>;
   if (!response.ok || payload.code !== 'ok') {
-    throw new Error(payload.message || '请求失败');
+    throw new ApiRequestError(payload.code || 'request_failed', payload.message || '请求失败', response.status);
   }
   return payload.data;
 }
