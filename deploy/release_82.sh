@@ -79,11 +79,11 @@ echo "[2/5] Upload deploy templates"
 "${scp_cmd[@]}" "$tmp_dir/ecosystem.config.cjs" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_PROJECT_DIR/ecosystem.config.cjs"
 "${scp_cmd[@]}" "$tmp_dir/gaokao-api.conf" "$REMOTE_USER@$REMOTE_HOST:/tmp/campaign-lottery-gaokao-api.conf"
 
-echo "[3/5] Apply database schema"
-"${ssh_cmd[@]}" "mysql --force -ucampaign_lottery_app -p'$MYSQL_PASSWORD' -h127.0.0.1 campaign_lottery_platform < '$REMOTE_PROJECT_DIR/sql/schema.mysql.sql'"
+echo "[3/5] Install backend dependencies and run migrations"
+"${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/backend-server' && npm install --no-fund --no-audit && npm run migrate"
 
 echo "[4/5] Build frontend and backend"
-"${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/backend-server' && npm install --no-fund --no-audit && npm run build"
+"${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/backend-server' && npm run build"
 "${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/front-page' && npm install --no-fund --no-audit && npm run build"
 
 echo "[5/5] Replace PM2/nginx config and reload services"

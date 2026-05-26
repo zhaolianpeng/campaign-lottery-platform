@@ -6,7 +6,7 @@
 
 - `pm2/ecosystem.config.cjs`：后端 `backend-server` 与前端 `front-page` 的 PM2 配置。
 - `nginx/gaokao-api.conf`：82 上生效的 nginx 站点模板，负责前端入口、管理端入口和 API 反向代理。
-- `release_82.sh`：将当前仓库代码与 deploy 模板同步到 82，并完成 schema、构建、PM2 reload、nginx reload 的一键发布脚本。
+- `release_82.sh`：将当前仓库代码与 deploy 模板同步到 82，并完成 migration、构建、PM2 reload、nginx reload 的一键发布脚本。
 
 ## 一键发布
 
@@ -35,8 +35,9 @@ MYSQL_PASSWORD='MySQL 业务密码' \
    - `ADMIN_PASSWORD`
    - `MYSQL_PASSWORD`
    - 如有跨域要求，调整 `CORS_ALLOW_ORIGIN`
-3. 分别在 `backend-server` 与 `front-page` 目录执行 `npm install && npm run build`。
-4. 使用 PM2 启动或重载：
+3. 在 `backend-server` 目录执行 `npm install && npm run migrate && npm run build`。
+4. 在 `front-page` 目录执行 `npm install && npm run build`。
+5. 使用 PM2 启动或重载：
 
 ```bash
 pm2 start ecosystem.config.cjs

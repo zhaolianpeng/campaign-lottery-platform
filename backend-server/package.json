@@ -5,6 +5,8 @@
     "dev": "next dev -p 18100",
     "build": "next build",
     "start": "next start -p 18100",
+    "migrate": "node ./scripts/migrate.cjs up",
+    "migrate:status": "node ./scripts/migrate.cjs status",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "jest"
@@ -15,6 +17,7 @@
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "redis": "^5.12.1",
+    "umzug": "^3.8.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {

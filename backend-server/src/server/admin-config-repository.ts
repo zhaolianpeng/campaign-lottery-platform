@@ -101,68 +101,6 @@ function normalizePityConfig(raw: PityConfig | null | undefined): PityConfig | u
   };
 }
 
-async function ensureConfigTables(): Promise<void> {
-  const pool = getMysqlPool();
-  if (!pool) {
-    return;
-  }
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS shop_items (
-      id VARCHAR(32) NOT NULL,
-      name VARCHAR(128) NOT NULL,
-      description VARCHAR(255) NOT NULL DEFAULT '',
-      image_url VARCHAR(255) NOT NULL DEFAULT '',
-      price_points INT NOT NULL DEFAULT 0,
-      price_cash INT NOT NULL DEFAULT 0,
-      item_type VARCHAR(32) NOT NULL,
-      item_qty INT NOT NULL DEFAULT 1,
-      stock INT NOT NULL DEFAULT -1,
-      daily_limit INT NOT NULL DEFAULT 0,
-      category VARCHAR(32) NOT NULL DEFAULT '',
-      is_active TINYINT(1) NOT NULL DEFAULT 1,
-      expires_at DATETIME NULL,
-      sort_order INT NOT NULL DEFAULT 0,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      PRIMARY KEY (id),
-      KEY idx_shop_items_sort_order (sort_order)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS first_recharge_packs (
-      id VARCHAR(32) NOT NULL,
-      name VARCHAR(128) NOT NULL,
-      price_points INT NOT NULL DEFAULT 0,
-      cash_price INT NOT NULL DEFAULT 0,
-      description VARCHAR(255) NOT NULL DEFAULT '',
-      image_url VARCHAR(255) NOT NULL DEFAULT '',
-      sort_order INT NOT NULL DEFAULT 0,
-      items_json JSON NOT NULL,
-      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      PRIMARY KEY (id),
-      KEY idx_first_recharge_packs_sort_order (sort_order)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  `);
-
-  const [prizeImageColumns] = await pool.query<RowDataPacket[]>("SHOW COLUMNS FROM prizes LIKE 'image_url'");
-  if (prizeImageColumns.length === 0) {
-    await pool.query("ALTER TABLE prizes ADD COLUMN image_url VARCHAR(255) NOT NULL DEFAULT '' AFTER status");
-  }
-
-  const [shopImageColumns] = await pool.query<RowDataPacket[]>("SHOW COLUMNS FROM shop_items LIKE 'image_url'");
-  if (shopImageColumns.length === 0) {
-    await pool.query("ALTER TABLE shop_items ADD COLUMN image_url VARCHAR(255) NOT NULL DEFAULT '' AFTER description");
-  }
-
-  const [packImageColumns] = await pool.query<RowDataPacket[]>("SHOW COLUMNS FROM first_recharge_packs LIKE 'image_url'");
-  if (packImageColumns.length === 0) {
-    await pool.query("ALTER TABLE first_recharge_packs ADD COLUMN image_url VARCHAR(255) NOT NULL DEFAULT '' AFTER description");
-  }
-}
-
 async function loadCampaignState(): Promise<Pick<AdminConfigState, 'campaigns' | 'prizesByCampaign'> | null> {
   const pool = getMysqlPool();
   if (!pool) {
@@ -319,7 +257,6 @@ export async function syncAdminConfigWithMysql(store: MemoryStore): Promise<void
     return;
   }
 
-  await ensureConfigTables();
   await bootstrapIfEmpty(store);
 
   const [campaignState, shopItems, firstRechargePacks] = await Promise.all([
@@ -341,7 +278,6 @@ export async function upsertCampaign(campaign: Campaign): Promise<void> {
   if (!pool) {
     return;
   }
-  await ensureConfigTables();
   await pool.query(
     `INSERT INTO campaigns (id, name, slug, status, starts_at, ends_at, daily_draw_limit, miss_weight, banner_image_url, campaign_summary, pity_config, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())
@@ -378,7 +314,6 @@ export async function deleteCampaignConfig(campaignId: string): Promise<void> {
   if (!pool) {
     return;
   }
-  await ensureConfigTables();
   await pool.query('DELETE FROM prizes WHERE campaign_id = ?', [campaignId]);
   await pool.query('DELETE FROM campaigns WHERE id = ?', [campaignId]);
 }
@@ -388,7 +323,6 @@ export async function upsertPrize(prize: Prize): Promise<void> {
   if (!pool) {
     return;
   }
-  await ensureConfigTables();
   await pool.query(
     `INSERT INTO prizes (id, campaign_id, name, level, stock, probability_weight, status, image_url, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())
@@ -419,7 +353,6 @@ export async function deletePrizeConfig(prizeId: string): Promise<void> {
   if (!pool) {
     return;
   }
-  await ensureConfigTables();
   await pool.query('DELETE FROM prizes WHERE id = ?', [prizeId]);
 }
 
@@ -428,7 +361,6 @@ export async function upsertShopItem(item: ShopItem): Promise<void> {
   if (!pool) {
     return;
   }
-  await ensureConfigTables();
   await pool.query(
     `INSERT INTO shop_items (id, name, description, image_url, price_points, price_cash, item_type, item_qty, stock, daily_limit, category, is_active, expires_at, sort_order)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -471,7 +403,6 @@ export async function deleteShopItemConfig(itemId: string): Promise<void> {
   if (!pool) {
     return;
   }
-  await ensureConfigTables();
   await pool.query('DELETE FROM shop_items WHERE id = ?', [itemId]);
 }
 
@@ -480,7 +411,6 @@ export async function upsertFirstRechargePack(pack: FirstRechargePack): Promise<
   if (!pool) {
     return;
   }
-  await ensureConfigTables();
   await pool.query(
     `INSERT INTO first_recharge_packs (id, name, price_points, cash_price, description, image_url, sort_order, items_json)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -502,6 +432,5 @@ export async function deleteFirstRechargePackConfig(packId: string): Promise<voi
   if (!pool) {
     return;
   }
-  await ensureConfigTables();
   await pool.query('DELETE FROM first_recharge_packs WHERE id = ?', [packId]);
 }

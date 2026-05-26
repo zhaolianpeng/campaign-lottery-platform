@@ -1,8 +1,5 @@
-CREATE DATABASE IF NOT EXISTS campaign_lottery_platform
-  DEFAULT CHARACTER SET utf8mb4
-  DEFAULT COLLATE utf8mb4_unicode_ci;
-
-USE campaign_lottery_platform;
+-- Baseline schema for the migration runner.
+-- The active database is selected by the migration command before this file runs.
 
 CREATE TABLE IF NOT EXISTS users (
   id VARCHAR(32) NOT NULL,
