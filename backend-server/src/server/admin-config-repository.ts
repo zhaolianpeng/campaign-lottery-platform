@@ -14,6 +14,7 @@ interface CampaignRow extends RowDataPacket {
   starts_at: Date | string;
   ends_at: Date | string;
   daily_draw_limit: number;
+  requires_phone_login: number;
   miss_weight: number;
   banner_image_url: string;
   campaign_summary: string;
@@ -153,7 +154,7 @@ async function loadCampaignState(): Promise<Pick<AdminConfigState, 'campaigns' |
   }
 
   const [campaignRows] = await pool.query<CampaignRow[]>(`
-    SELECT id, name, slug, status, starts_at, ends_at, daily_draw_limit, miss_weight, banner_image_url, campaign_summary, pity_config
+    SELECT id, name, slug, status, starts_at, ends_at, daily_draw_limit, requires_phone_login, miss_weight, banner_image_url, campaign_summary, pity_config
     FROM campaigns
     ORDER BY created_at ASC
   `);
@@ -176,6 +177,7 @@ async function loadCampaignState(): Promise<Pick<AdminConfigState, 'campaigns' |
     starts_at: new Date(row.starts_at).toISOString(),
     ends_at: new Date(row.ends_at).toISOString(),
     daily_draw_limit: row.daily_draw_limit,
+    requires_phone_login: Boolean(row.requires_phone_login),
     miss_weight: row.miss_weight,
     banner_image_url: row.banner_image_url,
     campaign_summary: row.campaign_summary,
@@ -441,8 +443,8 @@ export async function upsertCampaign(campaign: Campaign): Promise<void> {
     return;
   }
   await pool.query(
-    `INSERT INTO campaigns (id, name, slug, status, starts_at, ends_at, daily_draw_limit, miss_weight, banner_image_url, campaign_summary, pity_config, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())
+    `INSERT INTO campaigns (id, name, slug, status, starts_at, ends_at, daily_draw_limit, requires_phone_login, miss_weight, banner_image_url, campaign_summary, pity_config, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())
      ON DUPLICATE KEY UPDATE
        name = VALUES(name),
        slug = VALUES(slug),
@@ -450,6 +452,7 @@ export async function upsertCampaign(campaign: Campaign): Promise<void> {
        starts_at = VALUES(starts_at),
        ends_at = VALUES(ends_at),
        daily_draw_limit = VALUES(daily_draw_limit),
+       requires_phone_login = VALUES(requires_phone_login),
        miss_weight = VALUES(miss_weight),
        banner_image_url = VALUES(banner_image_url),
        campaign_summary = VALUES(campaign_summary),
@@ -463,6 +466,7 @@ export async function upsertCampaign(campaign: Campaign): Promise<void> {
       campaign.starts_at.slice(0, 19).replace('T', ' '),
       campaign.ends_at.slice(0, 19).replace('T', ' '),
       campaign.daily_draw_limit,
+      campaign.requires_phone_login ? 1 : 0,
       campaign.miss_weight,
       campaign.banner_image_url,
       campaign.campaign_summary,

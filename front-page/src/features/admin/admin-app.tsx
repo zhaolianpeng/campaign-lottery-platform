@@ -151,6 +151,7 @@ type CampaignEditorValues = {
   readonly starts_at: string;
   readonly ends_at: string;
   readonly daily_draw_limit: string;
+  readonly requires_phone_login: boolean;
   readonly miss_weight: string;
   readonly banner_image_url: string;
   readonly campaign_summary: string;
@@ -261,6 +262,7 @@ function createCampaignEditorValues(initial?: Campaign): CampaignEditorValues {
     starts_at: toDatetimeLocalValue(initial?.starts_at ?? new Date().toISOString()),
     ends_at: toDatetimeLocalValue(initial?.ends_at ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()),
     daily_draw_limit: String(initial?.daily_draw_limit ?? 5),
+    requires_phone_login: initial?.requires_phone_login ?? false,
     miss_weight: String(initial?.miss_weight ?? 70),
     banner_image_url: initial?.banner_image_url ?? '',
     campaign_summary: initial?.campaign_summary ?? '管理端创建的盲盒草稿，请补充奖品后再上线。',
@@ -275,6 +277,7 @@ function toCampaignPayload(campaign: Campaign | null, values: CampaignEditorValu
     starts_at: toIsoValue(values.starts_at) ?? campaign?.starts_at ?? new Date().toISOString(),
     ends_at: toIsoValue(values.ends_at) ?? campaign?.ends_at ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
     daily_draw_limit: Number(values.daily_draw_limit),
+    requires_phone_login: values.requires_phone_login,
     miss_weight: Number(values.miss_weight),
     banner_image_url: values.banner_image_url.trim(),
     campaign_summary: values.campaign_summary.trim(),
@@ -1591,6 +1594,12 @@ export function AdminApp(): React.ReactNode {
               <Field label="开始时间"><input className="admin-input" type="datetime-local" value={campaignEditor.values.starts_at} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, starts_at: event.target.value } } : current)} /></Field>
               <Field label="结束时间"><input className="admin-input" type="datetime-local" value={campaignEditor.values.ends_at} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, ends_at: event.target.value } } : current)} /></Field>
               <Field label="每日抽取上限"><input className="admin-input" min={0} type="number" value={campaignEditor.values.daily_draw_limit} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, daily_draw_limit: event.target.value } } : current)} /></Field>
+              <Field label="抽盲盒是否要求手机号登录">
+                <label className="flex items-center gap-2 text-sm text-zinc-300">
+                  <input checked={campaignEditor.values.requires_phone_login} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, requires_phone_login: event.target.checked } } : current)} type="checkbox" />
+                  <span>{campaignEditor.values.requires_phone_login ? '需要先绑定手机号' : '任何登录状态都可以抽'}</span>
+                </label>
+              </Field>
               <Field label="未中权重"><input className="admin-input" min={0} type="number" value={campaignEditor.values.miss_weight} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, miss_weight: event.target.value } } : current)} /></Field>
               <Field label="Banner 图片 URL"><input className="admin-input" placeholder="https://... 或 /api/v1/uploads/..." value={campaignEditor.values.banner_image_url} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, banner_image_url: event.target.value } } : current)} /></Field>
               <Field label="当前状态"><input className="admin-input" disabled value={campaignEditor.campaign?.status ?? 'draft'} /></Field>

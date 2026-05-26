@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto';
-import { campaignInactive, noDrawChances, wechatPhoneRequired } from './errors';
+import { campaignInactive, drawPhoneBindingRequired, noDrawChances, wechatPhoneRequired } from './errors';
 import { MemoryStore } from './memory-store';
 import { PityTracker, ProbabilityEngine, type PityEngineConfig } from './probability';
 import { exchangeCode, getUserInfo, decryptPhoneNumber } from './wechat-service';
@@ -249,7 +249,10 @@ export class LotteryService {
     }
 
     if (authenticatedUser) {
-      this.store.assertAssetAllowed(authenticatedUser.id);
+      if (campaign.requires_phone_login && authenticatedUser.status === 'pending_phone') {
+        throw drawPhoneBindingRequired;
+      }
+      this.store.assertAssetAllowed(authenticatedUser.id, { allowPendingPhone: !campaign.requires_phone_login });
       this.store.spendDrawPoints(authenticatedUser.id, drawCount);
     }
     this.store.deductDrawQuota(actorId, campaign.id, drawCount);
@@ -876,7 +879,7 @@ export class LotteryService {
     return this.store.getUserInventory(userId).filter((item) => item.prize_id === prizeId).length <= 1;
   }
 
-  private safeUserFromToken(token: string): { readonly id: string } | null {
+  private safeUserFromToken(token: string): User | null {
     try {
       return this.store.userFromToken(token);
     } catch {

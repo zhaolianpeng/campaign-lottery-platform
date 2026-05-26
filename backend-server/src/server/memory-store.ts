@@ -579,9 +579,13 @@ export class MemoryStore {
     }
   }
 
-  public assertAssetAllowed(userId: string): void {
+  public assertAssetAllowed(userId: string, options?: { readonly allowPendingPhone?: boolean }): void {
     const user = this.users.get(userId);
-    if (!user || user.status === 'pending_phone' || user.status === 'frozen' || user.status === 'disabled' || user.status === 'cancelled') {
+    const allowPendingPhone = options?.allowPendingPhone ?? false;
+    if (
+      !user ||
+      ((!allowPendingPhone && user.status === 'pending_phone') || user.status === 'frozen' || user.status === 'disabled' || user.status === 'cancelled')
+    ) {
       throw userStatusForbidden;
     }
   }
@@ -1185,6 +1189,7 @@ export class MemoryStore {
       starts_at: input.starts_at,
       ends_at: input.ends_at,
       daily_draw_limit: input.daily_draw_limit,
+      requires_phone_login: input.requires_phone_login,
       miss_weight: input.miss_weight,
       banner_image_url: input.banner_image_url ?? '',
       campaign_summary: input.campaign_summary ?? '',
@@ -1206,6 +1211,7 @@ export class MemoryStore {
       starts_at: input.starts_at,
       ends_at: input.ends_at,
       daily_draw_limit: input.daily_draw_limit,
+      requires_phone_login: input.requires_phone_login,
       miss_weight: input.miss_weight,
       banner_image_url: input.banner_image_url ?? '',
       campaign_summary: input.campaign_summary ?? '',
@@ -2296,6 +2302,7 @@ export class MemoryStore {
         starts_at: startsAt,
         ends_at: new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString(),
         daily_draw_limit: 3,
+        requires_phone_login: false,
         miss_weight: 86,
         banner_image_url: '',
         campaign_summary: '新用户登录即可参与，中奖后进入发奖队列，支持后台配置库存和概率。',
@@ -2308,6 +2315,7 @@ export class MemoryStore {
         starts_at: startsAt,
         ends_at: endsAt,
         daily_draw_limit: 10,
+        requires_phone_login: false,
         miss_weight: 72,
         banner_image_url: '',
         campaign_summary: '收集星光、月色与银河，集齐普通款和隐藏款可解锁限定奖励。',
@@ -2327,6 +2335,7 @@ export class MemoryStore {
         starts_at: startsAt,
         ends_at: new Date(now + 45 * 24 * 60 * 60 * 1000).toISOString(),
         daily_draw_limit: 8,
+        requires_phone_login: false,
         miss_weight: 68,
         banner_image_url: '',
         campaign_summary: '超萌猫咪盲盒，集齐全部款式可以解锁隐藏版布偶猫王。',

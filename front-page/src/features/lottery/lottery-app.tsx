@@ -146,6 +146,9 @@ function mapDrawErrorMessage(error: unknown): Error {
   if (error instanceof ApiRequestError && error.code === 'no_draw_chances') {
     return new Error('当前活动今日抽奖次数已用完，请明天再试。若你在试玩模式下联调，可清空浏览器本地试玩记录后重新进入。');
   }
+  if (error instanceof ApiRequestError && error.code === 'draw_phone_binding_required') {
+    return new Error('当前盲盒要求先绑定手机号后才能抽取，请先完成手机号登录或绑定。');
+  }
   return error instanceof Error ? error : new Error('抽奖失败，请稍后重试');
 }
 

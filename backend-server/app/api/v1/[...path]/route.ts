@@ -48,6 +48,7 @@ const campaignMutationSchema = z.object({
   starts_at: z.string().min(1),
   ends_at: z.string().min(1),
   daily_draw_limit: z.number().int().nonnegative(),
+  requires_phone_login: z.boolean().default(false),
   miss_weight: z.number().int().nonnegative(),
   banner_image_url: z.string().optional(),
   campaign_summary: z.string().optional(),

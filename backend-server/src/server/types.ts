@@ -195,6 +195,7 @@ export interface Campaign {
   readonly starts_at: string;
   readonly ends_at: string;
   readonly daily_draw_limit: number;
+  readonly requires_phone_login: boolean;
   readonly miss_weight: number;
   readonly banner_image_url: string;
   readonly campaign_summary: string;
@@ -424,6 +425,7 @@ export interface CampaignMutation {
   readonly starts_at: string;
   readonly ends_at: string;
   readonly daily_draw_limit: number;
+  readonly requires_phone_login: boolean;
   readonly miss_weight: number;
   readonly banner_image_url?: string;
   readonly campaign_summary?: string;
