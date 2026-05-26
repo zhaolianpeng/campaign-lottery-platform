@@ -18,7 +18,7 @@ import {
 import { useState, type ComponentType } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
-import { apiRequest } from '@/client/api';
+import { apiAssetUrl, apiRequest } from '@/client/api';
 import type {
   AdminOverview,
   AdminUserDetail,
@@ -28,11 +28,23 @@ import type {
   CampaignPublishValidation,
   DrawRecord,
   FirstRechargePack,
+  FirstRechargePackMutation,
   FulfillmentTask,
+  PityConfig,
   Prize,
   ShopItem,
+  ShopItemMutation,
   UserStatus,
 } from '@/types/api';
+
+type PrizeMutationPayload = {
+  readonly name: string;
+  readonly level: Prize['level'];
+  readonly stock: number;
+  readonly probability_weight: number;
+  readonly status: Prize['status'];
+  readonly image_url?: string;
+};
 
 const loginSchema = z.object({
   username: z.string().min(1),
@@ -78,12 +90,212 @@ function shortId(value: string | undefined): string {
   return value ? value.slice(0, 12) : '-';
 }
 
+const prizeLevels: readonly Prize['level'][] = ['common', 'rare', 'secret', 'limited', 'S', 'A', 'B'];
+const prizeStatuses: readonly Prize['status'][] = ['active', 'inactive'];
+const shopItemTypes: readonly ShopItem['item_type'][] = ['hint_card', 'see_through', 'pity_inherit', 'specify_voucher', 'ten_draw_ticket', 'free_draw'];
+
+type PrizeEditorValues = {
+  readonly name: string;
+  readonly level: Prize['level'];
+  readonly stock: string;
+  readonly probability_weight: string;
+  readonly status: Prize['status'];
+  readonly image_url: string;
+};
+
+type PityEditorValues = {
+  readonly enabled: boolean;
+  readonly soft_pity_n: string;
+  readonly pity_factor: string;
+  readonly hard_pity_n: string;
+  readonly target_prize: string;
+  readonly up_pool_enabled: boolean;
+  readonly up_prize_id: string;
+  readonly up_multiplier: string;
+  readonly up_level: Prize['level'];
+  readonly up_start_at: string;
+  readonly up_end_at: string;
+};
+
+type ShopItemEditorValues = {
+  readonly name: string;
+  readonly description: string;
+  readonly image_url: string;
+  readonly price_points: string;
+  readonly price_cash: string;
+  readonly item_type: ShopItem['item_type'];
+  readonly item_qty: string;
+  readonly stock: string;
+  readonly daily_limit: string;
+  readonly category: string;
+  readonly is_active: boolean;
+  readonly expires_at: string;
+  readonly sort_order: string;
+};
+
+type PackItemEditorValues = {
+  readonly type: string;
+  readonly name: string;
+  readonly qty: string;
+};
+
+type FirstRechargeEditorValues = {
+  readonly name: string;
+  readonly price_points: string;
+  readonly cash_price: string;
+  readonly description: string;
+  readonly image_url: string;
+  readonly sort_order: string;
+  readonly items: readonly PackItemEditorValues[];
+};
+
+function toDatetimeLocalValue(value?: string): string {
+  if (!value) {
+    return '';
+  }
+  return value.slice(0, 16);
+}
+
+function toIsoValue(value: string): string | undefined {
+  return value ? new Date(value).toISOString() : undefined;
+}
+
+function createPrizeEditorValues(initial?: Prize): PrizeEditorValues {
+  return {
+    name: initial?.name ?? '新礼品',
+    level: initial?.level ?? 'common',
+    stock: String(initial?.stock ?? 100),
+    probability_weight: String(initial?.probability_weight ?? 10),
+    status: initial?.status ?? 'active',
+    image_url: initial?.image_url ?? '',
+  };
+}
+
+function toPrizePayload(values: PrizeEditorValues): PrizeMutationPayload {
+  return {
+    name: values.name.trim(),
+    level: values.level,
+    stock: Number(values.stock),
+    probability_weight: Number(values.probability_weight),
+    status: values.status,
+    image_url: values.image_url.trim() || undefined,
+  };
+}
+
+function createPityEditorValues(initial?: PityConfig): PityEditorValues {
+  return {
+    enabled: initial?.enabled ?? true,
+    soft_pity_n: String(initial?.soft_pity_n ?? 20),
+    pity_factor: String(initial?.pity_factor ?? 0.08),
+    hard_pity_n: String(initial?.hard_pity_n ?? 60),
+    target_prize: initial?.target_prize ?? '',
+    up_pool_enabled: initial?.up_pool_enabled ?? false,
+    up_prize_id: initial?.up_prize_id ?? '',
+    up_multiplier: String(initial?.up_multiplier ?? 3),
+    up_level: initial?.up_level ?? 'secret',
+    up_start_at: toDatetimeLocalValue(initial?.up_start_at),
+    up_end_at: toDatetimeLocalValue(initial?.up_end_at),
+  };
+}
+
+function toPityPayload(values: PityEditorValues): PityConfig {
+  return {
+    enabled: values.enabled,
+    soft_pity_n: Number(values.soft_pity_n),
+    pity_factor: Number(values.pity_factor),
+    hard_pity_n: Number(values.hard_pity_n),
+    target_prize: values.target_prize.trim(),
+    up_pool_enabled: values.up_pool_enabled,
+    up_prize_id: values.up_prize_id.trim() || undefined,
+    up_multiplier: Number(values.up_multiplier),
+    up_level: values.up_level,
+    up_start_at: toIsoValue(values.up_start_at),
+    up_end_at: toIsoValue(values.up_end_at),
+  };
+}
+
+function createShopItemEditorValues(initial?: ShopItem): ShopItemEditorValues {
+  return {
+    name: initial?.name ?? '新商品',
+    description: initial?.description ?? '请填写商品描述',
+    image_url: initial?.image_url ?? '',
+    price_points: String(initial?.price_points ?? 100),
+    price_cash: String(initial?.price_cash ?? 0),
+    item_type: initial?.item_type ?? 'hint_card',
+    item_qty: String(initial?.item_qty ?? 1),
+    stock: String(initial?.stock ?? -1),
+    daily_limit: String(initial?.daily_limit ?? 0),
+    category: initial?.category ?? 'daily',
+    is_active: initial?.is_active ?? true,
+    expires_at: toDatetimeLocalValue(initial?.expires_at),
+    sort_order: String(initial?.sort_order ?? 1),
+  };
+}
+
+function toShopItemPayload(values: ShopItemEditorValues): ShopItemMutation {
+  return {
+    name: values.name.trim(),
+    description: values.description.trim(),
+    image_url: values.image_url.trim() || undefined,
+    price_points: Number(values.price_points),
+    price_cash: Number(values.price_cash),
+    item_type: values.item_type,
+    item_qty: Number(values.item_qty),
+    stock: Number(values.stock),
+    daily_limit: Number(values.daily_limit),
+    category: values.category.trim(),
+    is_active: values.is_active,
+    expires_at: toIsoValue(values.expires_at),
+    sort_order: Number(values.sort_order),
+  };
+}
+
+function createPackItemEditorValues(item?: FirstRechargePack['items'][number]): PackItemEditorValues {
+  return {
+    type: item?.type ?? 'points',
+    name: item?.name ?? '积分',
+    qty: String(item?.qty ?? 60),
+  };
+}
+
+function createFirstRechargeEditorValues(initial?: FirstRechargePack): FirstRechargeEditorValues {
+  return {
+    name: initial?.name ?? '新首充礼包',
+    price_points: String(initial?.price_points ?? 600),
+    cash_price: String(initial?.cash_price ?? 600),
+    description: initial?.description ?? '请填写礼包描述',
+    image_url: initial?.image_url ?? '',
+    sort_order: String(initial?.sort_order ?? 1),
+    items: (initial?.items ?? [{ type: 'points', name: '积分', qty: 60 }]).map((item) => createPackItemEditorValues(item)),
+  };
+}
+
+function toFirstRechargePayload(values: FirstRechargeEditorValues): FirstRechargePackMutation {
+  return {
+    name: values.name.trim(),
+    price_points: Number(values.price_points),
+    cash_price: Number(values.cash_price),
+    description: values.description.trim(),
+    image_url: values.image_url.trim() || undefined,
+    sort_order: Number(values.sort_order),
+    items: values.items.map((item) => ({
+      type: item.type.trim(),
+      name: item.name.trim(),
+      qty: Number(item.qty),
+    })),
+  };
+}
+
 export function AdminApp(): React.ReactNode {
   const [token, setToken] = useState('');
   const [tab, setTab] = useState<AdminTab>('overview');
   const [selectedCampaignId, setSelectedCampaignId] = useState('');
   const [userKeyword, setUserKeyword] = useState('');
   const [selectedUserId, setSelectedUserId] = useState('');
+  const [prizeEditor, setPrizeEditor] = useState<{ readonly prizeId?: string; readonly values: PrizeEditorValues } | null>(null);
+  const [pityEditor, setPityEditor] = useState<PityEditorValues | null>(null);
+  const [shopItemEditor, setShopItemEditor] = useState<{ readonly itemId?: string; readonly values: ShopItemEditorValues } | null>(null);
+  const [firstRechargeEditor, setFirstRechargeEditor] = useState<{ readonly packId?: string; readonly values: FirstRechargeEditorValues } | null>(null);
   const queryClient = useQueryClient();
 
   const loginForm = useForm<LoginValues>({
@@ -157,13 +369,13 @@ export function AdminApp(): React.ReactNode {
 
   const shopQuery = useQuery({
     queryKey: ['admin-shop-items', token],
-    queryFn: () => apiRequest<ShopItem[]>('/api/v1/shop/items', token),
+    queryFn: () => apiRequest<ShopItem[]>('/api/v1/admin/shop-items', token),
     enabled: Boolean(token) && tab === 'shop',
   });
 
   const firstRechargeQuery = useQuery({
     queryKey: ['admin-first-recharge', token],
-    queryFn: () => apiRequest<FirstRechargePack[]>('/api/v1/first-recharge/packs', token),
+    queryFn: () => apiRequest<FirstRechargePack[]>('/api/v1/admin/first-recharge/packs', token),
     enabled: Boolean(token) && tab === 'shop',
   });
 
@@ -189,21 +401,79 @@ export function AdminApp(): React.ReactNode {
   });
 
   const createPrizeMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (payload: PrizeMutationPayload) =>
       apiRequest(`/api/v1/admin/campaigns/${selectedCampaignId}/prizes`, token, {
         method: 'POST',
-        body: JSON.stringify({
-          name: '新奖品',
-          level: 'common',
-          stock: 100,
-          probability_weight: 10,
-          status: 'active',
-          sort_order: (prizesQuery.data?.length ?? 0) + 1,
-          display_prob: '待计算',
-        }),
+        body: JSON.stringify(payload),
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-prizes', token, selectedCampaignId] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-campaigns', token] });
+    },
+  });
+
+  const updatePrizeMutation = useMutation({
+    mutationFn: ({ prizeId, payload }: { readonly prizeId: string; readonly payload: PrizeMutationPayload }) =>
+      apiRequest(`/api/v1/admin/prizes/${prizeId}`, token, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-prizes', token, selectedCampaignId] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-campaigns', token] });
+    },
+  });
+
+  const deletePrizeMutation = useMutation({
+    mutationFn: (prizeId: string) =>
+      apiRequest(`/api/v1/admin/prizes/${prizeId}`, token, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-prizes', token, selectedCampaignId] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-campaigns', token] });
+    },
+  });
+
+  const uploadPrizeImageMutation = useMutation({
+    mutationFn: (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      return apiRequest<{ readonly url: string }>('/api/v1/admin/uploads/prizes', token, {
+        method: 'POST',
+        body: formData,
+      });
+    },
+    onSuccess: (payload) => {
+      setPrizeEditor((current) => (current ? { ...current, values: { ...current.values, image_url: payload.url } } : current));
+    },
+  });
+
+  const uploadShopImageMutation = useMutation({
+    mutationFn: (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      return apiRequest<{ readonly url: string }>('/api/v1/admin/uploads/prizes', token, {
+        method: 'POST',
+        body: formData,
+      });
+    },
+    onSuccess: (payload) => {
+      setShopItemEditor((current) => (current ? { ...current, values: { ...current.values, image_url: payload.url } } : current));
+    },
+  });
+
+  const uploadFirstRechargeImageMutation = useMutation({
+    mutationFn: (file: File) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      return apiRequest<{ readonly url: string }>('/api/v1/admin/uploads/prizes', token, {
+        method: 'POST',
+        body: formData,
+      });
+    },
+    onSuccess: (payload) => {
+      setFirstRechargeEditor((current) => (current ? { ...current, values: { ...current.values, image_url: payload.url } } : current));
     },
   });
 
@@ -216,22 +486,78 @@ export function AdminApp(): React.ReactNode {
   });
 
   const savePityMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (payload: PityConfig) =>
       apiRequest(`/api/v1/admin/campaigns/${selectedCampaignId}/pity-config`, token, {
         method: 'PUT',
-        body: JSON.stringify({
-          enabled: true,
-          soft_pity_n: 20,
-          pity_factor: 0.08,
-          hard_pity_n: 60,
-          target_prize: '',
-          up_pool_enabled: true,
-          up_multiplier: 3,
-          up_level: 'secret',
-        }),
+        body: JSON.stringify(payload),
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin-campaigns', token] });
+      void queryClient.invalidateQueries({ queryKey: ['admin-overview', token] });
+    },
+  });
+
+  const createShopItemMutation = useMutation({
+    mutationFn: (payload: ShopItemMutation) =>
+      apiRequest('/api/v1/admin/shop-items', token, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-shop-items', token] });
+    },
+  });
+
+  const updateShopItemMutation = useMutation({
+    mutationFn: ({ itemId, payload }: { readonly itemId: string; readonly payload: ShopItemMutation }) =>
+      apiRequest(`/api/v1/admin/shop-items/${itemId}`, token, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-shop-items', token] });
+    },
+  });
+
+  const deleteShopItemMutation = useMutation({
+    mutationFn: (itemId: string) =>
+      apiRequest(`/api/v1/admin/shop-items/${itemId}`, token, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-shop-items', token] });
+    },
+  });
+
+  const createFirstRechargeMutation = useMutation({
+    mutationFn: (payload: FirstRechargePackMutation) =>
+      apiRequest('/api/v1/admin/first-recharge/packs', token, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-first-recharge', token] });
+    },
+  });
+
+  const updateFirstRechargeMutation = useMutation({
+    mutationFn: ({ packId, payload }: { readonly packId: string; readonly payload: FirstRechargePackMutation }) =>
+      apiRequest(`/api/v1/admin/first-recharge/packs/${packId}`, token, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-first-recharge', token] });
+    },
+  });
+
+  const deleteFirstRechargeMutation = useMutation({
+    mutationFn: (packId: string) =>
+      apiRequest(`/api/v1/admin/first-recharge/packs/${packId}`, token, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['admin-first-recharge', token] });
     },
   });
 
@@ -278,6 +604,87 @@ export function AdminApp(): React.ReactNode {
   const activePrizeCount = selectedPrizes.filter((prize) => prize.status === 'active').length;
   const selectedPrizeStock = selectedPrizes.reduce((sum, prize) => sum + prize.stock, 0);
   const selectedPrizeWeight = selectedPrizes.reduce((sum, prize) => sum + prize.probability_weight, 0);
+
+  function submitPrizeEditor(): void {
+    if (!prizeEditor) {
+      return;
+    }
+    if (uploadPrizeImageMutation.isPending) {
+      window.alert('图片上传中，请稍后再保存。');
+      return;
+    }
+    const payload = toPrizePayload(prizeEditor.values);
+    if (!payload.name || !Number.isInteger(payload.stock) || !Number.isInteger(payload.probability_weight)) {
+      window.alert('请完整填写礼品名称、库存和概率权重。');
+      return;
+    }
+    if (prizeEditor.prizeId) {
+      updatePrizeMutation.mutate(
+        { prizeId: prizeEditor.prizeId, payload },
+        { onSuccess: () => setPrizeEditor(null) },
+      );
+      return;
+    }
+    createPrizeMutation.mutate(payload, { onSuccess: () => setPrizeEditor(null) });
+  }
+
+  function submitPityEditor(): void {
+    if (!pityEditor) {
+      return;
+    }
+    const payload = toPityPayload(pityEditor);
+    if (!selectedCampaignId || !Number.isInteger(payload.soft_pity_n) || !Number.isInteger(payload.hard_pity_n) || !Number.isFinite(payload.pity_factor)) {
+      window.alert('请完整填写保底参数。');
+      return;
+    }
+    savePityMutation.mutate(payload, { onSuccess: () => setPityEditor(null) });
+  }
+
+  function submitShopItemEditor(): void {
+    if (!shopItemEditor) {
+      return;
+    }
+    if (uploadShopImageMutation.isPending) {
+      window.alert('商品图片上传中，请稍后再保存。');
+      return;
+    }
+    const payload = toShopItemPayload(shopItemEditor.values);
+    if (!payload.name || !payload.description || !Number.isInteger(payload.price_points) || !Number.isInteger(payload.item_qty)) {
+      window.alert('请完整填写商品名称、描述、价格和数量。');
+      return;
+    }
+    if (shopItemEditor.itemId) {
+      updateShopItemMutation.mutate(
+        { itemId: shopItemEditor.itemId, payload },
+        { onSuccess: () => setShopItemEditor(null) },
+      );
+      return;
+    }
+    createShopItemMutation.mutate(payload, { onSuccess: () => setShopItemEditor(null) });
+  }
+
+  function submitFirstRechargeEditor(): void {
+    if (!firstRechargeEditor) {
+      return;
+    }
+    if (uploadFirstRechargeImageMutation.isPending) {
+      window.alert('礼包图片上传中，请稍后再保存。');
+      return;
+    }
+    const payload = toFirstRechargePayload(firstRechargeEditor.values);
+    if (!payload.name || payload.items.length === 0 || payload.items.some((item) => !item.type || !item.name || !Number.isInteger(item.qty))) {
+      window.alert('请完整填写礼包名称与礼包内容。');
+      return;
+    }
+    if (firstRechargeEditor.packId) {
+      updateFirstRechargeMutation.mutate(
+        { packId: firstRechargeEditor.packId, payload },
+        { onSuccess: () => setFirstRechargeEditor(null) },
+      );
+      return;
+    }
+    createFirstRechargeMutation.mutate(payload, { onSuccess: () => setFirstRechargeEditor(null) });
+  }
 
   if (!token) {
     return (
@@ -609,7 +1016,7 @@ export function AdminApp(): React.ReactNode {
               <button
                 className="rounded-md bg-orange-500 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
                 disabled={!selectedCampaignId || createPrizeMutation.isPending}
-                onClick={() => createPrizeMutation.mutate()}
+                onClick={() => setPrizeEditor({ values: createPrizeEditorValues() })}
                 type="button"
               >
                 + 新建奖品
@@ -647,8 +1054,33 @@ export function AdminApp(): React.ReactNode {
                 ) : null}
                 {selectedPrizes.map((prize) => (
                   <DataCard
+                    action={
+                      <div className="flex gap-2">
+                        <button
+                          className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 disabled:opacity-50"
+                          disabled={updatePrizeMutation.isPending}
+                          onClick={() => setPrizeEditor({ prizeId: prize.id, values: createPrizeEditorValues(prize) })}
+                          type="button"
+                        >
+                          编辑
+                        </button>
+                        <button
+                          className="rounded-md border border-red-800 px-3 py-1.5 text-xs text-red-300 disabled:opacity-50"
+                          disabled={deletePrizeMutation.isPending}
+                          onClick={() => {
+                            if (window.confirm(`确认删除礼品「${prize.name}」吗？`)) {
+                              deletePrizeMutation.mutate(prize.id);
+                            }
+                          }}
+                          type="button"
+                        >
+                          删除
+                        </button>
+                      </div>
+                    }
                     badge={prize.level}
                     badgeClass="border-blue-500/30 bg-blue-500/10 text-blue-300"
+                    coverUrl={prize.image_url}
                     key={prize.id}
                     subtitle={`ID: ${prize.id} · 库存 ${prize.stock} · 权重 ${prize.probability_weight} · ${prize.status}${prize.sort_order ? ` · 排序 ${prize.sort_order}` : ''}`}
                     title={prize.name}
@@ -664,7 +1096,17 @@ export function AdminApp(): React.ReactNode {
 
         {tab === 'pity' ? (
           <section className="space-y-4">
-            <h2 className="text-xl font-black text-white">概率 / UP 池配置</h2>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-xl font-black text-white">概率 / UP 池配置</h2>
+              <button
+                className="rounded-md bg-orange-500 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+                disabled={!selectedCampaignId || savePityMutation.isPending}
+                onClick={() => setPityEditor(createPityEditorValues(selectedCampaign?.pity_config))}
+                type="button"
+              >
+                编辑并保存配置
+              </button>
+            </div>
             <select
               className="w-full rounded-lg border border-zinc-700 bg-[#222] px-3 py-3 text-sm text-zinc-100 outline-none focus:border-orange-500 md:max-w-md"
               onChange={(event) => setSelectedCampaignId(event.target.value)}
@@ -679,17 +1121,17 @@ export function AdminApp(): React.ReactNode {
             </select>
             <div className="rounded-xl border border-zinc-800 bg-[#1a1a24] p-4">
               <h3 className="mb-2 font-bold text-orange-400">配置说明</h3>
-              <p className="text-sm leading-6 text-zinc-400">
-                当前提供一键保存默认软/硬保底和 UP 池配置，保持与参考后台的概率配置入口一致。
-              </p>
-              <button
-                className="mt-3 rounded-md bg-orange-500 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
-                disabled={!selectedCampaignId || savePityMutation.isPending}
-                onClick={() => savePityMutation.mutate()}
-                type="button"
-              >
-                保存默认保底配置
-              </button>
+              {selectedCampaignId ? (
+                <div className="space-y-2 text-sm leading-6 text-zinc-400">
+                  <p>当前活动：{selectedCampaign?.name ?? '-'}</p>
+                  <p>软保底：{selectedCampaign?.pity_config?.soft_pity_n ?? 0}</p>
+                  <p>硬保底：{selectedCampaign?.pity_config?.hard_pity_n ?? 0}</p>
+                  <p>概率递增：{selectedCampaign?.pity_config?.pity_factor ?? 0}</p>
+                  <p>目标奖品：{selectedCampaign?.pity_config?.target_prize ?? '未配置'}</p>
+                </div>
+              ) : (
+                <p className="text-sm leading-6 text-zinc-400">先选择活动，再录入软保底、硬保底、UP 奖品和时间窗口。</p>
+              )}
             </div>
           </section>
         ) : null}
@@ -770,12 +1212,57 @@ export function AdminApp(): React.ReactNode {
         ) : null}
         {tab === 'shop' ? (
           <section className="space-y-4">
-            <h2 className="text-xl font-black text-white">商店管理</h2>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-xl font-black text-white">商店管理</h2>
+              <div className="flex gap-2">
+                <button
+                  className="rounded-md bg-orange-500 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+                  disabled={createShopItemMutation.isPending}
+                  onClick={() => setShopItemEditor({ values: createShopItemEditorValues() })}
+                  type="button"
+                >
+                  + 新建商品
+                </button>
+                <button
+                  className="rounded-md bg-zinc-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+                  disabled={createFirstRechargeMutation.isPending}
+                  onClick={() => setFirstRechargeEditor({ values: createFirstRechargeEditorValues() })}
+                  type="button"
+                >
+                  + 新建首充礼包
+                </button>
+              </div>
+            </div>
             <AdminList title="商品列表">
               {(shopQuery.data ?? []).map((item) => (
                 <DataCard
+                  action={
+                    <div className="flex gap-2">
+                      <button
+                        className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 disabled:opacity-50"
+                        disabled={updateShopItemMutation.isPending}
+                        onClick={() => setShopItemEditor({ itemId: item.id, values: createShopItemEditorValues(item) })}
+                        type="button"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        className="rounded-md border border-red-800 px-3 py-1.5 text-xs text-red-300 disabled:opacity-50"
+                        disabled={deleteShopItemMutation.isPending}
+                        onClick={() => {
+                          if (window.confirm(`确认删除商品「${item.name}」吗？`)) {
+                            deleteShopItemMutation.mutate(item.id);
+                          }
+                        }}
+                        type="button"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  }
                   badge={`${item.price_points}积分`}
                   badgeClass="border-amber-500/30 bg-amber-500/10 text-amber-300"
+                  coverUrl={item.image_url}
                   key={item.id}
                   subtitle={`${item.description} · 库存 ${item.stock < 0 ? '不限' : item.stock}`}
                   title={item.name}
@@ -784,12 +1271,231 @@ export function AdminApp(): React.ReactNode {
             </AdminList>
             <AdminList title="首充礼包">
               {(firstRechargeQuery.data ?? []).map((pack) => (
-                <DataCard key={pack.id} subtitle={pack.description} title={pack.name} />
+                <DataCard
+                  action={
+                    <div className="flex gap-2">
+                      <button
+                        className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 disabled:opacity-50"
+                        disabled={updateFirstRechargeMutation.isPending}
+                        onClick={() => setFirstRechargeEditor({ packId: pack.id, values: createFirstRechargeEditorValues(pack) })}
+                        type="button"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        className="rounded-md border border-red-800 px-3 py-1.5 text-xs text-red-300 disabled:opacity-50"
+                        disabled={deleteFirstRechargeMutation.isPending}
+                        onClick={() => {
+                          if (window.confirm(`确认删除礼包「${pack.name}」吗？`)) {
+                            deleteFirstRechargeMutation.mutate(pack.id);
+                          }
+                        }}
+                        type="button"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  }
+                  coverUrl={pack.image_url}
+                  key={pack.id}
+                  subtitle={`${pack.description} · ${pack.price_points}积分 / ¥${(pack.cash_price / 100).toFixed(2)} · ${pack.items.map((item) => `${item.name}x${item.qty}`).join('、')}`}
+                  title={pack.name}
+                />
               ))}
             </AdminList>
           </section>
         ) : null}
+
+        <AdminModal
+          isOpen={Boolean(prizeEditor)}
+          isSubmitting={createPrizeMutation.isPending || updatePrizeMutation.isPending || uploadPrizeImageMutation.isPending}
+          onClose={() => setPrizeEditor(null)}
+          onSubmit={submitPrizeEditor}
+          submitText={prizeEditor?.prizeId ? '保存礼品' : '创建礼品'}
+          title={prizeEditor?.prizeId ? '编辑礼品' : '新建礼品'}
+        >
+          {prizeEditor ? (
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="礼品名称">
+                <input className="admin-input" value={prizeEditor.values.name} onChange={(event) => setPrizeEditor((current) => current ? { ...current, values: { ...current.values, name: event.target.value } } : current)} />
+              </Field>
+              <Field label="礼品等级">
+                <select className="admin-input" value={prizeEditor.values.level} onChange={(event) => setPrizeEditor((current) => current ? { ...current, values: { ...current.values, level: event.target.value as Prize['level'] } } : current)}>
+                  {prizeLevels.map((level) => <option key={level} value={level}>{level}</option>)}
+                </select>
+              </Field>
+              <Field label="库存">
+                <input className="admin-input" min={0} type="number" value={prizeEditor.values.stock} onChange={(event) => setPrizeEditor((current) => current ? { ...current, values: { ...current.values, stock: event.target.value } } : current)} />
+              </Field>
+              <Field label="概率权重">
+                <input className="admin-input" min={0} type="number" value={prizeEditor.values.probability_weight} onChange={(event) => setPrizeEditor((current) => current ? { ...current, values: { ...current.values, probability_weight: event.target.value } } : current)} />
+              </Field>
+              <Field label="状态">
+                <select className="admin-input" value={prizeEditor.values.status} onChange={(event) => setPrizeEditor((current) => current ? { ...current, values: { ...current.values, status: event.target.value as Prize['status'] } } : current)}>
+                  {prizeStatuses.map((status) => <option key={status} value={status}>{status}</option>)}
+                </select>
+              </Field>
+              <Field label="礼品图片 URL">
+                <input className="admin-input" placeholder="/api/v1/uploads/prizes/..." value={prizeEditor.values.image_url} onChange={(event) => setPrizeEditor((current) => current ? { ...current, values: { ...current.values, image_url: event.target.value } } : current)} />
+              </Field>
+              <Field label="上传礼品图片">
+                <div className="space-y-3">
+                  <label className="inline-flex cursor-pointer items-center rounded-md border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-200">
+                    {uploadPrizeImageMutation.isPending ? '上传中...' : '选择图片'}
+                    <input
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      className="hidden"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) {
+                          uploadPrizeImageMutation.mutate(file);
+                        }
+                        event.target.value = '';
+                      }}
+                      type="file"
+                    />
+                  </label>
+                  {prizeEditor.values.image_url ? (
+                    <img alt={prizeEditor.values.name} className="h-36 w-full rounded-xl border border-zinc-800 object-cover" src={apiAssetUrl(prizeEditor.values.image_url)} />
+                  ) : (
+                    <div className="flex h-36 items-center justify-center rounded-xl border border-dashed border-zinc-800 bg-black/10 text-xs text-zinc-500">
+                      暂无礼品图片
+                    </div>
+                  )}
+                  {uploadPrizeImageMutation.error ? (
+                    <p className="text-xs text-red-300">上传失败：{uploadPrizeImageMutation.error.message}</p>
+                  ) : null}
+                </div>
+              </Field>
+            </div>
+          ) : null}
+        </AdminModal>
+
+        <AdminModal
+          isOpen={Boolean(pityEditor)}
+          isSubmitting={savePityMutation.isPending}
+          onClose={() => setPityEditor(null)}
+          onSubmit={submitPityEditor}
+          submitText="保存配置"
+          title="编辑保底 / UP 池"
+        >
+          {pityEditor ? (
+            <div className="grid gap-3 md:grid-cols-2">
+              <ToggleField checked={pityEditor.enabled} label="启用保底" onChange={(checked) => setPityEditor((current) => current ? { ...current, enabled: checked } : current)} />
+              <ToggleField checked={pityEditor.up_pool_enabled} label="启用 UP 池" onChange={(checked) => setPityEditor((current) => current ? { ...current, up_pool_enabled: checked } : current)} />
+              <Field label="软保底次数"><input className="admin-input" min={0} type="number" value={pityEditor.soft_pity_n} onChange={(event) => setPityEditor((current) => current ? { ...current, soft_pity_n: event.target.value } : current)} /></Field>
+              <Field label="硬保底次数"><input className="admin-input" min={0} type="number" value={pityEditor.hard_pity_n} onChange={(event) => setPityEditor((current) => current ? { ...current, hard_pity_n: event.target.value } : current)} /></Field>
+              <Field label="概率递增系数"><input className="admin-input" min={0} step="0.01" type="number" value={pityEditor.pity_factor} onChange={(event) => setPityEditor((current) => current ? { ...current, pity_factor: event.target.value } : current)} /></Field>
+              <Field label="目标奖品 ID"><input className="admin-input" value={pityEditor.target_prize} onChange={(event) => setPityEditor((current) => current ? { ...current, target_prize: event.target.value } : current)} /></Field>
+              <Field label="UP 奖品 ID"><input className="admin-input" value={pityEditor.up_prize_id} onChange={(event) => setPityEditor((current) => current ? { ...current, up_prize_id: event.target.value } : current)} /></Field>
+              <Field label="UP 倍率"><input className="admin-input" min={0} step="0.1" type="number" value={pityEditor.up_multiplier} onChange={(event) => setPityEditor((current) => current ? { ...current, up_multiplier: event.target.value } : current)} /></Field>
+              <Field label="UP 等级">
+                <select className="admin-input" value={pityEditor.up_level} onChange={(event) => setPityEditor((current) => current ? { ...current, up_level: event.target.value as Prize['level'] } : current)}>
+                  {prizeLevels.map((level) => <option key={level} value={level}>{level}</option>)}
+                </select>
+              </Field>
+              <Field label="UP 开始时间"><input className="admin-input" type="datetime-local" value={pityEditor.up_start_at} onChange={(event) => setPityEditor((current) => current ? { ...current, up_start_at: event.target.value } : current)} /></Field>
+              <Field label="UP 结束时间"><input className="admin-input" type="datetime-local" value={pityEditor.up_end_at} onChange={(event) => setPityEditor((current) => current ? { ...current, up_end_at: event.target.value } : current)} /></Field>
+            </div>
+          ) : null}
+        </AdminModal>
+
+        <AdminModal
+          isOpen={Boolean(shopItemEditor)}
+          isSubmitting={createShopItemMutation.isPending || updateShopItemMutation.isPending || uploadShopImageMutation.isPending}
+          onClose={() => setShopItemEditor(null)}
+          onSubmit={submitShopItemEditor}
+          submitText={shopItemEditor?.itemId ? '保存商品' : '创建商品'}
+          title={shopItemEditor?.itemId ? '编辑商品' : '新建商品'}
+        >
+          {shopItemEditor ? (
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="商品名称"><input className="admin-input" value={shopItemEditor.values.name} onChange={(event) => setShopItemEditor((current) => current ? { ...current, values: { ...current.values, name: event.target.value } } : current)} /></Field>
+              <Field label="分类"><input className="admin-input" value={shopItemEditor.values.category} onChange={(event) => setShopItemEditor((current) => current ? { ...current, values: { ...current.values, category: event.target.value } } : current)} /></Field>
+              <Field label="商品描述"><textarea className="admin-input min-h-24" value={shopItemEditor.values.description} onChange={(event) => setShopItemEditor((current) => current ? { ...current, values: { ...current.values, description: event.target.value } } : current)} /></Field>
+              <Field label="商品图片 URL"><input className="admin-input" placeholder="/api/v1/uploads/prizes/..." value={shopItemEditor.values.image_url} onChange={(event) => setShopItemEditor((current) => current ? { ...current, values: { ...current.values, image_url: event.target.value } } : current)} /></Field>
+              <Field label="道具类型"><select className="admin-input" value={shopItemEditor.values.item_type} onChange={(event) => setShopItemEditor((current) => current ? { ...current, values: { ...current.values, item_type: event.target.value as ShopItem['item_type'] } } : current)}>{shopItemTypes.map((itemType) => <option key={itemType} value={itemType}>{itemType}</option>)}</select></Field>
+              <Field label="积分价格"><input className="admin-input" min={0} type="number" value={shopItemEditor.values.price_points} onChange={(event) => setShopItemEditor((current) => current ? { ...current, values: { ...current.values, price_points: event.target.value } } : current)} /></Field>
+              <Field label="现金价格（分）"><input className="admin-input" min={0} type="number" value={shopItemEditor.values.price_cash} onChange={(event) => setShopItemEditor((current) => current ? { ...current, values: { ...current.values, price_cash: event.target.value } } : current)} /></Field>
+              <Field label="发放数量"><input className="admin-input" min={1} type="number" value={shopItemEditor.values.item_qty} onChange={(event) => setShopItemEditor((current) => current ? { ...current, values: { ...current.values, item_qty: event.target.value } } : current)} /></Field>
+              <Field label="库存"><input className="admin-input" type="number" value={shopItemEditor.values.stock} onChange={(event) => setShopItemEditor((current) => current ? { ...current, values: { ...current.values, stock: event.target.value } } : current)} /></Field>
+              <Field label="每日限购"><input className="admin-input" min={0} type="number" value={shopItemEditor.values.daily_limit} onChange={(event) => setShopItemEditor((current) => current ? { ...current, values: { ...current.values, daily_limit: event.target.value } } : current)} /></Field>
+              <Field label="排序值"><input className="admin-input" min={0} type="number" value={shopItemEditor.values.sort_order} onChange={(event) => setShopItemEditor((current) => current ? { ...current, values: { ...current.values, sort_order: event.target.value } } : current)} /></Field>
+              <Field label="失效时间"><input className="admin-input" type="datetime-local" value={shopItemEditor.values.expires_at} onChange={(event) => setShopItemEditor((current) => current ? { ...current, values: { ...current.values, expires_at: event.target.value } } : current)} /></Field>
+              <Field label="上传商品图片">
+                <div className="space-y-3">
+                  <label className="inline-flex cursor-pointer items-center rounded-md border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-200">
+                    {uploadShopImageMutation.isPending ? '上传中...' : '选择图片'}
+                    <input accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) {
+                        uploadShopImageMutation.mutate(file);
+                      }
+                      event.target.value = '';
+                    }} type="file" />
+                  </label>
+                  {shopItemEditor.values.image_url ? <img alt={shopItemEditor.values.name} className="h-36 w-full rounded-xl border border-zinc-800 object-cover" src={apiAssetUrl(shopItemEditor.values.image_url)} /> : <div className="flex h-36 items-center justify-center rounded-xl border border-dashed border-zinc-800 bg-black/10 text-xs text-zinc-500">暂无商品图片</div>}
+                  {uploadShopImageMutation.error ? <p className="text-xs text-red-300">上传失败：{uploadShopImageMutation.error.message}</p> : null}
+                </div>
+              </Field>
+              <ToggleField checked={shopItemEditor.values.is_active} label="上架状态" onChange={(checked) => setShopItemEditor((current) => current ? { ...current, values: { ...current.values, is_active: checked } } : current)} />
+            </div>
+          ) : null}
+        </AdminModal>
+
+        <AdminModal
+          isOpen={Boolean(firstRechargeEditor)}
+          isSubmitting={createFirstRechargeMutation.isPending || updateFirstRechargeMutation.isPending || uploadFirstRechargeImageMutation.isPending}
+          onClose={() => setFirstRechargeEditor(null)}
+          onSubmit={submitFirstRechargeEditor}
+          submitText={firstRechargeEditor?.packId ? '保存礼包' : '创建礼包'}
+          title={firstRechargeEditor?.packId ? '编辑首充礼包' : '新建首充礼包'}
+        >
+          {firstRechargeEditor ? (
+            <div className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-2">
+                <Field label="礼包名称"><input className="admin-input" value={firstRechargeEditor.values.name} onChange={(event) => setFirstRechargeEditor((current) => current ? { ...current, values: { ...current.values, name: event.target.value } } : current)} /></Field>
+                <Field label="排序值"><input className="admin-input" min={0} type="number" value={firstRechargeEditor.values.sort_order} onChange={(event) => setFirstRechargeEditor((current) => current ? { ...current, values: { ...current.values, sort_order: event.target.value } } : current)} /></Field>
+                <Field label="积分价格"><input className="admin-input" min={0} type="number" value={firstRechargeEditor.values.price_points} onChange={(event) => setFirstRechargeEditor((current) => current ? { ...current, values: { ...current.values, price_points: event.target.value } } : current)} /></Field>
+                <Field label="现金价格（分）"><input className="admin-input" min={0} type="number" value={firstRechargeEditor.values.cash_price} onChange={(event) => setFirstRechargeEditor((current) => current ? { ...current, values: { ...current.values, cash_price: event.target.value } } : current)} /></Field>
+              </div>
+              <Field label="礼包描述"><textarea className="admin-input min-h-24" value={firstRechargeEditor.values.description} onChange={(event) => setFirstRechargeEditor((current) => current ? { ...current, values: { ...current.values, description: event.target.value } } : current)} /></Field>
+              <Field label="礼包图片 URL"><input className="admin-input" placeholder="/api/v1/uploads/prizes/..." value={firstRechargeEditor.values.image_url} onChange={(event) => setFirstRechargeEditor((current) => current ? { ...current, values: { ...current.values, image_url: event.target.value } } : current)} /></Field>
+              <Field label="上传礼包图片">
+                <div className="space-y-3">
+                  <label className="inline-flex cursor-pointer items-center rounded-md border border-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-200">
+                    {uploadFirstRechargeImageMutation.isPending ? '上传中...' : '选择图片'}
+                    <input accept="image/png,image/jpeg,image/webp,image/gif" className="hidden" onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) {
+                        uploadFirstRechargeImageMutation.mutate(file);
+                      }
+                      event.target.value = '';
+                    }} type="file" />
+                  </label>
+                  {firstRechargeEditor.values.image_url ? <img alt={firstRechargeEditor.values.name} className="h-36 w-full rounded-xl border border-zinc-800 object-cover" src={apiAssetUrl(firstRechargeEditor.values.image_url)} /> : <div className="flex h-36 items-center justify-center rounded-xl border border-dashed border-zinc-800 bg-black/10 text-xs text-zinc-500">暂无礼包图片</div>}
+                  {uploadFirstRechargeImageMutation.error ? <p className="text-xs text-red-300">上传失败：{uploadFirstRechargeImageMutation.error.message}</p> : null}
+                </div>
+              </Field>
+              <div className="space-y-3 rounded-xl border border-zinc-800 bg-black/10 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <h4 className="font-semibold text-white">礼包内容</h4>
+                  <button className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200" onClick={() => setFirstRechargeEditor((current) => current ? { ...current, values: { ...current.values, items: [...current.values.items, createPackItemEditorValues()] } } : current)} type="button">+ 添加条目</button>
+                </div>
+                {firstRechargeEditor.values.items.map((item, index) => (
+                  <div className="grid gap-3 rounded-lg border border-zinc-800 bg-[#16161d] p-3 md:grid-cols-[1fr_1fr_120px_auto]" key={`${item.type}-${index}`}>
+                    <input className="admin-input" placeholder="类型" value={item.type} onChange={(event) => setFirstRechargeEditor((current) => current ? { ...current, values: { ...current.values, items: current.values.items.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, type: event.target.value } : currentItem) } } : current)} />
+                    <input className="admin-input" placeholder="名称" value={item.name} onChange={(event) => setFirstRechargeEditor((current) => current ? { ...current, values: { ...current.values, items: current.values.items.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, name: event.target.value } : currentItem) } } : current)} />
+                    <input className="admin-input" min={1} placeholder="数量" type="number" value={item.qty} onChange={(event) => setFirstRechargeEditor((current) => current ? { ...current, values: { ...current.values, items: current.values.items.map((currentItem, currentIndex) => currentIndex === index ? { ...currentItem, qty: event.target.value } : currentItem) } } : current)} />
+                    <button className="rounded-md border border-red-800 px-3 py-2 text-xs text-red-300" disabled={firstRechargeEditor.values.items.length === 1} onClick={() => setFirstRechargeEditor((current) => current ? { ...current, values: { ...current.values, items: current.values.items.filter((_, currentIndex) => currentIndex !== index) } } : current)} type="button">删除</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </AdminModal>
       </div>
+      <AdminEditorStyles />
     </main>
   );
 }
@@ -809,22 +1515,29 @@ function DataCard({
   badge,
   badgeClass,
   action,
+  coverUrl,
 }: {
   readonly title: string;
   readonly subtitle: string;
   readonly badge?: string;
   readonly badgeClass?: string;
   readonly action?: React.ReactNode;
+  readonly coverUrl?: string;
 }): React.ReactNode {
   return (
     <article className="rounded-xl border border-zinc-800 bg-[#1a1a24] p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          {coverUrl ? (
+            <img alt={title} className="h-14 w-14 shrink-0 rounded-xl border border-zinc-800 object-cover" src={apiAssetUrl(coverUrl)} />
+          ) : null}
+          <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate font-semibold text-zinc-100">{title}</h3>
             {badge ? <span className={`rounded border px-2 py-0.5 text-[11px] font-bold ${badgeClass ?? ''}`}>{badge}</span> : null}
           </div>
           <p className="mt-1 text-xs text-zinc-500">{subtitle}</p>
+          </div>
         </div>
         {action}
       </div>
@@ -834,5 +1547,99 @@ function DataCard({
 
 function EmptyAdmin({ text }: { readonly text: string }): React.ReactNode {
   return <div className="rounded-xl border border-zinc-800 bg-[#1a1a24] p-8 text-center text-sm text-zinc-500">{text}</div>;
+}
+
+function AdminModal({
+  isOpen,
+  title,
+  children,
+  submitText,
+  isSubmitting,
+  onClose,
+  onSubmit,
+}: {
+  readonly isOpen: boolean;
+  readonly title: string;
+  readonly children: React.ReactNode;
+  readonly submitText: string;
+  readonly isSubmitting: boolean;
+  readonly onClose: () => void;
+  readonly onSubmit: () => void;
+}): React.ReactNode {
+  if (!isOpen) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-8 backdrop-blur-sm">
+      <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-zinc-800 bg-[#15151c] shadow-[0_32px_120px_rgba(0,0,0,0.55)]">
+        <div className="flex items-center justify-between gap-3 border-b border-zinc-800 px-5 py-4">
+          <h3 className="text-lg font-black text-white">{title}</h3>
+          <button className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300" onClick={onClose} type="button">
+            关闭
+          </button>
+        </div>
+        <div className="space-y-4 px-5 py-5">{children}</div>
+        <div className="flex justify-end gap-3 border-t border-zinc-800 px-5 py-4">
+          <button className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-zinc-300" onClick={onClose} type="button">
+            取消
+          </button>
+          <button className="rounded-md bg-orange-500 px-4 py-2 text-sm font-bold text-white disabled:opacity-50" disabled={isSubmitting} onClick={onSubmit} type="button">
+            {isSubmitting ? '提交中...' : submitText}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { readonly label: string; readonly children: React.ReactNode }): React.ReactNode {
+  return (
+    <label className="block space-y-2 text-sm text-zinc-300">
+      <span className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-500">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function ToggleField({
+  label,
+  checked,
+  onChange,
+}: {
+  readonly label: string;
+  readonly checked: boolean;
+  readonly onChange: (checked: boolean) => void;
+}): React.ReactNode {
+  return (
+    <label className="flex min-h-[44px] items-center justify-between rounded-lg border border-zinc-800 bg-black/10 px-3 py-2 text-sm text-zinc-300">
+      <span>{label}</span>
+      <input checked={checked} className="size-4 accent-orange-500" onChange={(event) => onChange(event.target.checked)} type="checkbox" />
+    </label>
+  );
+}
+
+function AdminEditorStyles(): React.ReactNode {
+  return (
+    <style jsx global>{`
+      .admin-input {
+        width: 100%;
+        border-radius: 0.75rem;
+        border: 1px solid rgb(63 63 70 / 1);
+        background: #222;
+        color: rgb(244 244 245 / 1);
+        padding: 0.7rem 0.85rem;
+        outline: none;
+      }
+
+      .admin-input:focus {
+        border-color: rgb(249 115 22 / 1);
+      }
+
+      .admin-input::placeholder {
+        color: rgb(113 113 122 / 1);
+      }
+    `}</style>
+  );
 }
 

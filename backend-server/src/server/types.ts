@@ -547,6 +547,23 @@ export interface ShopItem {
   readonly id: string;
   readonly name: string;
   readonly description: string;
+  readonly image_url?: string;
+  readonly price_points: number;
+  readonly price_cash: number;
+  readonly item_type: ItemType;
+  readonly item_qty: number;
+  readonly stock: number;
+  readonly daily_limit: number;
+  readonly category: string;
+  readonly is_active: boolean;
+  readonly expires_at?: string;
+  readonly sort_order: number;
+}
+
+export interface ShopItemMutation {
+  readonly name: string;
+  readonly description: string;
+  readonly image_url?: string;
   readonly price_points: number;
   readonly price_cash: number;
   readonly item_type: ItemType;
@@ -599,6 +616,17 @@ export interface FirstRechargePack {
   readonly cash_price: number;
   readonly items: readonly PackItem[];
   readonly description: string;
+  readonly image_url?: string;
+  readonly sort_order: number;
+}
+
+export interface FirstRechargePackMutation {
+  readonly name: string;
+  readonly price_points: number;
+  readonly cash_price: number;
+  readonly items: readonly PackItem[];
+  readonly description: string;
+  readonly image_url?: string;
   readonly sort_order: number;
 }
 

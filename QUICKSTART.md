@@ -186,7 +186,8 @@ npm run build
 
 ## 注意事项
 
-- 当前业务数据仍存储在服务进程内存中，重启 `backend-server` 后数据会重置；MySQL 与 Redis 连接已接入健康检查和统一配置，业务落库可按 `docs/database-design.md` 继续推进。
+- 管理配置类数据已经支持通过 MySQL 持久化，包含礼品、保底配置、商店商品和首充礼包；仍依赖进程内存的数据需继续按 `docs/database-design.md` 推进。
 - 当前项目以本地开发和演示为主，尚未接入容器化和 CI/CD。
 - 前后端分别独立构建和启动，修改任一子项目依赖后请在对应目录重新执行 `npm install`。
+- 生产部署模板见 `deploy/`，当前 82 环境使用 PM2 管理 `backend-server` 和 `front-page`，由 nginx 暴露 `/campaign-h5/`、`/campaign-admin/`、`/api/v1/` 和 `/api/campaign/`。
 - 模块、API、数据库表结构和系统设计文档位于 `docs/`，其中 `docs/database-design.md` 包含 Mermaid ER 图。

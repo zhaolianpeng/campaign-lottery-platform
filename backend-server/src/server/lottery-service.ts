@@ -39,6 +39,7 @@ import type {
   ExchangeOffer,
   ExchangeOfferMutation,
   FirstRechargePack,
+  FirstRechargePackMutation,
   FlashListInfo,
   FlashPurchaseResult,
   FlashSubscription,
@@ -65,6 +66,7 @@ import type {
   ShareRewardResult,
   SingleDrawResult,
   ShopItem,
+  ShopItemMutation,
   TeamInfo,
   UseItemRequest,
   UserInventory,
@@ -520,6 +522,22 @@ export class LotteryService {
     return this.store.shopItems();
   }
 
+  public adminShopItems(token: string): readonly ShopItem[] {
+    return this.store.adminShopItems(token);
+  }
+
+  public createShopItem(token: string, input: ShopItemMutation): ShopItem {
+    return this.store.createShopItem(token, input);
+  }
+
+  public updateShopItem(token: string, itemId: string, input: ShopItemMutation): ShopItem {
+    return this.store.updateShopItem(token, itemId, input);
+  }
+
+  public deleteShopItem(token: string, itemId: string): void {
+    this.store.deleteShopItem(token, itemId);
+  }
+
   public buyShopItem(token: string, input: BuyShopItemRequest): BuyShopItemResult {
     const user = this.assetUserFromToken(token);
     return this.store.buyShopItem(user.id, input);
@@ -537,6 +555,22 @@ export class LotteryService {
 
   public firstRechargePacks(): readonly FirstRechargePack[] {
     return this.store.firstRechargePacks();
+  }
+
+  public adminFirstRechargePacks(token: string): readonly FirstRechargePack[] {
+    return this.store.adminFirstRechargePacks(token);
+  }
+
+  public createFirstRechargePack(token: string, input: FirstRechargePackMutation): FirstRechargePack {
+    return this.store.createFirstRechargePack(token, input);
+  }
+
+  public updateFirstRechargePack(token: string, packId: string, input: FirstRechargePackMutation): FirstRechargePack {
+    return this.store.updateFirstRechargePack(token, packId, input);
+  }
+
+  public deleteFirstRechargePack(token: string, packId: string): void {
+    this.store.deleteFirstRechargePack(token, packId);
   }
 
   public firstRechargeStatus(token: string): ReturnType<MemoryStore['firstRechargeStatus']> {

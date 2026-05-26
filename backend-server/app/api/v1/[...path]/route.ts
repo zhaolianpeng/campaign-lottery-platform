@@ -1,5 +1,15 @@
 import { z } from 'zod';
 import { bearerToken, corsHeaders, fail, ok } from '@/server/api-response';
+import {
+  deleteCampaignConfig,
+  deleteFirstRechargePackConfig,
+  deletePrizeConfig,
+  deleteShopItemConfig,
+  upsertCampaign,
+  upsertFirstRechargePack,
+  upsertPrize,
+  upsertShopItem,
+} from '@/server/admin-config-repository';
 import { getAppConfig } from '@/server/config';
 import { notFound, phoneVerificationRequired } from '@/server/errors';
 import { getService } from '@/server/singleton';
@@ -93,6 +103,22 @@ const shopBuySchema = z.object({
   quantity: z.number().int().positive().optional(),
 });
 
+const shopItemMutationSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().min(1),
+  image_url: z.string().optional(),
+  price_points: z.number().int().nonnegative(),
+  price_cash: z.number().int().nonnegative(),
+  item_type: z.enum(['hint_card', 'see_through', 'pity_inherit', 'specify_voucher', 'ten_draw_ticket', 'free_draw']),
+  item_qty: z.number().int().positive(),
+  stock: z.number().int(),
+  daily_limit: z.number().int().nonnegative(),
+  category: z.string().min(1),
+  is_active: z.boolean(),
+  expires_at: z.string().optional(),
+  sort_order: z.number().int().nonnegative(),
+});
+
 const useItemSchema = z.object({
   item_type: z.enum(['hint_card', 'see_through', 'pity_inherit', 'specify_voucher', 'ten_draw_ticket', 'free_draw']),
   campaign_id: z.string().optional(),
@@ -101,6 +127,23 @@ const useItemSchema = z.object({
 
 const firstRechargeClaimSchema = z.object({
   pack_id: z.string().min(1),
+});
+
+const packItemSchema = z.object({
+  type: z.string().min(1),
+  name: z.string().min(1),
+  qty: z.number().int().positive(),
+  prize_id: z.string().optional(),
+});
+
+const firstRechargePackMutationSchema = z.object({
+  name: z.string().min(1),
+  price_points: z.number().int().nonnegative(),
+  cash_price: z.number().int().nonnegative(),
+  items: z.array(packItemSchema).min(1),
+  description: z.string().min(1),
+  image_url: z.string().optional(),
+  sort_order: z.number().int().nonnegative(),
 });
 
 const blendSchema = z.object({
@@ -219,7 +262,7 @@ function searchParam(request: Request, name: string): string {
 export async function GET(request: Request, context: RouteContext): Promise<Response> {
   try {
     const path = await segments(context);
-    const service = getService();
+    const service = await getService();
     const token = bearerToken(request);
 
     if (path.join('/') === 'config/public') {
@@ -276,6 +319,12 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
     }
     if (path.join('/') === 'admin/overview') {
       return ok('admin overview', service.adminOverview(token));
+    }
+    if (path.join('/') === 'admin/shop-items') {
+      return ok('admin shop items', service.adminShopItems(token));
+    }
+    if (path.join('/') === 'admin/first-recharge/packs') {
+      return ok('admin first recharge packs', service.adminFirstRechargePacks(token));
     }
     if (path.join('/') === 'admin/campaigns') {
       return ok('admin campaigns', service.adminCampaigns(token));
@@ -410,7 +459,7 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
 export async function POST(request: Request, context: RouteContext): Promise<Response> {
   try {
     const path = await segments(context);
-    const service = getService();
+    const service = await getService();
     const token = bearerToken(request);
     const body = await readJson(request);
 
@@ -540,13 +589,27 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
       return ok('admin login succeeded', service.adminLogin(input.username, input.password));
     }
     if (path.join('/') === 'admin/campaigns') {
-      return ok('campaign created', service.createCampaign(token, campaignMutationSchema.parse(body)), 201);
+      const campaign = service.createCampaign(token, campaignMutationSchema.parse(body));
+      await upsertCampaign(campaign);
+      return ok('campaign created', campaign, 201);
     }
     if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path[3] === 'validate') {
       return ok('campaign publish validation', service.validateCampaignPublish(token, path[2]));
     }
     if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path[3] === 'prizes') {
-      return ok('prize created', service.createPrize(token, path[2], prizeMutationSchema.parse(body)), 201);
+      const prize = service.createPrize(token, path[2], prizeMutationSchema.parse(body));
+      await upsertPrize(prize);
+      return ok('prize created', prize, 201);
+    }
+    if (path.join('/') === 'admin/shop-items') {
+      const item = service.createShopItem(token, shopItemMutationSchema.parse(body));
+      await upsertShopItem(item);
+      return ok('shop item created', item, 201);
+    }
+    if (path.join('/') === 'admin/first-recharge/packs') {
+      const pack = service.createFirstRechargePack(token, firstRechargePackMutationSchema.parse(body));
+      await upsertFirstRechargePack(pack);
+      return ok('first recharge pack created', pack, 201);
     }
     if (path.join('/') === 'admin/delivery/approve') {
       const input = deliveryApproveSchema.parse(body);
@@ -585,19 +648,35 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
 export async function PUT(request: Request, context: RouteContext): Promise<Response> {
   try {
     const path = await segments(context);
-    const service = getService();
+    const service = await getService();
     const token = bearerToken(request);
     const body = await readJson(request);
 
     if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path.length === 3) {
-      return ok('campaign updated', service.updateCampaign(token, path[2], campaignMutationSchema.parse(body)));
+      const campaign = service.updateCampaign(token, path[2], campaignMutationSchema.parse(body));
+      await upsertCampaign(campaign);
+      return ok('campaign updated', campaign);
     }
     if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path[3] === 'pity-config') {
       const parsed = campaignMutationSchema.shape.pity_config.unwrap().parse(body);
-      return ok('pity config updated', service.updatePityConfig(token, path[2], parsed));
+      const campaign = service.updatePityConfig(token, path[2], parsed);
+      await upsertCampaign(campaign);
+      return ok('pity config updated', campaign);
     }
     if (path[0] === 'admin' && path[1] === 'prizes' && path[2]) {
-      return ok('prize updated', service.updatePrize(token, path[2], prizeMutationSchema.parse(body)));
+      const prize = service.updatePrize(token, path[2], prizeMutationSchema.parse(body));
+      await upsertPrize(prize);
+      return ok('prize updated', prize);
+    }
+    if (path[0] === 'admin' && path[1] === 'shop-items' && path[2]) {
+      const item = service.updateShopItem(token, path[2], shopItemMutationSchema.parse(body));
+      await upsertShopItem(item);
+      return ok('shop item updated', item);
+    }
+    if (path[0] === 'admin' && path[1] === 'first-recharge' && path[2] === 'packs' && path[3]) {
+      const pack = service.updateFirstRechargePack(token, path[3], firstRechargePackMutationSchema.parse(body));
+      await upsertFirstRechargePack(pack);
+      return ok('first recharge pack updated', pack);
     }
 
     throw notFound;
@@ -609,7 +688,7 @@ export async function PUT(request: Request, context: RouteContext): Promise<Resp
 export async function PATCH(request: Request, context: RouteContext): Promise<Response> {
   try {
     const path = await segments(context);
-    const service = getService();
+    const service = await getService();
     const token = bearerToken(request);
     const body = await readJson(request);
 
@@ -636,7 +715,7 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
 export async function DELETE(request: Request, context: RouteContext): Promise<Response> {
   try {
     const path = await segments(context);
-    const service = getService();
+    const service = await getService();
     const token = bearerToken(request);
 
     if (path[0] === 'blindbox' && path[1] === 'exchange-offers' && path[2]) {
@@ -645,15 +724,28 @@ export async function DELETE(request: Request, context: RouteContext): Promise<R
     }
     if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path.length === 3) {
       service.deleteCampaign(token, path[2]);
+      await deleteCampaignConfig(path[2]);
       return ok('campaign deleted', null);
     }
     if (path[0] === 'admin' && path[1] === 'prizes' && path[2]) {
       service.deletePrize(token, path[2]);
+      await deletePrizeConfig(path[2]);
       return ok('prize deleted', null);
     }
     if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path[3] === 'prizes' && path[4]) {
       service.deletePrize(token, path[4]);
+      await deletePrizeConfig(path[4]);
       return ok('prize deleted', null);
+    }
+    if (path[0] === 'admin' && path[1] === 'shop-items' && path[2]) {
+      service.deleteShopItem(token, path[2]);
+      await deleteShopItemConfig(path[2]);
+      return ok('shop item deleted', null);
+    }
+    if (path[0] === 'admin' && path[1] === 'first-recharge' && path[2] === 'packs' && path[3]) {
+      service.deleteFirstRechargePack(token, path[3]);
+      await deleteFirstRechargePackConfig(path[3]);
+      return ok('first recharge pack deleted', null);
     }
 
     throw notFound;

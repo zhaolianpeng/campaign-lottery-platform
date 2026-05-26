@@ -124,6 +124,20 @@ export interface Campaign {
   readonly pity_config?: PityConfig;
 }
 
+export interface PityConfig {
+  readonly enabled: boolean;
+  readonly soft_pity_n: number;
+  readonly pity_factor: number;
+  readonly hard_pity_n: number;
+  readonly target_prize: string;
+  readonly up_pool_enabled?: boolean;
+  readonly up_prize_id?: string;
+  readonly up_multiplier?: number;
+  readonly up_level?: PrizeLevel;
+  readonly up_start_at?: string;
+  readonly up_end_at?: string;
+}
+
 export interface Prize {
   readonly id: string;
   readonly campaign_id: string;
@@ -299,6 +313,7 @@ export interface ShopItem {
   readonly id: string;
   readonly name: string;
   readonly description: string;
+  readonly image_url?: string;
   readonly price_points: number;
   readonly price_cash: number;
   readonly item_type: ItemType;
@@ -307,6 +322,23 @@ export interface ShopItem {
   readonly daily_limit: number;
   readonly category: string;
   readonly is_active: boolean;
+  readonly expires_at?: string;
+  readonly sort_order: number;
+}
+
+export interface ShopItemMutation {
+  readonly name: string;
+  readonly description: string;
+  readonly image_url?: string;
+  readonly price_points: number;
+  readonly price_cash: number;
+  readonly item_type: ItemType;
+  readonly item_qty: number;
+  readonly stock: number;
+  readonly daily_limit: number;
+  readonly category: string;
+  readonly is_active: boolean;
+  readonly expires_at?: string;
   readonly sort_order: number;
 }
 
@@ -322,8 +354,19 @@ export interface FirstRechargePack {
   readonly price_points: number;
   readonly cash_price: number;
   readonly description: string;
+  readonly image_url?: string;
   readonly sort_order: number;
   readonly items: readonly { readonly type: string; readonly name: string; readonly qty: number }[];
+}
+
+export interface FirstRechargePackMutation {
+  readonly name: string;
+  readonly price_points: number;
+  readonly cash_price: number;
+  readonly description: string;
+  readonly image_url?: string;
+  readonly sort_order: number;
+  readonly items: readonly { readonly type: string; readonly name: string; readonly qty: number; readonly prize_id?: string }[];
 }
 
 export interface UserFirstRecharge {

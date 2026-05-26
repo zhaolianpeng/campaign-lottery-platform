@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { syncAdminConfigWithMysql } from './admin-config-repository';
 import { getAppConfig } from './config';
 import {
   AppError,
@@ -52,6 +53,7 @@ import type {
   ExchangeOffer,
   ExchangeOfferMutation,
   FirstRechargePack,
+  FirstRechargePackMutation,
   FlashListInfo,
   FlashPurchaseResult,
   FlashSale,
@@ -83,6 +85,7 @@ import type {
   Session,
   ShareRewardResult,
   ShopItem,
+  ShopItemMutation,
   Team,
   TeamInfo,
   TeamMember,
@@ -133,7 +136,7 @@ const cardConfigs: Record<CardType, { readonly price: number; readonly durationD
   season: { price: 6800, durationDays: 90, freeDraws: 2, discount: 0.75 },
 };
 
-const firstRechargePacks: readonly FirstRechargePack[] = [
+const defaultFirstRechargePacks: readonly FirstRechargePack[] = [
   {
     id: 'tier_1',
     name: '首充6元',
@@ -201,6 +204,28 @@ function cloneCampaign(campaign: Campaign): Campaign {
   };
 }
 
+function cloneShopItem(item: ShopItem): ShopItem {
+  return { ...item };
+}
+
+function clonePackItem(item: FirstRechargePack['items'][number]): FirstRechargePack['items'][number] {
+  return { ...item };
+}
+
+function cloneFirstRechargePack(pack: FirstRechargePack): FirstRechargePack {
+  return {
+    ...pack,
+    items: pack.items.map((item) => clonePackItem(item)),
+  };
+}
+
+export interface AdminConfigState {
+  readonly campaigns: readonly Campaign[];
+  readonly prizesByCampaign: Readonly<Record<string, readonly Prize[]>>;
+  readonly shopItems: readonly ShopItem[];
+  readonly firstRechargePacks: readonly FirstRechargePack[];
+}
+
 function memberLevel(totalSpent: number): UserMember['level'] {
   if (totalSpent >= 50000) {
     return 'diamond';
@@ -255,6 +280,7 @@ export class MemoryStore {
   private readonly flashSubscriptions: FlashSubscription[] = [];
   private readonly activityParticipations: ActivityParticipation[] = [];
   private shopItemList: ShopItem[] = [];
+  private firstRechargePackList: FirstRechargePack[] = [];
   private battlePassSeason: BattlePassSeason | null = null;
   private battlePassTasks: BattlePassTask[] = [];
   private battlePassRewards: BattlePassReward[] = [];
@@ -639,6 +665,42 @@ export class MemoryStore {
 
   public prizeList(campaignId: string): readonly Prize[] {
     return [...(this.prizesByCampaign.get(campaignId) ?? [])].map((prize) => ({ ...prize }));
+  }
+
+  public exportAdminConfigState(): AdminConfigState {
+    const prizesByCampaign: Record<string, readonly Prize[]> = {};
+    for (const [campaignId, prizes] of this.prizesByCampaign.entries()) {
+      prizesByCampaign[campaignId] = prizes.map((prize) => ({ ...prize }));
+    }
+    return {
+      campaigns: this.campaigns(),
+      prizesByCampaign,
+      shopItems: this.shopItemList.map((item) => cloneShopItem(item)),
+      firstRechargePacks: this.firstRechargePackList.map((pack) => cloneFirstRechargePack(pack)),
+    };
+  }
+
+  public hydrateAdminConfigState(state: Partial<AdminConfigState>): void {
+    if (state.campaigns && state.campaigns.length > 0) {
+      this.campaignsById.clear();
+      for (const campaign of state.campaigns) {
+        this.campaignsById.set(campaign.id, cloneCampaign(campaign));
+      }
+    }
+    if (state.prizesByCampaign) {
+      this.prizesByCampaign.clear();
+      for (const [campaignId, prizes] of Object.entries(state.prizesByCampaign)) {
+        this.prizesByCampaign.set(campaignId, prizes.map((prize) => ({ ...prize })));
+      }
+    }
+    if (state.shopItems && state.shopItems.length > 0) {
+      this.shopItemList = state.shopItems.map((item) => cloneShopItem(item));
+      this.shopItemList.sort((left, right) => left.sort_order - right.sort_order);
+    }
+    if (state.firstRechargePacks && state.firstRechargePacks.length > 0) {
+      this.firstRechargePackList = state.firstRechargePacks.map((pack) => cloneFirstRechargePack(pack));
+      this.firstRechargePackList.sort((left, right) => left.sort_order - right.sort_order);
+    }
   }
 
   public checkDrawQuota(userId: string, campaignId: string, dailyLimit: number): number {
@@ -1049,7 +1111,7 @@ export class MemoryStore {
       stock: input.stock,
       probability_weight: input.probability_weight,
       status: input.status,
-      image_url: input.image_url,
+    image_url: input.image_url?.trim() || undefined,
       sort_order: input.sort_order,
       display_prob: input.display_prob,
     };
@@ -1062,7 +1124,11 @@ export class MemoryStore {
     for (const [campaignId, prizes] of this.prizesByCampaign.entries()) {
       const index = prizes.findIndex((prize) => prize.id === prizeId);
       if (index >= 0) {
-        const updated = { ...prizes[index], ...input };
+        const updated = {
+          ...prizes[index],
+          ...input,
+          image_url: input.image_url === undefined ? prizes[index].image_url : input.image_url.trim() || undefined,
+        };
         this.prizesByCampaign.set(campaignId, [
           ...prizes.slice(0, index),
           updated,
@@ -1143,6 +1209,98 @@ export class MemoryStore {
       errors,
       warnings,
     };
+  }
+
+  public adminShopItems(token: string): readonly ShopItem[] {
+    this.ensureAdmin(token);
+    return this.shopItemList
+      .slice()
+      .sort((left, right) => left.sort_order - right.sort_order)
+      .map((item) => cloneShopItem(item));
+  }
+
+  public createShopItem(token: string, input: ShopItemMutation): ShopItem {
+    this.ensureAdmin(token);
+    const item: ShopItem = {
+      id: randomId('shop'),
+      ...input,
+      image_url: input.image_url?.trim() || undefined,
+    };
+    this.shopItemList.push(item);
+    this.shopItemList.sort((left, right) => left.sort_order - right.sort_order);
+    return cloneShopItem(item);
+  }
+
+  public updateShopItem(token: string, itemId: string, input: ShopItemMutation): ShopItem {
+    this.ensureAdmin(token);
+    const index = this.shopItemList.findIndex((item) => item.id === itemId);
+    if (index < 0) {
+      throw notFound;
+    }
+    const updated: ShopItem = {
+      id: itemId,
+      ...input,
+      image_url: input.image_url?.trim() || undefined,
+    };
+    this.shopItemList.splice(index, 1, updated);
+    this.shopItemList.sort((left, right) => left.sort_order - right.sort_order);
+    return cloneShopItem(updated);
+  }
+
+  public deleteShopItem(token: string, itemId: string): void {
+    this.ensureAdmin(token);
+    const next = this.shopItemList.filter((item) => item.id !== itemId);
+    if (next.length === this.shopItemList.length) {
+      throw notFound;
+    }
+    this.shopItemList = next;
+  }
+
+  public adminFirstRechargePacks(token: string): readonly FirstRechargePack[] {
+    this.ensureAdmin(token);
+    return this.firstRechargePackList
+      .slice()
+      .sort((left, right) => left.sort_order - right.sort_order)
+      .map((pack) => cloneFirstRechargePack(pack));
+  }
+
+  public createFirstRechargePack(token: string, input: FirstRechargePackMutation): FirstRechargePack {
+    this.ensureAdmin(token);
+    const pack: FirstRechargePack = {
+      id: randomId('pack'),
+      ...input,
+      image_url: input.image_url?.trim() || undefined,
+      items: input.items.map((item) => clonePackItem(item)),
+    };
+    this.firstRechargePackList.push(pack);
+    this.firstRechargePackList.sort((left, right) => left.sort_order - right.sort_order);
+    return cloneFirstRechargePack(pack);
+  }
+
+  public updateFirstRechargePack(token: string, packId: string, input: FirstRechargePackMutation): FirstRechargePack {
+    this.ensureAdmin(token);
+    const index = this.firstRechargePackList.findIndex((pack) => pack.id === packId);
+    if (index < 0) {
+      throw notFound;
+    }
+    const updated: FirstRechargePack = {
+      id: packId,
+      ...input,
+      image_url: input.image_url?.trim() || undefined,
+      items: input.items.map((item) => clonePackItem(item)),
+    };
+    this.firstRechargePackList.splice(index, 1, updated);
+    this.firstRechargePackList.sort((left, right) => left.sort_order - right.sort_order);
+    return cloneFirstRechargePack(updated);
+  }
+
+  public deleteFirstRechargePack(token: string, packId: string): void {
+    this.ensureAdmin(token);
+    const next = this.firstRechargePackList.filter((pack) => pack.id !== packId);
+    if (next.length === this.firstRechargePackList.length) {
+      throw notFound;
+    }
+    this.firstRechargePackList = next;
   }
 
   public adminDrawRecords(token: string): readonly DrawRecord[] {
@@ -1445,7 +1603,7 @@ export class MemoryStore {
   }
 
   public shopItems(): readonly ShopItem[] {
-    return this.shopItemList.filter((item) => item.is_active).map((item) => ({ ...item }));
+    return this.shopItemList.filter((item) => item.is_active).map((item) => cloneShopItem(item));
   }
 
   public buyShopItem(userId: string, input: BuyShopItemRequest): BuyShopItemResult {
@@ -1483,7 +1641,7 @@ export class MemoryStore {
   }
 
   public firstRechargePacks(): readonly FirstRechargePack[] {
-    return firstRechargePacks.map((pack) => ({ ...pack, items: pack.items.map((item) => ({ ...item })) }));
+    return this.firstRechargePackList.map((pack) => cloneFirstRechargePack(pack));
   }
 
   public firstRechargeStatus(userId: string): UserFirstRecharge {
@@ -1491,7 +1649,7 @@ export class MemoryStore {
   }
 
   public claimFirstRecharge(userId: string, input: ClaimFirstRechargeRequest): ClaimFirstRechargeResult {
-    const pack = firstRechargePacks.find((item) => item.id === input.pack_id);
+    const pack = this.firstRechargePackList.find((item) => item.id === input.pack_id);
     if (!pack) {
       throw notFound;
     }
@@ -2111,6 +2269,8 @@ export class MemoryStore {
       },
     ];
 
+    this.firstRechargePackList = defaultFirstRechargePacks.map((pack) => cloneFirstRechargePack(pack));
+
     this.battlePassSeason = {
       id: 1,
       name: '星光收藏季',
@@ -2327,7 +2487,9 @@ export class MemoryStore {
   }
 }
 
-export function createMemoryStore(): MemoryStore {
+export async function createMemoryStore(): Promise<MemoryStore> {
   const { admin } = getAppConfig();
-  return new MemoryStore(admin.user, admin.password);
+  const store = new MemoryStore(admin.user, admin.password);
+  await syncAdminConfigWithMysql(store);
+  return store;
 }

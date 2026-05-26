@@ -21,7 +21,7 @@ import {
 import { useMemo, useState, type ComponentType } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
-import { apiRequest } from '@/client/api';
+import { apiAssetUrl, apiRequest } from '@/client/api';
 import type {
   BlindBoxDrawResult,
   ActivityListInfo,
@@ -135,6 +135,25 @@ const rarityStyles: Record<string, { readonly icon: string; readonly label: stri
 
 function levelMeta(level?: string): { readonly icon: string; readonly label: string; readonly className: string } {
   return rarityStyles[level ?? ''] ?? { icon: '□', label: level ?? '未知', className: 'text-slate-300' };
+}
+
+function PrizeMedia({
+  imageUrl,
+  name,
+  meta,
+  imageClassName,
+  fallbackClassName,
+}: {
+  readonly imageUrl?: string;
+  readonly name: string;
+  readonly meta: { readonly icon: string; readonly className: string };
+  readonly imageClassName: string;
+  readonly fallbackClassName: string;
+}): React.ReactNode {
+  if (imageUrl) {
+    return <img alt={name} className={imageClassName} src={apiAssetUrl(imageUrl)} />;
+  }
+  return <div className={`${fallbackClassName} ${meta.className}`}>{meta.icon}</div>;
 }
 
 function formatDateTime(value: string): string {
@@ -441,6 +460,11 @@ export function LotteryApp(): React.ReactNode {
         })),
       ),
     [campaignsQuery.data],
+  );
+
+  const prizeImageUrlById = useMemo(
+    () => new Map(allPrizes.map((prize) => [prize.id, prize.image_url ?? ''])),
+    [allPrizes],
   );
 
   const duplicateInventory = useMemo(() => {
@@ -947,7 +971,13 @@ export function LotteryApp(): React.ReactNode {
                         x{owned.count}
                       </span>
                     ) : null}
-                    <div className={`text-3xl ${meta.className}`}>{meta.icon}</div>
+                    <PrizeMedia
+                      fallbackClassName="mx-auto flex h-16 w-16 items-center justify-center text-3xl"
+                      imageClassName="mx-auto h-16 w-16 rounded-xl border border-white/10 object-cover"
+                      imageUrl={prize.image_url}
+                      meta={meta}
+                      name={prize.name}
+                    />
                     <div className={`mt-1 line-clamp-1 text-xs font-semibold ${meta.className}`}>{prize.name}</div>
                     <div className="mt-1 text-[11px] text-violet-100/55">{meta.label}</div>
                     {probabilityPrize.base_prob ? (
@@ -1050,7 +1080,13 @@ export function LotteryApp(): React.ReactNode {
                       const meta = levelMeta(item.prize_level);
                       return (
                         <div className="relative rounded-2xl border border-violet-300/40 bg-white/[0.06] p-3 text-center" key={item.id}>
-                          <div className={`text-3xl ${meta.className}`}>{meta.icon}</div>
+                          <PrizeMedia
+                            fallbackClassName="mx-auto flex h-16 w-16 items-center justify-center text-3xl"
+                            imageClassName="mx-auto h-16 w-16 rounded-xl border border-white/10 object-cover"
+                            imageUrl={prizeImageUrlById.get(item.prize_id) || undefined}
+                            meta={meta}
+                            name={item.prize_name}
+                          />
                           <div className={`mt-1 line-clamp-1 text-xs font-semibold ${meta.className}`}>
                             {item.prize_name}
                           </div>
@@ -1202,6 +1238,7 @@ export function LotteryApp(): React.ReactNode {
                           onClick={() => firstRechargeMutation.mutate(pack.id)}
                           type="button"
                         >
+                          {pack.image_url ? <img alt={pack.name} className="mb-3 h-28 w-full rounded-2xl border border-white/10 object-cover" src={apiAssetUrl(pack.image_url)} /> : null}
                           <div className="font-bold text-white">{pack.name}</div>
                           <div className="mt-1 text-xs text-violet-100/60">{pack.description}</div>
                           <div className="mt-1 text-xs text-amber-200">{claimed ? '已领取' : '领取礼包'}</div>
@@ -1223,7 +1260,8 @@ export function LotteryApp(): React.ReactNode {
                 {(shopQuery.data ?? []).map((item) => (
                   <article className="rounded-3xl border border-white/10 bg-white/[0.06] p-4" key={item.id}>
                     <div className="flex items-start justify-between gap-3">
-                      <div>
+                      <div className="min-w-0 flex-1">
+                        {item.image_url ? <img alt={item.name} className="mb-3 h-28 w-full rounded-2xl border border-white/10 object-cover" src={apiAssetUrl(item.image_url)} /> : null}
                         <h3 className="font-bold text-white">{item.name}</h3>
                         <p className="mt-1 text-sm text-violet-100/65">{item.description}</p>
                         <div className="mt-2 text-xs text-violet-100/55">{item.price_points} 积分 · {item.item_qty} 个</div>
@@ -1453,14 +1491,31 @@ function DrawResultView({
       <span className={`inline-flex rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-bold ${meta.className}`}>
         {meta.label}
       </span>
-      <div className={`mt-5 text-7xl ${meta.className}`}>{meta.icon}</div>
+      <div className="mt-5 flex justify-center">
+        <PrizeMedia
+          fallbackClassName="flex h-32 w-32 items-center justify-center text-7xl"
+          imageClassName="h-32 w-32 rounded-[28px] border border-white/10 object-cover shadow-[0_16px_48px_rgba(0,0,0,0.35)]"
+          imageUrl={strongest?.prize_image_url}
+          meta={meta}
+          name={strongest?.prize_name ?? '谢谢参与'}
+        />
+      </div>
       <div className={`mt-4 text-2xl font-black ${meta.className}`}>{strongest?.prize_name ?? '谢谢参与'}</div>
       {strongest?.is_new ? <div className="mt-2 text-sm font-bold text-amber-300">NEW!</div> : null}
       {draw.draws.length > 1 ? (
         <div className="mt-5 max-h-36 space-y-2 overflow-y-auto rounded-2xl bg-white/[0.06] p-3 text-left text-xs">
           {draw.draws.map((item) => (
             <div className="flex items-center justify-between gap-2" key={item.record_id}>
-              <span className="truncate text-violet-100/75">{item.prize_name}</span>
+              <div className="flex min-w-0 items-center gap-2">
+                <PrizeMedia
+                  fallbackClassName="flex h-9 w-9 items-center justify-center text-lg"
+                  imageClassName="h-9 w-9 rounded-lg border border-white/10 object-cover"
+                  imageUrl={item.prize_image_url}
+                  meta={levelMeta(item.prize_level)}
+                  name={item.prize_name}
+                />
+                <span className="truncate text-violet-100/75">{item.prize_name}</span>
+              </div>
               <span className={levelMeta(item.prize_level).className}>{item.is_win ? item.prize_level : '未中'}</span>
             </div>
           ))}
