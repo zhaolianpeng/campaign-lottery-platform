@@ -2,7 +2,7 @@ import type { RowDataPacket } from 'mysql2/promise';
 import { getMysqlPool } from './database';
 import type { AdminConfigState } from './memory-store';
 import type { MemoryStore } from './memory-store';
-import type { Campaign, FirstRechargePack, PackItem, Prize, ShopItem } from './types';
+import type { Campaign, FirstRechargePack, PackItem, PityConfig, Prize, ShopItem } from './types';
 
 interface CampaignRow extends RowDataPacket {
   id: string;
@@ -85,6 +85,20 @@ function parsePackItems(raw: string | readonly PackItem[]): readonly PackItem[] 
   } catch {
     return [];
   }
+}
+
+function normalizePityConfig(raw: PityConfig | null | undefined): PityConfig | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  return {
+    ...raw,
+    target_prize: raw.target_prize?.trim() ?? '',
+    up_prize_id: raw.up_prize_id?.trim() || undefined,
+    up_level: raw.up_level || undefined,
+    up_start_at: raw.up_start_at || undefined,
+    up_end_at: raw.up_end_at || undefined,
+  };
 }
 
 async function ensureConfigTables(): Promise<void> {
@@ -182,7 +196,7 @@ async function loadCampaignState(): Promise<Pick<AdminConfigState, 'campaigns' |
     miss_weight: row.miss_weight,
     banner_image_url: row.banner_image_url,
     campaign_summary: row.campaign_summary,
-    pity_config: row.pity_config ? parseJsonValue(row.pity_config, undefined) : undefined,
+    pity_config: normalizePityConfig(row.pity_config ? parseJsonValue(row.pity_config, undefined) : undefined),
   }));
 
   const prizesByCampaign: Record<string, Prize[]> = {};
@@ -354,7 +368,7 @@ export async function upsertCampaign(campaign: Campaign): Promise<void> {
       campaign.miss_weight,
       campaign.banner_image_url,
       campaign.campaign_summary,
-      campaign.pity_config ? JSON.stringify(campaign.pity_config) : null,
+      campaign.pity_config ? JSON.stringify(normalizePityConfig(campaign.pity_config)) : null,
     ],
   );
 }

@@ -94,6 +94,20 @@ const prizeLevels: readonly Prize['level'][] = ['common', 'rare', 'secret', 'lim
 const prizeStatuses: readonly Prize['status'][] = ['active', 'inactive'];
 const shopItemTypes: readonly ShopItem['item_type'][] = ['hint_card', 'see_through', 'pity_inherit', 'specify_voucher', 'ten_draw_ticket', 'free_draw'];
 
+function normalizePityConfig(pityConfig?: PityConfig): PityConfig | undefined {
+  if (!pityConfig) {
+    return undefined;
+  }
+  return {
+    ...pityConfig,
+    target_prize: pityConfig.target_prize?.trim() ?? '',
+    up_prize_id: pityConfig.up_prize_id?.trim() || undefined,
+    up_level: pityConfig.up_level || undefined,
+    up_start_at: pityConfig.up_start_at || undefined,
+    up_end_at: pityConfig.up_end_at || undefined,
+  };
+}
+
 type PrizeEditorValues = {
   readonly name: string;
   readonly level: Prize['level'];
@@ -194,18 +208,19 @@ function toPrizePayload(values: PrizeEditorValues): PrizeMutationPayload {
 }
 
 function createPityEditorValues(initial?: PityConfig): PityEditorValues {
+  const pityConfig = normalizePityConfig(initial);
   return {
-    enabled: initial?.enabled ?? true,
-    soft_pity_n: String(initial?.soft_pity_n ?? 20),
-    pity_factor: String(initial?.pity_factor ?? 0.08),
-    hard_pity_n: String(initial?.hard_pity_n ?? 60),
-    target_prize: initial?.target_prize ?? '',
-    up_pool_enabled: initial?.up_pool_enabled ?? false,
-    up_prize_id: initial?.up_prize_id ?? '',
-    up_multiplier: String(initial?.up_multiplier ?? 3),
-    up_level: initial?.up_level ?? 'secret',
-    up_start_at: toDatetimeLocalValue(initial?.up_start_at),
-    up_end_at: toDatetimeLocalValue(initial?.up_end_at),
+    enabled: pityConfig?.enabled ?? true,
+    soft_pity_n: String(pityConfig?.soft_pity_n ?? 20),
+    pity_factor: String(pityConfig?.pity_factor ?? 0.08),
+    hard_pity_n: String(pityConfig?.hard_pity_n ?? 60),
+    target_prize: pityConfig?.target_prize ?? '',
+    up_pool_enabled: pityConfig?.up_pool_enabled ?? false,
+    up_prize_id: pityConfig?.up_prize_id ?? '',
+    up_multiplier: String(pityConfig?.up_multiplier ?? 3),
+    up_level: pityConfig?.up_level ?? 'secret',
+    up_start_at: toDatetimeLocalValue(pityConfig?.up_start_at),
+    up_end_at: toDatetimeLocalValue(pityConfig?.up_end_at),
   };
 }
 
@@ -249,7 +264,7 @@ function toCampaignPayload(campaign: Campaign | null, values: CampaignEditorValu
     miss_weight: Number(values.miss_weight),
     banner_image_url: values.banner_image_url.trim(),
     campaign_summary: values.campaign_summary.trim(),
-    pity_config: campaign?.pity_config,
+    pity_config: normalizePityConfig(campaign?.pity_config),
   };
 }
 
