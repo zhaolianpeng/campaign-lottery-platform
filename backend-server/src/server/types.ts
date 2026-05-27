@@ -82,6 +82,8 @@ export interface UserAccount {
   readonly cash_balance: number;
   readonly frozen_balance: number;
   readonly status: UserStatus;
+  /** 已绑定微信时返回，用于 JSAPI 支付 */
+  readonly wechat_openid?: string;
 }
 
 export interface UserLoginLog {

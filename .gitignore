@@ -20,6 +20,9 @@ coverage/
 .env.*.local
 !.env.example
 
+# Payment config (secrets)
+backend-server/config/payment.config.json
+
 # Logs
 logs/
 *.log

@@ -12,6 +12,7 @@
     "test": "jest"
   },
   "dependencies": {
+    "@campaign-lottery/payment-module": "file:../payment-module",
     "mysql2": "^3.22.3",
     "next": "^16.2.6",
     "react": "^19.2.6",

@@ -636,6 +636,7 @@ export class MemoryStore {
       updated_at: user.updated_at ?? user.created_at,
     };
     this.wallets.set(userId, wallet);
+    const wechatUser = this.wechatUsers.get(userId);
     return {
       user: { ...user },
       profile: this.userProfiles.get(userId) ? { ...this.userProfiles.get(userId)! } : undefined,
@@ -643,6 +644,7 @@ export class MemoryStore {
       cash_balance: wallet.cash_balance,
       frozen_balance: wallet.frozen_balance,
       status: (user.status ?? 'active') as UserStatus,
+      wechat_openid: wechatUser?.openid,
     };
   }
 

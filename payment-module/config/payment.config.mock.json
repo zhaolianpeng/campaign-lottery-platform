@@ -10,7 +10,7 @@
     "serialNo": "MOCK_SERIAL_NO",
     "privateKeyPath": "./certs/apiclient_key.pem",
     "platformCertPath": "./certs/wechatpay_platform.pem",
-    "notifyPath": "/payments/wechat/notify",
+    "notifyPath": "/api/v1/payments/wechat/notify",
     "h5AppName": "Campaign Lottery Mock",
     "h5AppUrl": "https://localhost:3000"
   },
@@ -20,7 +20,7 @@
     "privateKeyPath": "./certs/alipay_app_private.pem",
     "alipayPublicKeyPath": "./certs/alipay_public.pem",
     "gateway": "https://openapi.alipay.com/gateway.do",
-    "notifyPath": "/payments/alipay/notify",
+    "notifyPath": "/api/v1/payments/alipay/notify",
     "signType": "RSA2",
     "returnUrl": "https://localhost:3000/pay/return"
   }
