@@ -63,6 +63,7 @@ export class MemoryOrderStore {
       status: 'created',
       channelTradeNo: '',
       paidAt: null,
+      fulfilledAt: null,
       expireAt: params.expireAt,
       createdAt: now,
       updatedAt: now,
@@ -76,7 +77,7 @@ export class MemoryOrderStore {
   updateStatus(
     orderNo: string,
     status: PaymentOrderStatus,
-    patch: Partial<Pick<PaymentOrderRecord, 'channelTradeNo' | 'paidAt'>> = {},
+    patch: Partial<Pick<PaymentOrderRecord, 'channelTradeNo' | 'paidAt' | 'fulfilledAt'>> = {},
   ): PaymentOrderRecord {
     const current = this.get(orderNo);
     assertTransition(current.status, status);
@@ -101,6 +102,31 @@ export class MemoryOrderStore {
       return current;
     }
     return this.updateStatus(orderNo, 'paid', { channelTradeNo, paidAt });
+  }
+
+  beginFulfillment(orderNo: string): PaymentOrderRecord {
+    const current = this.get(orderNo);
+    if (current.status === 'fulfilled' || current.status === 'fulfilling') {
+      return current;
+    }
+    if (current.status !== 'paid') {
+      throw invalidOrderState(`订单未支付，无法履约: ${current.status}`);
+    }
+    return this.updateStatus(orderNo, 'fulfilling');
+  }
+
+  completeFulfillment(orderNo: string): PaymentOrderRecord {
+    const current = this.get(orderNo);
+    if (current.status === 'fulfilled') {
+      return current;
+    }
+    if (current.status !== 'fulfilling' && current.status !== 'paid') {
+      throw invalidOrderState(`订单状态不可完成履约: ${current.status}`);
+    }
+    if (current.status === 'paid') {
+      this.updateStatus(orderNo, 'fulfilling');
+    }
+    return this.updateStatus(orderNo, 'fulfilled', { fulfilledAt: new Date().toISOString() });
   }
 }
 

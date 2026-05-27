@@ -667,6 +667,27 @@ export class LotteryService {
     return this.store.claimFirstRecharge(user.id, input);
   }
 
+  public claimFirstRechargeByUserId(userId: string, packId: string): ClaimFirstRechargeResult {
+    return this.store.claimFirstRecharge(userId, { pack_id: packId });
+  }
+
+  public grantMonthCardByUserId(userId: string, cardType: CardType): MonthCardPurchaseResult {
+    return this.store.grantMonthCard(userId, cardType);
+  }
+
+  public grantShopItemByUserId(userId: string, input: BuyShopItemRequest): BuyShopItemResult {
+    return this.store.grantShopItem(userId, input);
+  }
+
+  public grantBattlePassByUserId(userId: string): BattlePass {
+    return this.store.grantBattlePass(userId);
+  }
+
+  public grantPointsPackByUserId(userId: string, _packId: string, amountCents: number): { readonly points_added: number; readonly new_points: number } {
+    const pointsAdded = Math.max(1, Math.floor(amountCents / 10));
+    return this.store.grantMemberPoints(userId, pointsAdded, 'payment', '积分充值');
+  }
+
   public createShareCard(token: string, cardType: string, prizeName = '', prizeLevel = ''): ShareCard {
     const user = this.store.userFromToken(token);
     return this.store.createShareCard(user.id, cardType, prizeName, prizeLevel);

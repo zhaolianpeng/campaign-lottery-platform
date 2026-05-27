@@ -22,6 +22,9 @@ import { useEffect, useMemo, useState, type ComponentType } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { ApiRequestError, apiAssetUrl, apiPostRequest, apiRequest } from '@/client/api';
+import { fetchPaymentPublicConfig, fulfillPaymentOrder, pollPaymentUntilPaid } from '@/client/payment-api';
+import { formatCentsToYuan, resumePendingPayment, runPaymentCheckout } from '@/client/payment-checkout';
+import type { CreateCheckoutInput, QrcodeCheckout } from '@/types/payment';
 import type {
   ActivityListInfo,
   AssistProgress,
@@ -104,6 +107,10 @@ interface TabItem {
 }
 
 const phonePattern = /^1[3-9]\d{9}$/;
+
+const MONTHLY_CARD_CASH_CENTS = 2800;
+const BATTLE_PASS_CASH_CENTS = 6800;
+const POINTS_RECHARGE_CASH_CENTS = 1000;
 
 const tabs: readonly TabItem[] = [
   { key: 'series', label: '系列', icon: Home },
@@ -247,6 +254,8 @@ export function LotteryApp(): React.ReactNode {
   const [showPhoneLogin, setShowPhoneLogin] = useState(false);
   const [phoneLoginForm, setPhoneLoginForm] = useState<PhoneLoginFormValues>({ phone: '', code: '' });
   const [phoneCodeMessage, setPhoneCodeMessage] = useState('');
+  const [qrCheckout, setQrCheckout] = useState<QrcodeCheckout | null>(null);
+  const [payingCash, setPayingCash] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -311,6 +320,12 @@ export function LotteryApp(): React.ReactNode {
     enabled: true,
   });
 
+  const paymentConfigQuery = useQuery({
+    queryKey: ['payment-config'],
+    queryFn: fetchPaymentPublicConfig,
+  });
+  const paymentEnabled = paymentConfigQuery.data?.enabled ?? false;
+
   const smsProvider = publicConfigQuery.data?.sms?.provider?.toLowerCase();
   const isMockSmsProvider = publicConfigQuery.data?.sms?.mock_enabled ?? (smsProvider === 'mock');
   const isWechatQuickLoginEnabled = publicConfigQuery.data?.wechat?.quick_login_enabled === true;
@@ -341,6 +356,84 @@ export function LotteryApp(): React.ReactNode {
       setLastDraw(null);
     }
   }, [cEndFeatureToggles.series, selectedCampaignId]);
+
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+    void resumePendingPayment(token).then((ok) => {
+      if (ok) {
+        void queryClient.invalidateQueries();
+        window.alert('支付成功，权益已到账');
+      }
+    });
+  }, [token, queryClient]);
+
+  useEffect(() => {
+    if (!qrCheckout || !token) {
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        await pollPaymentUntilPaid(token, qrCheckout.order_no, { maxAttempts: 90 });
+        await fulfillPaymentOrder(token, qrCheckout.order_no);
+        if (!cancelled) {
+          setQrCheckout(null);
+          await queryClient.invalidateQueries();
+          window.alert('支付成功，权益已到账');
+        }
+      } catch (error) {
+        if (!cancelled) {
+          window.alert(error instanceof Error ? error.message : '支付确认失败');
+        }
+      } finally {
+        if (!cancelled) {
+          setPayingCash(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [qrCheckout, token, queryClient]);
+
+  const invalidateAfterPayment = async (): Promise<void> => {
+    await queryClient.invalidateQueries();
+  };
+
+  const runCashPay = async (input: CreateCheckoutInput): Promise<void> => {
+    if (!token) {
+      return;
+    }
+    if (!paymentEnabled) {
+      window.alert('支付功能未启用');
+      return;
+    }
+    setPayingCash(true);
+    let deferredQr = false;
+    try {
+      await runPaymentCheckout({
+        token,
+        input,
+        onQrcode: async (checkout) => {
+          deferredQr = true;
+          setQrCheckout(checkout);
+        },
+      });
+      if (!deferredQr) {
+        await invalidateAfterPayment();
+        window.alert('支付成功，权益已到账');
+      }
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : '支付失败');
+      setPayingCash(false);
+    } finally {
+      if (!deferredQr) {
+        setPayingCash(false);
+      }
+    }
+  };
 
   const loginMutation = useMutation({
     mutationFn: (values: LoginFormValues) =>
@@ -1142,7 +1235,7 @@ export function LotteryApp(): React.ReactNode {
             <div className="grid grid-cols-2 gap-3">
               <button
                 className="rounded-2xl bg-[linear-gradient(135deg,#f472b6,#db2777)] px-4 py-3 font-black text-white disabled:opacity-50"
-                disabled={drawMutation.isPending}
+                disabled={drawMutation.isPending || payingCash}
                 onClick={() => handleDraw(1)}
                 type="button"
               >
@@ -1150,13 +1243,32 @@ export function LotteryApp(): React.ReactNode {
               </button>
               <button
                 className="rounded-2xl bg-[linear-gradient(135deg,#a78bfa,#7c3aed)] px-4 py-3 font-black text-white disabled:opacity-50"
-                disabled={drawMutation.isPending}
+                disabled={drawMutation.isPending || payingCash}
                 onClick={() => handleDraw(10)}
                 type="button"
               >
                 十连 950分
               </button>
             </div>
+            {paymentEnabled ? (
+              <button
+                className="mt-2 w-full rounded-2xl border border-amber-300/30 bg-amber-400/15 px-4 py-2 text-sm font-bold text-amber-100 disabled:opacity-50"
+                disabled={payingCash}
+                onClick={() =>
+                  void runCashPay({
+                    client_request_id: `points_${Date.now()}`,
+                    channel: 'wechat',
+                    amount_cents: POINTS_RECHARGE_CASH_CENTS,
+                    subject: '积分充值',
+                    business_type: 'points_pack',
+                    business_id: 'recharge_100',
+                  })
+                }
+                type="button"
+              >
+                现金充值积分 {formatCentsToYuan(POINTS_RECHARGE_CASH_CENTS)}
+              </button>
+            ) : null}
             {drawMutation.error ? (
               <p className="rounded-xl border border-red-300/20 bg-red-500/15 px-4 py-3 text-sm text-red-100">
                 {drawMutation.error.message}
@@ -1356,14 +1468,67 @@ export function LotteryApp(): React.ReactNode {
                   <p className="mt-1 text-sm text-violet-100/65">
                     {battlePassQuery.data?.season?.name ?? '暂无赛季'} · 等级 {battlePassQuery.data?.user_pass?.level ?? 1}
                   </p>
-                  <button
-                    className="mt-3 rounded-2xl bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50"
-                    disabled={buyMonthCardMutation.isPending}
-                    onClick={() => buyMonthCardMutation.mutate('monthly')}
-                    type="button"
-                  >
-                    购买月卡
-                  </button>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {paymentEnabled ? (
+                      <button
+                        className="rounded-2xl bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50"
+                        disabled={payingCash}
+                        onClick={() =>
+                          void runCashPay({
+                            client_request_id: `monthly_${Date.now()}`,
+                            channel: 'wechat',
+                            amount_cents: MONTHLY_CARD_CASH_CENTS,
+                            subject: '月卡',
+                            business_type: 'membership',
+                            business_id: 'monthly',
+                          })
+                        }
+                        type="button"
+                      >
+                        支付购买月卡 {formatCentsToYuan(MONTHLY_CARD_CASH_CENTS)}
+                      </button>
+                    ) : (
+                      <button
+                        className="rounded-2xl bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50"
+                        disabled={buyMonthCardMutation.isPending}
+                        onClick={() => buyMonthCardMutation.mutate('monthly')}
+                        type="button"
+                      >
+                        积分购买月卡
+                      </button>
+                    )}
+                    {battlePassQuery.data?.user_pass?.pass_type !== 'paid' ? (
+                      paymentEnabled ? (
+                        <button
+                          className="rounded-2xl border border-violet-300/40 bg-violet-500/20 px-3 py-2 text-xs font-bold text-violet-100 disabled:opacity-50"
+                          disabled={payingCash}
+                          onClick={() =>
+                            void runCashPay({
+                              client_request_id: `battle_pass_${Date.now()}`,
+                              channel: 'wechat',
+                              amount_cents: BATTLE_PASS_CASH_CENTS,
+                              subject: '付费战令',
+                              business_type: 'battle_pass',
+                              business_id: String(battlePassQuery.data?.season?.id ?? 'season'),
+                            })
+                          }
+                          type="button"
+                        >
+                          购买战令 {formatCentsToYuan(BATTLE_PASS_CASH_CENTS)}
+                        </button>
+                      ) : (
+                        <button
+                          className="rounded-2xl border border-violet-300/40 bg-violet-500/20 px-3 py-2 text-xs font-bold text-violet-100"
+                          onClick={() => apiRequest('/api/v1/battle-pass/buy', token, { method: 'POST' }).then(() => queryClient.invalidateQueries({ queryKey: ['battle-pass', token] }))}
+                          type="button"
+                        >
+                          积分购买战令
+                        </button>
+                      )
+                    ) : (
+                      <span className="self-center text-xs text-emerald-300">已开通付费战令</span>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <h3 className="mb-2 text-base font-black text-white">积分变动</h3>
@@ -1397,15 +1562,35 @@ export function LotteryApp(): React.ReactNode {
                       return (
                         <button
                           className="rounded-2xl border border-white/10 bg-white/[0.06] p-3 text-left disabled:opacity-50"
-                          disabled={claimed || firstRechargeMutation.isPending}
+                          disabled={claimed || firstRechargeMutation.isPending || payingCash}
                           key={pack.id}
-                          onClick={() => firstRechargeMutation.mutate(pack.id)}
+                          onClick={() => {
+                            if (paymentEnabled && pack.cash_price > 0) {
+                              void runCashPay({
+                                client_request_id: `first_recharge_${pack.id}_${Date.now()}`,
+                                channel: 'wechat',
+                                amount_cents: pack.cash_price,
+                                subject: pack.name,
+                                business_type: 'first_recharge_pack',
+                                business_id: pack.id,
+                                product_snapshot: { name: pack.name, cash_price: pack.cash_price },
+                              });
+                              return;
+                            }
+                            firstRechargeMutation.mutate(pack.id);
+                          }}
                           type="button"
                         >
                           {pack.image_url ? <img alt={pack.name} className="mb-3 h-28 w-full rounded-2xl border border-white/10 object-cover" src={apiAssetUrl(pack.image_url)} /> : null}
                           <div className="font-bold text-white">{pack.name}</div>
                           <div className="mt-1 text-xs text-violet-100/60">{pack.description}</div>
-                          <div className="mt-1 text-xs text-amber-200">{claimed ? '已领取' : '领取礼包'}</div>
+                          <div className="mt-1 text-xs text-amber-200">
+                            {claimed
+                              ? '已领取'
+                              : paymentEnabled && pack.cash_price > 0
+                                ? `支付 ${formatCentsToYuan(pack.cash_price)}`
+                                : '领取礼包'}
+                          </div>
                         </button>
                       );
                     })}
@@ -1428,16 +1613,45 @@ export function LotteryApp(): React.ReactNode {
                         {item.image_url ? <img alt={item.name} className="mb-3 h-28 w-full rounded-2xl border border-white/10 object-cover" src={apiAssetUrl(item.image_url)} /> : null}
                         <h3 className="font-bold text-white">{item.name}</h3>
                         <p className="mt-1 text-sm text-violet-100/65">{item.description}</p>
-                        <div className="mt-2 text-xs text-violet-100/55">{item.price_points} 积分 · {item.item_qty} 个</div>
+                        <div className="mt-2 text-xs text-violet-100/55">
+                          {item.price_points > 0 ? `${item.price_points} 积分` : ''}
+                          {item.price_points > 0 && item.price_cash > 0 ? ' · ' : ''}
+                          {item.price_cash > 0 ? formatCentsToYuan(item.price_cash) : ''}
+                          {' · '}
+                          {item.item_qty} 个
+                        </div>
                       </div>
-                      <button
-                        className="rounded-xl bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50"
-                        disabled={buyShopMutation.isPending}
-                        onClick={() => buyShopMutation.mutate(item.id)}
-                        type="button"
-                      >
-                        购买
-                      </button>
+                      <div className="flex shrink-0 flex-col gap-2">
+                        {paymentEnabled && item.price_cash > 0 ? (
+                          <button
+                            className="rounded-xl bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50"
+                            disabled={payingCash}
+                            onClick={() =>
+                              void runCashPay({
+                                client_request_id: `shop_cash_${item.id}_${Date.now()}`,
+                                channel: 'wechat',
+                                amount_cents: item.price_cash,
+                                subject: item.name,
+                                business_type: 'shop_item',
+                                business_id: item.id,
+                              })
+                            }
+                            type="button"
+                          >
+                            现金购买
+                          </button>
+                        ) : null}
+                        {item.price_points > 0 ? (
+                          <button
+                            className="rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+                            disabled={buyShopMutation.isPending || payingCash}
+                            onClick={() => buyShopMutation.mutate(item.id)}
+                            type="button"
+                          >
+                            积分购买
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                   </article>
                 ))}
@@ -1580,6 +1794,42 @@ export function LotteryApp(): React.ReactNode {
               <div className="py-8">
                 <p className="text-sm text-red-100">{drawMutation.error.message}</p>
               </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {qrCheckout ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-5 backdrop-blur-md">
+          <div className="relative w-full max-w-sm rounded-[28px] border border-white/15 bg-[linear-gradient(160deg,#1a1040,#0f2027)] p-6 text-center">
+            <button
+              className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white"
+              onClick={() => {
+                setQrCheckout(null);
+                setPayingCash(false);
+              }}
+              type="button"
+            >
+              <X size={16} />
+            </button>
+            <h3 className="text-lg font-black text-white">扫码支付</h3>
+            <p className="mt-2 text-sm text-violet-100/70">
+              请使用{qrCheckout.channel === 'wechat' ? '微信' : '支付宝'}扫描下方二维码，支付{' '}
+              {formatCentsToYuan(qrCheckout.amount_cents)}
+            </p>
+            <img
+              alt="支付二维码"
+              className="mx-auto mt-4 rounded-2xl border border-white/10 bg-white p-2"
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(qrCheckout.qr_code_content)}`}
+              width={240}
+              height={240}
+            />
+            <p className="mt-4 text-xs text-violet-100/55">支付完成后将自动确认，请勿关闭此页</p>
+            {payingCash ? (
+              <p className="mt-2 flex items-center justify-center gap-2 text-sm text-amber-200">
+                <Loader2 className="animate-spin" size={16} />
+                等待支付结果…
+              </p>
             ) : null}
           </div>
         </div>

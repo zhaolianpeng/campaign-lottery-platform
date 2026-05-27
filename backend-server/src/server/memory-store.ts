@@ -1698,6 +1698,25 @@ export class MemoryStore {
     return { card, new_points: result.points };
   }
 
+  /** 现金支付履约：开通月卡/周卡/季卡，不扣积分 */
+  public grantMonthCard(userId: string, cardType: CardType): MonthCardPurchaseResult {
+    const config = cardConfigs[cardType];
+    const member = this.getUserMember(userId);
+    const card: UserCard = {
+      id: randomId('card'),
+      user_id: userId,
+      card_type: cardType,
+      price: config.price,
+      started_at: nowISO(),
+      expires_at: addDays(config.durationDays),
+      daily_free_used: 0,
+      free_date: todayKey(),
+      created_at: nowISO(),
+    };
+    this.userCards.set(userId, card);
+    return { card, new_points: member.points };
+  }
+
   public battlePassInfo(userId: string): BattlePassInfo {
     if (!this.battlePassSeason) {
       return { season: null, tasks: [], rewards: [], level_progress: 0 };
@@ -1723,7 +1742,15 @@ export class MemoryStore {
     const updated = { ...member, points: member.points - cost };
     this.updateUserMember(updated);
     this.logPoints(userId, -cost, updated.points, 'battle_pass', '购买付费战令');
+    return this.grantBattlePass(userId);
+  }
+
+  /** 现金支付履约：开通付费战令，不扣积分 */
+  public grantBattlePass(userId: string): BattlePass {
     const current = this.getOrCreateBattlePass(userId);
+    if (current.pass_type === 'paid') {
+      return current;
+    }
     const next = { ...current, pass_type: 'paid' as const, bought_at: nowISO(), updated_at: nowISO() };
     this.battlePasses.set(userId, next);
     return next;
@@ -1775,6 +1802,25 @@ export class MemoryStore {
       quantity,
       points_cost: pointsCost,
       new_points: updated.points,
+      new_qty: newQty,
+    };
+  }
+
+  /** 现金支付履约：发放商店道具，不扣积分 */
+  public grantShopItem(userId: string, input: BuyShopItemRequest): BuyShopItemResult {
+    const item = this.shopItemList.find((candidate) => candidate.id === input.shop_item_id && candidate.is_active);
+    if (!item) {
+      throw notFound;
+    }
+    const quantity = Math.max(1, input.quantity ?? 1);
+    const member = this.getUserMember(userId);
+    const newQty = this.addUserItem(userId, item.item_type, item.item_qty * quantity);
+    return {
+      item_type: item.item_type,
+      item_name: item.name,
+      quantity,
+      points_cost: 0,
+      new_points: member.points,
       new_qty: newQty,
     };
   }
@@ -2532,6 +2578,20 @@ export class MemoryStore {
 
   private quotaKey(userId: string, campaignId: string): string {
     return `${userId}:${campaignId}:${todayKey()}`;
+  }
+
+  public grantMemberPoints(
+    userId: string,
+    points: number,
+    reason: string,
+    remark: string,
+  ): { readonly points_added: number; readonly new_points: number } {
+    const member = this.getUserMember(userId);
+    const pointsAdded = Math.max(0, points);
+    const updated = { ...member, points: member.points + pointsAdded };
+    this.updateUserMember(updated);
+    this.logPoints(userId, pointsAdded, updated.points, reason, remark);
+    return { points_added: pointsAdded, new_points: updated.points };
   }
 
   private logPoints(userId: string, points: number, balance: number, reason: string, remark: string): void {

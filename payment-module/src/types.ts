@@ -44,6 +44,7 @@ export interface PaymentOrderRecord {
   readonly status: PaymentOrderStatus;
   readonly channelTradeNo: string;
   readonly paidAt: string | null;
+  readonly fulfilledAt: string | null;
   readonly expireAt: string;
   readonly createdAt: string;
   readonly updatedAt: string;

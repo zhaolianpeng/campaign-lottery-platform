@@ -59,6 +59,12 @@ export interface PaymentModule {
 
   /** 获取内存中的订单快照（模块内置存储，接入方可替换为自有仓储） */
   getOrder(orderNo: string): ReturnType<MemoryOrderStore['get']>;
+
+  /** 开始业务履约（paid -> fulfilling） */
+  beginFulfillment(orderNo: string): ReturnType<MemoryOrderStore['get']>;
+
+  /** 完成业务履约（fulfilling -> fulfilled） */
+  completeFulfillment(orderNo: string): ReturnType<MemoryOrderStore['get']>;
 }
 
 export function createPaymentModule(options: PaymentModuleOptions = {}): PaymentModule {
@@ -281,6 +287,14 @@ export function createPaymentModule(options: PaymentModuleOptions = {}): Payment
 
     getOrder(orderNo: string) {
       return store.get(orderNo);
+    },
+
+    beginFulfillment(orderNo: string) {
+      return store.beginFulfillment(orderNo);
+    },
+
+    completeFulfillment(orderNo: string) {
+      return store.completeFulfillment(orderNo);
     },
   };
 }

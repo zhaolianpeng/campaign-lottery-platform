@@ -253,47 +253,93 @@ PAYMENT_CONFIG_PATH=config/payment.config.json
 
 无需 Bearer Token。由 `payment-module` 验签后更新订单为 `paid`。
 
-业务履约（发积分、发货等）应在收到 `paid` 后由业务方实现，可：
+渠道回调仅将订单更新为 `paid`，**不会**自动发放游戏内权益（回调无用户 Bearer）。C 端应在用户完成支付后：
 
-- 轮询 `GET /api/v1/payments/orders/:orderNo`
-- 或在后续迭代中订阅模块内订单状态（当前为内存仓储，重启会丢失，生产请落库，见 `docs/payment-module-design.md`）
+1. 轮询 `GET /api/v1/payments/orders/:orderNo?sync_channel=true` 直至 `status === 'paid'`
+2. 调用 `POST /api/v1/payments/orders/:orderNo/fulfill` 触发业务履约（幂等）
 
-## 5. 前端调用示例
+### 4.6 业务履约
 
-使用现有 `apiRequest`（`front-page/src/client/api.ts`）：
+`POST /api/v1/payments/orders/:orderNo/fulfill`
 
-```ts
-import { apiRequest } from '@/client/api';
+需要登录，且只能履约本人订单。请求体可为空 `{}`。
 
-// 是否展示支付
-const payConfig = await apiRequest<{
-  enabled: boolean;
-  channels: { wechat: boolean; alipay: boolean };
-}>('/api/v1/payments/config/public', '');
+| 条件 | 行为 |
+| --- | --- |
+| 订单已为 `fulfilled` | 返回 `already_fulfilled: true`，不重复发奖 |
+| 订单为 `paid` | 按 `business_type` / `business_id` 发放权益，订单标记为 `fulfilled` |
+| 订单未支付 | `402 payment_not_paid` |
 
-// 创建收银台
-const checkout = await apiRequest('/api/v1/payments/orders', token, {
-  method: 'POST',
-  body: JSON.stringify({
-    client_request_id: `req_${Date.now()}`,
-    channel: 'wechat',
-    amount_cents: 990,
-    subject: '100积分包',
-    business_type: 'points_pack',
-    business_id: 'pack_100',
-  }),
-});
+当前后端已支持的 `business_type`：
 
-if (checkout.presentation === 'qrcode') {
-  // 展示 checkout.qr_code_content 二维码
-} else if (checkout.presentation === 'redirect_h5') {
-  window.location.href = checkout.redirect_url;
-} else if (checkout.presentation === 'wechat_jsapi') {
-  // WeixinJSBridge.invoke('getBrandWCPayRequest', checkout.jsapi_params, ...)
+| `business_type` | `business_id` 示例 | 说明 |
+| --- | --- | --- |
+| `first_recharge_pack` | 礼包 ID | 首充领取（不扣积分） |
+| `membership` | `monthly` | 月卡（金额须为 2800 分） |
+| `shop_item` | 商店道具 ID | 发放道具（不扣积分） |
+| `battle_pass` | 赛季 ID（字符串） | 付费战令（金额须为 6800 分） |
+| `points_pack` | 档位 ID | 按金额充值积分 |
+
+响应示例：
+
+```json
+{
+  "code": "ok",
+  "data": {
+    "order_no": "pay_xxx",
+    "status": "fulfilled",
+    "business_type": "membership",
+    "already_fulfilled": false
+  }
 }
 ```
 
-**不要** 在前端安装或 import `@campaign-lottery/payment-module`。
+## 5. 前端调用示例
+
+推荐使用已封装的客户端（`front-page/src/client/payment-api.ts`、`payment-checkout.ts`），**不要**在前端安装或 import `@campaign-lottery/payment-module`。
+
+```ts
+import { fetchPaymentPublicConfig, pickDefaultChannel } from '@/client/payment-api';
+import { runPaymentCheckout, resumePendingPayment } from '@/client/payment-checkout';
+
+// 是否展示现金支付入口
+const config = await fetchPaymentPublicConfig();
+if (!config.enabled) {
+  /* 回退积分购买等旧逻辑 */
+}
+
+// 一键：建单 → 扫码/跳转/JSAPI → 轮询 paid → fulfill
+await runPaymentCheckout({
+  token,
+  channel: pickDefaultChannel(config, 'wechat'),
+  input: {
+    client_request_id: `monthly_${Date.now()}`,
+    channel: 'wechat',
+    amount_cents: 2800,
+    subject: '月卡',
+    business_type: 'membership',
+    business_id: 'monthly',
+  },
+  onQrcode: (checkout) => {
+    /* 在弹层中展示 checkout.qr_code_content */
+  },
+});
+
+// 从 H5 支付页返回后可恢复轮询
+await resumePendingPayment(token);
+```
+
+底层 API 对应关系：
+
+| 封装函数 | HTTP |
+| --- | --- |
+| `fetchPaymentPublicConfig` | `GET /payments/config/public` |
+| `createPaymentCheckout` | `POST /payments/orders` |
+| `queryPaymentOrder` | `GET /payments/orders/:orderNo` |
+| `pollPaymentUntilPaid` | 轮询上者 + `sync_channel=true` |
+| `fulfillPaymentOrder` | `POST /payments/orders/:orderNo/fulfill` |
+
+C 端 `lottery-app.tsx` 已在 `PAYMENT_ENABLED=true` 时对首充、月卡、现金商店、战令、积分充值走上述流程；支付未启用时仍使用原积分接口。
 
 ## 6. 呈现方式对照
 
@@ -303,14 +349,16 @@ if (checkout.presentation === 'qrcode') {
 | 手机 + 其他浏览器 | H5 跳转 | WAP 跳转 |
 | 电脑 | Native 二维码 | precreate 二维码 |
 
-## 7. 与业务履约的衔接（建议）
+## 7. 与业务履约的衔接
 
-当前接入层只负责 **收款与订单状态**，不包含积分/盲盒发货。建议业务侧：
+推荐流程：
 
-1. 创建订单前校验商品与金额。
-2. 调用 `POST /api/v1/payments/orders` 获取收银台参数。
-3. 支付成功后查询订单 `status === 'paid'`。
-4. 在自有服务中执行履约（MySQL 事务 + 幂等），失败则走退款（`payment-module` 的 `requestRefund`，后续可再暴露为管理端 API）。
+1. 创建订单前校验商品与金额（前端展示价须与 `amount_cents` 一致）。
+2. `POST /api/v1/payments/orders` 获取收银台参数并拉起支付。
+3. 轮询至 `status === 'paid'`（mock 环境可手动 POST 渠道 notify）。
+4. `POST /api/v1/payments/orders/:orderNo/fulfill` 发放权益（幂等，重复调用安全）。
+
+履约实现见 `backend-server/src/server/payment-fulfillment.ts`。抽盒仍默认扣积分；现金路径可通过 `points_pack` 充值后再抽。限时抢购仍为积分逻辑，未接支付。
 
 领域模型与表结构见 `docs/payment-module-design.md`。
 
@@ -332,6 +380,7 @@ if (checkout.presentation === 'qrcode') {
 ```
 
 7. `GET /api/v1/payments/orders/<order_no>` 确认 `status` 为 `paid`
+8. `POST /api/v1/payments/orders/<order_no>/fulfill`（Bearer）确认权益到账、`status` 为 `fulfilled`
 
 ## 9. 生产注意事项
 
