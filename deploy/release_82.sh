@@ -65,6 +65,13 @@ RSYNC_RSH="$rsync_rsh" rsync -az --delete \
   --exclude .git \
   --exclude '.env' \
   --exclude '.env.local' \
+  "$ROOT_DIR/payment-module/" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_PROJECT_DIR/payment-module/"
+RSYNC_RSH="$rsync_rsh" rsync -az --delete \
+  --exclude node_modules \
+  --exclude .next \
+  --exclude .git \
+  --exclude '.env' \
+  --exclude '.env.local' \
   "$ROOT_DIR/backend-server/" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_PROJECT_DIR/backend-server/"
 RSYNC_RSH="$rsync_rsh" rsync -az --delete \
   --exclude node_modules \
@@ -81,6 +88,8 @@ echo "[2/5] Upload deploy templates"
 
 echo "[3/5] Install backend dependencies and run migrations"
 "${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/backend-server' && npm install --no-fund --no-audit && npm run migrate"
+"${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/payment-module' && rm -rf node_modules dist && ln -s ../backend-server/node_modules node_modules && ../backend-server/node_modules/.bin/tsc -p tsconfig.build.json"
+"${ssh_cmd[@]}" "rm -rf '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery/payment-module' && mkdir -p '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery' && cp -R '$REMOTE_PROJECT_DIR/payment-module' '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery/payment-module' && rm -rf '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery/payment-module/node_modules'"
 
 echo "[4/5] Build frontend and backend"
 "${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/backend-server' && npm run build"
