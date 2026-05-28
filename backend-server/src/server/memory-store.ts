@@ -1014,11 +1014,15 @@ export class MemoryStore {
     if (!member) {
       throw unauthorized;
     }
-    return { ...member };
+    return {
+      ...member,
+      checked_in_today: this.checkInDates.get(userId) === todayKey(),
+    };
   }
 
   public updateUserMember(member: UserMember): void {
-    this.members.set(member.user_id, { ...member, updated_at: nowISO() });
+    const { checked_in_today: _checkedInToday, ...persisted } = member;
+    this.members.set(persisted.user_id, { ...persisted, updated_at: nowISO() });
   }
 
   public getPointsLog(userId: string): readonly UserPointsLog[] {

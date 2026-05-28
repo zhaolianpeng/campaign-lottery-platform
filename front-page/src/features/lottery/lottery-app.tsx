@@ -652,11 +652,29 @@ export function LotteryApp(): React.ReactNode {
   const checkInMutation = useMutation({
     mutationFn: () => apiRequest<CheckInResult>('/api/v1/blindbox/checkin', token, { method: 'POST' }),
     onSuccess: (result) => {
-      window.alert(`签到成功 +${result.points_awarded} 积分，连续 ${result.streak_days} 天${result.is_bonus ? '（奖励日）' : ''}`);
+      queryClient.setQueryData<UserMember | undefined>(['member', token], (current) =>
+        current
+          ? {
+              ...current,
+              points: result.new_balance,
+              checked_in_today: true,
+            }
+          : current,
+      );
+      window.alert(
+        result.points_awarded > 0
+          ? `签到成功 +${result.points_awarded} 积分，连续 ${result.streak_days} 天${result.is_bonus ? '（奖励日）' : ''}`
+          : '今日已签到',
+      );
       void queryClient.invalidateQueries({ queryKey: ['member', token] });
       void queryClient.invalidateQueries({ queryKey: ['points-log', token] });
     },
+    onError: (error) => {
+      window.alert(error instanceof Error ? error.message : '签到失败');
+    },
   });
+
+  const checkedInToday = Boolean(memberQuery.data?.checked_in_today);
 
   const shareMutation = useMutation({
     mutationFn: () => apiRequest('/api/v1/blindbox/share-reward', token, { method: 'POST' }),
@@ -1172,12 +1190,16 @@ export function LotteryApp(): React.ReactNode {
                 {memberQuery.data?.points ?? 0}
               </button>
               <button
-                className="rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-                disabled={checkInMutation.isPending}
+                className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                  checkedInToday
+                    ? 'border-white/10 bg-white/5 text-white/55'
+                    : 'border-white/15 bg-white/10 text-white'
+                }`}
+                disabled={checkInMutation.isPending || checkedInToday}
                 onClick={() => checkInMutation.mutate()}
                 type="button"
               >
-                签到
+                {checkedInToday ? '已签到' : checkInMutation.isPending ? '签到中...' : '签到'}
               </button>
             </>
           ) : (

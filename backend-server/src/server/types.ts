@@ -336,6 +336,7 @@ export interface UserMember {
   readonly points: number;
   readonly total_draws: number;
   readonly total_spent: number;
+  readonly checked_in_today?: boolean;
   readonly created_at: string;
   readonly updated_at: string;
 }
