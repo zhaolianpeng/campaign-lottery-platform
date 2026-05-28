@@ -18,7 +18,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { ApiRequestError, apiAssetUrl, apiPostRequest, apiRequest } from '@/client/api';
@@ -30,19 +30,26 @@ import type {
   AssistProgress,
   BattlePassInfo,
   BlindBoxDrawResult,
+  BlendResult,
   CampaignListItem,
+  CheckInResult,
   CEndFeatureToggles,
   ExchangeOffer,
   FirstRechargePack,
   FlashListInfo,
   GiftRecord,
+  HintMessage,
   InviteStats,
   LeaderboardEntry,
   MonthCardStatus,
+  PityStatus,
   PuzzleInfo,
   PublicConfig,
   Prize,
+  PublicInventoryItem,
+  RedeemResult,
   SeriesProgress,
+  ShareCard,
   ShopItem,
   TabKey,
   TeamInfo,
@@ -53,6 +60,37 @@ import type {
   UserMember,
   UserPointsLog,
 } from '@/types/api';
+import { InventoryTabPanel } from '@/features/lottery/components/inventory-tab-panel';
+import { ProbabilitySheet } from '@/features/lottery/components/probability-sheet';
+import { ConfirmDialog } from '@/features/lottery/components/ui/confirm-dialog';
+import { EmptyState, SkeletonCards } from '@/features/lottery/components/ui/empty-state';
+import { Modal } from '@/features/lottery/components/ui/modal';
+import {
+  ANONYMOUS_DRAW_TOKEN_KEY,
+  INVITE_FROM_KEY,
+  LOTTERY_TABS,
+  MEMBER_LEVEL_BENEFITS,
+  POINTS_PER_YUAN,
+  POINTS_RECHARGE_FIXED_YUAN_SKUS,
+  BATTLE_PASS_CASH_CENTS,
+  BATTLE_PASS_POINTS,
+  MONTHLY_CARD_CASH_CENTS,
+  MONTHLY_CARD_POINTS,
+} from '@/features/lottery/constants';
+import { useAssetGate } from '@/features/lottery/hooks/use-asset-gate';
+import { levelMeta, PrizeMedia } from '@/features/lottery/rarity';
+import {
+  anonymousDrawHeaders,
+  drawGlowClass,
+  formatDateTime,
+  getDeviceId,
+  levelScore,
+  mapDrawErrorMessage,
+  mapPurchaseErrorMessage,
+  normalizeCEndFeatureToggles,
+  phonePattern,
+  pointsByYuan,
+} from '@/features/lottery/utils';
 
 const loginSchema = z.object({
   nickname: z.string().max(32).optional(),
@@ -100,150 +138,7 @@ interface CampaignProbabilities {
   } | null;
 }
 
-interface TabItem {
-  readonly key: TabKey;
-  readonly label: string;
-  readonly icon: ComponentType<{ readonly size?: number; readonly className?: string }>;
-}
-
-const phonePattern = /^1[3-9]\d{9}$/;
-
-const MONTHLY_CARD_CASH_CENTS = 2800;
-const MONTHLY_CARD_POINTS = 2800;
-const BATTLE_PASS_CASH_CENTS = 6800;
-const BATTLE_PASS_POINTS = 680;
-const POINTS_PER_YUAN = 100;
-const POINTS_RECHARGE_FIXED_YUAN_SKUS = [1, 6, 12, 30, 68] as const;
-
-const tabs: readonly TabItem[] = [
-  { key: 'series', label: '系列', icon: Home },
-  { key: 'inventory', label: '我的', icon: PackageOpen },
-  { key: 'exchange', label: '交换', icon: RefreshCw },
-  { key: 'rank', label: '排行', icon: Medal },
-  { key: 'member', label: '会员', icon: UserRound },
-  { key: 'shop', label: '商店', icon: ShoppingBag },
-  { key: 'social', label: '社交', icon: Users },
-  { key: 'puzzle', label: '拼图', icon: Puzzle },
-];
-
-const defaultCEndFeatureToggles: CEndFeatureToggles = {
-  series: true,
-  inventory: true,
-  exchange: true,
-  rank: true,
-  member: true,
-  shop: true,
-  social: true,
-  puzzle: true,
-};
-
-function normalizeCEndFeatureToggles(toggles?: Partial<CEndFeatureToggles>): CEndFeatureToggles {
-  return {
-    series: toggles?.series ?? defaultCEndFeatureToggles.series,
-    inventory: toggles?.inventory ?? defaultCEndFeatureToggles.inventory,
-    exchange: toggles?.exchange ?? defaultCEndFeatureToggles.exchange,
-    rank: toggles?.rank ?? defaultCEndFeatureToggles.rank,
-    member: toggles?.member ?? defaultCEndFeatureToggles.member,
-    shop: toggles?.shop ?? defaultCEndFeatureToggles.shop,
-    social: toggles?.social ?? defaultCEndFeatureToggles.social,
-    puzzle: toggles?.puzzle ?? defaultCEndFeatureToggles.puzzle,
-  };
-}
-
-const ANONYMOUS_DRAW_TOKEN_KEY = 'campaign-lottery-anonymous-draw-token';
-
-function mapDrawErrorMessage(error: unknown): Error {
-  if (error instanceof ApiRequestError && error.code === 'no_draw_chances') {
-    return new Error('当前活动今日抽奖次数已用完，请明天再试。若你在试玩模式下联调，可清空浏览器本地试玩记录后重新进入。');
-  }
-  if (error instanceof ApiRequestError && error.code === 'draw_phone_binding_required') {
-    return new Error('当前盲盒要求先绑定手机号后才能抽取，请先完成手机号登录或绑定。');
-  }
-  return error instanceof Error ? error : new Error('抽奖失败，请稍后重试');
-}
-
-function mapPurchaseErrorMessage(error: unknown): Error {
-  if (error instanceof ApiRequestError && error.code === 'insufficient_points') {
-    return new Error(error.message === 'insufficient points' ? '积分不足，无法完成购买' : error.message);
-  }
-  return error instanceof Error ? error : new Error('购买失败，请稍后重试');
-}
-
-function anonymousDrawHeaders(token: string): HeadersInit | undefined {
-  return token ? { 'X-Anonymous-Draw-Token': token } : undefined;
-}
-
-const rarityStyles: Record<string, { readonly icon: string; readonly label: string; readonly className: string }> = {
-  common: { icon: '□', label: '普通', className: 'text-slate-300' },
-  rare: { icon: '◆', label: '稀有', className: 'text-sky-300' },
-  secret: { icon: '✦', label: '隐藏', className: 'text-violet-300' },
-  limited: { icon: '★', label: '限定', className: 'text-amber-300' },
-  S: { icon: '★', label: 'S', className: 'text-amber-300' },
-  A: { icon: '◆', label: 'A', className: 'text-sky-300' },
-  B: { icon: '□', label: 'B', className: 'text-slate-300' },
-};
-
-function levelMeta(level?: string): { readonly icon: string; readonly label: string; readonly className: string } {
-  return rarityStyles[level ?? ''] ?? { icon: '□', label: level ?? '未知', className: 'text-slate-300' };
-}
-
-function PrizeMedia({
-  imageUrl,
-  name,
-  meta,
-  imageClassName,
-  fallbackClassName,
-}: {
-  readonly imageUrl?: string;
-  readonly name: string;
-  readonly meta: { readonly icon: string; readonly className: string };
-  readonly imageClassName: string;
-  readonly fallbackClassName: string;
-}): React.ReactNode {
-  if (imageUrl) {
-    return <img alt={name} className={imageClassName} src={apiAssetUrl(imageUrl)} />;
-  }
-  return <div className={`${fallbackClassName} ${meta.className}`}>{meta.icon}</div>;
-}
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date
-    .getMinutes()
-    .toString()
-    .padStart(2, '0')}`;
-}
-
-function EmptyState({
-  icon,
-  title,
-  description,
-}: {
-  readonly icon: string;
-  readonly title: string;
-  readonly description: string;
-}): React.ReactNode {
-  return (
-    <div className="rounded-3xl border border-white/10 bg-white/[0.06] px-6 py-12 text-center text-sm text-violet-100/70">
-      <div className="mb-3 text-5xl">{icon}</div>
-      <div className="text-base font-semibold text-white">{title}</div>
-      <p className="mt-2">{description}</p>
-    </div>
-  );
-}
-
-function SkeletonCards(): React.ReactNode {
-  return (
-    <div className="grid grid-cols-2 gap-3">
-      {Array.from({ length: 4 }).map((_, index) => (
-        <div className="h-28 animate-pulse rounded-2xl bg-white/[0.06]" key={index} />
-      ))}
-    </div>
-  );
-}
+const tabs = LOTTERY_TABS;
 
 export function LotteryApp(): React.ReactNode {
   const [token, setToken] = useState('');
@@ -256,6 +151,15 @@ export function LotteryApp(): React.ReactNode {
   const [boxAnimating, setBoxAnimating] = useState(false);
   const [lastDraw, setLastDraw] = useState<BlindBoxDrawResult | null>(null);
   const [showExchangeModal, setShowExchangeModal] = useState(false);
+  const [inventoryViewMode, setInventoryViewMode] = useState<'list' | 'grouped'>('grouped');
+  const [showProbabilitySheet, setShowProbabilitySheet] = useState(false);
+  const [pendingAcceptOfferId, setPendingAcceptOfferId] = useState<string | null>(null);
+  const [giftReceiverId, setGiftReceiverId] = useState('');
+  const [inviteLink, setInviteLink] = useState('');
+  const [publicInventoryUserId, setPublicInventoryUserId] = useState<string | null>(null);
+  const [rankCampaignFilter, setRankCampaignFilter] = useState('');
+  const [seriesSort, setSeriesSort] = useState<'default' | 'name' | 'progress'>('default');
+  const [campaignListPage, setCampaignListPage] = useState(1);
   const queryClient = useQueryClient();
 
   // 微信 OAuth 回调处理：检查 URL 中是否有 code 参数
@@ -277,6 +181,12 @@ export function LotteryApp(): React.ReactNode {
     const storedToken = window.localStorage.getItem(ANONYMOUS_DRAW_TOKEN_KEY) ?? '';
     if (storedToken) {
       setAnonymousDrawToken(storedToken);
+    }
+    const params = new URLSearchParams(window.location.search);
+    const inviteFrom = params.get('invite_from');
+    if (inviteFrom) {
+      window.localStorage.setItem(INVITE_FROM_KEY, inviteFrom);
+      window.history.replaceState({}, '', window.location.pathname);
     }
   }, []);
 
@@ -449,12 +359,14 @@ export function LotteryApp(): React.ReactNode {
   };
 
   const loginMutation = useMutation({
-    mutationFn: (values: LoginFormValues) =>
-      apiRequest<LoginPayload>('/api/v1/auth/guest-login', '', {
+    mutationFn: (values: LoginFormValues) => {
+      const inviteFrom = typeof window !== 'undefined' ? window.localStorage.getItem(INVITE_FROM_KEY) : null;
+      return apiRequest<LoginPayload>('/api/v1/auth/guest-login', '', {
         method: 'POST',
-        body: JSON.stringify(values),
+        body: JSON.stringify({ ...values, invite_from: inviteFrom || undefined }),
         headers: anonymousDrawHeaders(anonymousDrawToken),
-      }),
+      });
+    },
     onSuccess: (payload) => {
       setToken(payload.session.token);
       setNickname(payload.user.nickname);
@@ -463,6 +375,9 @@ export function LotteryApp(): React.ReactNode {
         window.alert(`已将 ${payload.claimed_pending_draws} 个中奖结果放入你的盲盒。`);
       }
       setAnonymousDrawToken('');
+      if (typeof window !== 'undefined') {
+        window.localStorage.removeItem(INVITE_FROM_KEY);
+      }
     },
   });
 
@@ -531,6 +446,8 @@ export function LotteryApp(): React.ReactNode {
     enabled: Boolean(token),
   });
 
+  const assetGate = useAssetGate(accountQuery.data?.status, Boolean(token));
+
   const inventoryQuery = useQuery({
     queryKey: ['inventory', token],
     queryFn: () => apiPostRequest<UserInventory[]>('/api/v1/blindbox/inventory', token),
@@ -544,8 +461,12 @@ export function LotteryApp(): React.ReactNode {
   });
 
   const leaderboardQuery = useQuery({
-    queryKey: ['leaderboard', token],
-    queryFn: () => apiPostRequest<LeaderboardEntry[]>('/api/v1/blindbox/leaderboard?limit=20', token),
+    queryKey: ['leaderboard', token, rankCampaignFilter],
+    queryFn: () =>
+      apiPostRequest<LeaderboardEntry[]>(
+        `/api/v1/blindbox/leaderboard?limit=20${rankCampaignFilter ? `&campaign_id=${encodeURIComponent(rankCampaignFilter)}` : ''}`,
+        token,
+      ),
     enabled: Boolean(token) && activeTab === 'rank',
   });
 
@@ -564,7 +485,7 @@ export function LotteryApp(): React.ReactNode {
   const userItemsQuery = useQuery({
     queryKey: ['user-items', token],
     queryFn: () => apiPostRequest<UserItem[]>('/api/v1/shop/items/inventory', token),
-    enabled: Boolean(token) && activeTab === 'shop',
+    enabled: Boolean(token),
   });
 
   const firstRechargePacksQuery = useQuery({
@@ -729,8 +650,9 @@ export function LotteryApp(): React.ReactNode {
   });
 
   const checkInMutation = useMutation({
-    mutationFn: () => apiRequest('/api/v1/blindbox/checkin', token, { method: 'POST' }),
-    onSuccess: () => {
+    mutationFn: () => apiRequest<CheckInResult>('/api/v1/blindbox/checkin', token, { method: 'POST' }),
+    onSuccess: (result) => {
+      window.alert(`签到成功 +${result.points_awarded} 积分，连续 ${result.streak_days} 天${result.is_bonus ? '（奖励日）' : ''}`);
       void queryClient.invalidateQueries({ queryKey: ['member', token] });
       void queryClient.invalidateQueries({ queryKey: ['points-log', token] });
     },
@@ -786,8 +708,10 @@ export function LotteryApp(): React.ReactNode {
   });
 
   const inviteMutation = useMutation({
-    mutationFn: () => apiRequest('/api/v1/share/invite', token, { method: 'POST' }),
-    onSuccess: () => {
+    mutationFn: () => apiRequest<ShareCard>('/api/v1/share/invite', token, { method: 'POST' }),
+    onSuccess: (card) => {
+      const link = card.invite_link ?? `${typeof window !== 'undefined' ? window.location.origin : ''}/?invite_from=${token.slice(0, 12)}`;
+      setInviteLink(link);
       void queryClient.invalidateQueries({ queryKey: ['invite-stats', token] });
     },
   });
@@ -796,7 +720,7 @@ export function LotteryApp(): React.ReactNode {
     mutationFn: () =>
       apiRequest('/api/v1/share/assist', token, {
         method: 'POST',
-        body: JSON.stringify({ assist_type: 'free_draw', helper_id: `helper_${Date.now()}` }),
+        body: JSON.stringify({ assist_type: 'free_draw', helper_id: getDeviceId() }),
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['assist-progress', token] });
@@ -819,7 +743,7 @@ export function LotteryApp(): React.ReactNode {
     mutationFn: (prizeId: string) =>
       apiRequest('/api/v1/share/gift', token, {
         method: 'POST',
-        body: JSON.stringify({ receiver_id: 'demo_friend', prize_id: prizeId }),
+        body: JSON.stringify({ receiver_id: giftReceiverId.trim(), prize_id: prizeId }),
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['incoming-gifts', token] });
@@ -863,9 +787,77 @@ export function LotteryApp(): React.ReactNode {
     mutationFn: (offerId: string) =>
       apiRequest<ExchangeOffer>(`/api/v1/blindbox/exchange-offers/${offerId}/accept`, token, { method: 'POST' }),
     onSuccess: () => {
+      setPendingAcceptOfferId(null);
       void queryClient.invalidateQueries({ queryKey: ['exchange-offers', token] });
       void queryClient.invalidateQueries({ queryKey: ['inventory', token] });
     },
+  });
+
+  const cancelExchangeMutation = useMutation({
+    mutationFn: (offerId: string) =>
+      apiRequest(`/api/v1/blindbox/exchange-offers/${offerId}`, token, { method: 'DELETE' }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['exchange-offers', token] });
+    },
+  });
+
+  const blendMutation = useMutation({
+    mutationFn: ({ prizeId, campaignId }: { readonly prizeId: string; readonly campaignId: string }) =>
+      apiRequest<BlendResult>('/api/v1/blindbox/blend', token, {
+        method: 'POST',
+        body: JSON.stringify({ source_prize_id: prizeId, campaign_id: campaignId }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['inventory', token] });
+    },
+  });
+
+  const redeemMutation = useMutation({
+    mutationFn: (prizeId: string) =>
+      apiRequest<RedeemResult>('/api/v1/blindbox/redeem', token, {
+        method: 'POST',
+        body: JSON.stringify({ prize_id: prizeId }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['inventory', token] });
+      void queryClient.invalidateQueries({ queryKey: ['member', token] });
+    },
+  });
+
+  const useItemMutation = useMutation({
+    mutationFn: (input: { readonly item_type: UserItem['item_type']; readonly campaign_id?: string }) =>
+      apiRequest('/api/v1/shop/items/use', token, { method: 'POST', body: JSON.stringify(input) }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['user-items', token] });
+    },
+  });
+
+  const joinActivityMutation = useMutation({
+    mutationFn: (activityId: string) => apiRequest(`/api/v1/activities/${activityId}/join`, token, { method: 'POST' }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['activities', token] }),
+  });
+
+  const claimBattlePassMutation = useMutation({
+    mutationFn: (level: number) => apiRequest(`/api/v1/battle-pass/claim/${level}`, token, { method: 'POST' }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['battle-pass', token] }),
+  });
+
+  const subscribeFlashMutation = useMutation({
+    mutationFn: (flashId: string) => apiRequest(`/api/v1/flash/${flashId}/subscribe`, token, { method: 'POST' }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['flash-list', token] }),
+  });
+
+  const pityStatusQuery = useQuery({
+    queryKey: ['pity-status', token, selectedCampaignId],
+    queryFn: () =>
+      apiPostRequest<PityStatus>(`/api/v1/blindbox/pity-status?campaign_id=${selectedCampaignId ?? ''}`, token),
+    enabled: Boolean(token && selectedCampaignId),
+  });
+
+  const publicInventoryQuery = useQuery({
+    queryKey: ['public-inventory', publicInventoryUserId],
+    queryFn: () => apiRequest<PublicInventoryItem[]>(`/api/v1/users/${publicInventoryUserId}/public-inventory`, token),
+    enabled: Boolean(token && publicInventoryUserId),
   });
 
   function openCampaign(campaignId: string): void {
@@ -1294,13 +1286,59 @@ export function LotteryApp(): React.ReactNode {
               <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-3 text-center text-xs text-violet-100/65">
                 保底规则：软保底 {probabilityQuery.data.pity_config.soft_pity_n} 次 · 硬保底{' '}
                 {probabilityQuery.data.pity_config.hard_pity_n} 次
+                {pityStatusQuery.data ? (
+                  <span className="mt-1 block">
+                    当前未中稀有 {pityStatusQuery.data.consecutive_misses} 次 · 距硬保底 {pityStatusQuery.data.misses_to_hard_pity} 次
+                  </span>
+                ) : null}
               </div>
+            ) : null}
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-semibold"
+                onClick={() => setShowProbabilitySheet(true)}
+                type="button"
+              >
+                概率公示
+              </button>
+              {token && selectedCampaignId ? (
+                <button
+                  className="rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-semibold"
+                  onClick={() => {
+                    void apiRequest<HintMessage>(`/api/v1/blindbox/hint/${selectedCampaignId}`, token).then((hint) => {
+                      window.alert(hint.content);
+                    });
+                  }}
+                  type="button"
+                >
+                  摇盒提示
+                </button>
+              ) : null}
+              {(userItemsQuery.data ?? []).some((item) => item.quantity > 0) && selectedCampaignId ? (
+                <button
+                  className="rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-xs font-semibold"
+                  onClick={() => {
+                    const item = userItemsQuery.data?.find((row) => row.quantity > 0);
+                    if (item) {
+                      useItemMutation.mutate({ item_type: item.item_type, campaign_id: selectedCampaignId });
+                    }
+                  }}
+                  type="button"
+                >
+                  使用道具
+                </button>
+              ) : null}
+            </div>
+
+            {!assetGate.canUseAssets && token ? (
+              <p className="rounded-xl border border-amber-300/20 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">{assetGate.blockedReason}</p>
             ) : null}
 
             <div className="grid grid-cols-2 gap-3">
               <button
                 className="rounded-2xl bg-[linear-gradient(135deg,#f472b6,#db2777)] px-4 py-3 font-black text-white disabled:opacity-50"
-                disabled={drawMutation.isPending || payingCash}
+                disabled={drawMutation.isPending || payingCash || (token ? !assetGate.canUseAssets : false)}
                 onClick={() => handleDraw(1)}
                 type="button"
               >
@@ -1308,7 +1346,7 @@ export function LotteryApp(): React.ReactNode {
               </button>
               <button
                 className="rounded-2xl bg-[linear-gradient(135deg,#a78bfa,#7c3aed)] px-4 py-3 font-black text-white disabled:opacity-50"
-                disabled={drawMutation.isPending || payingCash}
+                disabled={drawMutation.isPending || payingCash || (token ? !assetGate.canUseAssets : false)}
                 onClick={() => handleDraw(10)}
                 type="button"
               >
@@ -1388,39 +1426,17 @@ export function LotteryApp(): React.ReactNode {
             ) : null}
 
             {activeTab === 'inventory' ? (
-              <section className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-black text-white">我的收藏</h2>
-                  <button className="rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs" type="button">
-                    共 {inventoryQuery.data?.length ?? 0} 件
-                  </button>
-                </div>
-                {inventoryQuery.isLoading ? <SkeletonCards /> : null}
-                {inventoryQuery.data?.length ? (
-                  <div className="grid grid-cols-3 gap-2">
-                    {inventoryQuery.data.map((item) => {
-                      const meta = levelMeta(item.prize_level);
-                      return (
-                        <div className="relative rounded-2xl border border-violet-300/40 bg-white/[0.06] p-3 text-center" key={item.id}>
-                          <PrizeMedia
-                            fallbackClassName="mx-auto flex h-16 w-16 items-center justify-center text-3xl"
-                            imageClassName="mx-auto h-16 w-16 rounded-xl border border-white/10 object-cover"
-                            imageUrl={prizeImageUrlById.get(item.prize_id) || undefined}
-                            meta={meta}
-                            name={item.prize_name}
-                          />
-                          <div className={`mt-1 line-clamp-1 text-xs font-semibold ${meta.className}`}>
-                            {item.prize_name}
-                          </div>
-                          <div className="mt-1 text-[11px] text-violet-100/55">{meta.label}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : !inventoryQuery.isLoading ? (
-                  <EmptyState icon="□" title="暂无收藏" description="还没有收集到任何盲盒款式，去抽盒吧。" />
-                ) : null}
-              </section>
+              <InventoryTabPanel
+                blendPending={blendMutation.isPending}
+                isLoading={inventoryQuery.isLoading}
+                items={inventoryQuery.data}
+                onBlend={(prizeId, campaignId) => blendMutation.mutateAsync({ prizeId, campaignId })}
+                onRedeem={(prizeId) => redeemMutation.mutateAsync(prizeId)}
+                onViewModeChange={setInventoryViewMode}
+                prizeImageUrlById={prizeImageUrlById}
+                redeemPending={redeemMutation.isPending}
+                viewMode={inventoryViewMode}
+              />
             ) : null}
 
             {activeTab === 'exchange' ? (
@@ -1446,14 +1462,25 @@ export function LotteryApp(): React.ReactNode {
                         {offer.have_prize_name} <span className="mx-1 text-violet-100/35">→</span> {offer.want_prize_name}
                       </div>
                     </div>
-                    <button
-                      className="shrink-0 rounded-xl bg-violet-400 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
-                      disabled={acceptExchangeMutation.isPending}
-                      onClick={() => acceptExchangeMutation.mutate(offer.id)}
-                      type="button"
-                    >
-                      接受
-                    </button>
+                    {offer.user_id !== token.slice(0, 20) && offer.status === 'pending' ? (
+                      <button
+                        className="shrink-0 rounded-xl bg-violet-400 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+                        disabled={acceptExchangeMutation.isPending}
+                        onClick={() => setPendingAcceptOfferId(offer.id)}
+                        type="button"
+                      >
+                        接受
+                      </button>
+                    ) : offer.user_id === accountQuery.data?.user.id ? (
+                      <button
+                        className="shrink-0 rounded-xl border border-white/15 px-3 py-2 text-xs"
+                        disabled={cancelExchangeMutation.isPending}
+                        onClick={() => cancelExchangeMutation.mutate(offer.id)}
+                        type="button"
+                      >
+                        取消
+                      </button>
+                    ) : null}
                   </article>
                 ))}
                 {exchangeQuery.data?.length === 0 ? (
@@ -1464,13 +1491,35 @@ export function LotteryApp(): React.ReactNode {
 
             {activeTab === 'rank' ? (
               <section className="space-y-3">
-                <h2 className="text-lg font-black text-white">收集排行榜</h2>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-lg font-black text-white">收集排行榜</h2>
+                  <select
+                    className="rounded-xl border border-white/15 bg-white/10 px-2 py-1 text-xs text-white"
+                    onChange={(event) => setRankCampaignFilter(event.target.value)}
+                    value={rankCampaignFilter}
+                  >
+                    <option value="">全站</option>
+                    {(campaignsQuery.data ?? []).map((item) => (
+                      <option key={item.campaign.id} value={item.campaign.id}>
+                        {item.campaign.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 {(leaderboardQuery.data ?? []).map((entry, index) => (
                   <article
-                    className={`flex items-center gap-3 rounded-2xl border bg-white/[0.06] p-3 ${
+                    className={`flex cursor-pointer items-center gap-3 rounded-2xl border bg-white/[0.06] p-3 ${
                       index === 0 ? 'border-amber-300/50' : index === 1 ? 'border-slate-300/40' : index === 2 ? 'border-orange-300/40' : 'border-white/10'
                     }`}
                     key={entry.user_id}
+                    onClick={() => setPublicInventoryUserId(entry.user_id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        setPublicInventoryUserId(entry.user_id);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
                   >
                     <div className="w-9 text-xl font-black">{index < 3 ? ['1', '2', '3'][index] : `#${index + 1}`}</div>
                     <div className="min-w-0 flex-1">
@@ -1506,6 +1555,19 @@ export function LotteryApp(): React.ReactNode {
                   <Share2 size={16} />
                   分享领奖励
                 </button>
+                <div className="rounded-3xl border border-white/10 bg-white/[0.06] p-4">
+                  <h3 className="mb-2 font-bold text-white">会员权益</h3>
+                  <div className="space-y-1 text-xs">
+                    {MEMBER_LEVEL_BENEFITS.map((row) => (
+                      <div
+                        className={`rounded-lg px-2 py-1 ${memberQuery.data?.level === row.level ? 'bg-violet-500/30 text-white' : 'text-violet-100/55'}`}
+                        key={row.level}
+                      >
+                        {row.label}（≥{row.threshold} 消费）：{row.perks}
+                      </div>
+                    ))}
+                  </div>
+                </div>
                 <div className="rounded-3xl border border-white/10 bg-white/[0.06] p-4">
                   <h3 className="font-bold text-white">月卡 / 战令</h3>
                   <p className="mt-1 text-sm text-violet-100/65">
@@ -1599,6 +1661,25 @@ export function LotteryApp(): React.ReactNode {
                     ) : (
                       <span className="self-center text-xs text-emerald-300">已开通付费战令</span>
                     )}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(battlePassQuery.data?.rewards ?? [])
+                      .filter((reward) => (battlePassQuery.data?.user_pass?.level ?? 0) >= reward.level)
+                      .slice(0, 6)
+                      .map((reward) => {
+                        const claimed = battlePassQuery.data?.user_pass?.claimed_levels.includes(reward.level);
+                        return (
+                          <button
+                            className="rounded-xl border border-white/15 px-2 py-1 text-[11px] disabled:opacity-40"
+                            disabled={claimed || claimBattlePassMutation.isPending}
+                            key={`${reward.level}-${reward.pass_type}`}
+                            onClick={() => claimBattlePassMutation.mutate(reward.level)}
+                            type="button"
+                          >
+                            Lv{reward.level} {claimed ? '已领' : '领取'}
+                          </button>
+                        );
+                      })}
                   </div>
                   {!paymentEnabled && !monthCardQuery.data?.has_card && (memberQuery.data?.points ?? 0) < MONTHLY_CARD_POINTS ? (
                     <p className="mt-2 text-xs text-amber-200/80">
@@ -1747,9 +1828,21 @@ export function LotteryApp(): React.ReactNode {
                       生成邀请
                     </button>
                     <button className="rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-bold" onClick={() => assistMutation.mutate()} type="button">
-                      模拟助力
+                      好友助力
                     </button>
                   </div>
+                  {inviteLink ? (
+                    <div className="mt-2 flex gap-2">
+                      <input className="min-w-0 flex-1 rounded-xl bg-white/10 px-2 py-1 text-xs text-white" readOnly value={inviteLink} />
+                      <button
+                        className="rounded-xl bg-white/15 px-2 text-xs font-bold"
+                        onClick={() => void navigator.clipboard.writeText(inviteLink).then(() => window.alert('链接已复制'))}
+                        type="button"
+                      >
+                        复制
+                      </button>
+                    </div>
+                  ) : null}
                   <div className="mt-3 space-y-2">
                     {Object.values(assistProgressQuery.data ?? {}).map((item) => (
                       <div className="text-xs text-violet-100/70" key={item.assist_type}>
@@ -1773,11 +1866,24 @@ export function LotteryApp(): React.ReactNode {
                 <div className="rounded-3xl border border-white/10 bg-white/[0.06] p-4">
                   <h3 className="font-bold text-white">礼物</h3>
                   <p className="mt-1 text-xs text-violet-100/55">收到 {giftsQuery.data?.length ?? 0} 份礼物</p>
-                  {inventoryQuery.data?.[0] ? (
-                    <button className="mt-3 rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-bold" onClick={() => sendGiftMutation.mutate(inventoryQuery.data[0].prize_id)} type="button">
-                      赠送一个收藏给示例好友
-                    </button>
-                  ) : null}
+                  <div className="mt-3 flex gap-2">
+                    <input
+                      className="min-w-0 flex-1 rounded-xl border border-white/15 bg-white/10 px-3 py-2 text-sm text-white"
+                      onChange={(event) => setGiftReceiverId(event.target.value)}
+                      placeholder="对方用户 ID"
+                      value={giftReceiverId}
+                    />
+                    {inventoryQuery.data?.[0] ? (
+                      <button
+                        className="shrink-0 rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-sm font-bold"
+                        disabled={!giftReceiverId.trim()}
+                        onClick={() => sendGiftMutation.mutate(inventoryQuery.data![0].prize_id)}
+                        type="button"
+                      >
+                        赠送
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               </section>
             ) : null}
@@ -1805,9 +1911,23 @@ export function LotteryApp(): React.ReactNode {
                     <h3 className="font-bold text-white">{item.flash.name}</h3>
                     <p className="mt-1 text-sm text-violet-100/65">{item.flash.description}</p>
                     <div className="mt-2 text-xs text-violet-100/55">库存 {item.flash.remaining_stock} · {item.flash.price_points} 积分</div>
-                    <button className="mt-3 rounded-xl bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50" disabled={!item.purchasable || flashPurchaseMutation.isPending} onClick={() => flashPurchaseMutation.mutate(item.flash.id)} type="button">
-                      抢购
-                    </button>
+                    <div className="mt-3 flex gap-2">
+                      {!item.subscribed ? (
+                        <button
+                          className="rounded-xl border border-white/15 px-3 py-2 text-xs font-bold text-white"
+                          disabled={subscribeFlashMutation.isPending}
+                          onClick={() => subscribeFlashMutation.mutate(item.flash.id)}
+                          type="button"
+                        >
+                          预约提醒
+                        </button>
+                      ) : (
+                        <span className="self-center text-xs text-emerald-300">已预约</span>
+                      )}
+                      <button className="rounded-xl bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50" disabled={!item.purchasable || flashPurchaseMutation.isPending} onClick={() => flashPurchaseMutation.mutate(item.flash.id)} type="button">
+                        抢购
+                      </button>
+                    </div>
                   </article>
                 ))}
               </section>
@@ -1967,6 +2087,42 @@ export function LotteryApp(): React.ReactNode {
         </div>
       ) : null}
 
+      {pendingAcceptOfferId ? (
+        <ConfirmDialog
+          message="确认接受该交换？将扣除你对应款式的库存。"
+          onCancel={() => setPendingAcceptOfferId(null)}
+          onConfirm={() => acceptExchangeMutation.mutate(pendingAcceptOfferId)}
+          title="确认交换"
+        />
+      ) : null}
+
+      {showProbabilitySheet && probabilityQuery.data ? (
+        <ProbabilitySheet
+          campaignName={selectedCampaign?.campaign.name ?? ''}
+          disclosureUpdatedAt={publicConfigQuery.data?.compliance?.disclosure_updated_at}
+          filingNumber={publicConfigQuery.data?.compliance?.filing_number}
+          pityConfig={probabilityQuery.data.pity_config}
+          pityStatus={pityStatusQuery.data}
+          prizes={probabilityQuery.data.prizes}
+          rulesText={publicConfigQuery.data?.compliance?.rules_text}
+          onClose={() => setShowProbabilitySheet(false)}
+        />
+      ) : null}
+
+      {publicInventoryUserId ? (
+        <Modal onClose={() => setPublicInventoryUserId(null)} title="公开收藏">
+          <div className="space-y-2 text-sm">
+            {(publicInventoryQuery.data ?? []).map((row) => (
+              <div className="flex justify-between border-b border-white/5 py-1" key={row.prize_id}>
+                <span>{row.prize_name}</span>
+                <span className="text-violet-100/55">×{row.count}</span>
+              </div>
+            ))}
+            {!publicInventoryQuery.data?.length ? <p className="text-violet-100/60">暂无公开收藏</p> : null}
+          </div>
+        </Modal>
+      ) : null}
+
       {showPointsRechargeModal ? (
         <div className="fixed inset-0 z-[55] flex items-end bg-black/70 p-3 backdrop-blur-md sm:items-center sm:justify-center">
           <div className="w-full rounded-[28px] border border-white/15 bg-[linear-gradient(160deg,#1a1040,#0f2027)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.55)] sm:max-w-[380px]">
@@ -2045,7 +2201,12 @@ function DrawResultView({
       <span className={`inline-flex rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-bold ${meta.className}`}>
         {meta.label}
       </span>
-      <div className="mt-5 flex justify-center">
+      {draw.pity_status ? (
+        <p className="mt-3 text-xs text-violet-100/65">
+          保底进度：连续未中稀有 {draw.pity_status.consecutive_misses} 次 · 距硬保底 {draw.pity_status.misses_to_hard_pity} 次
+        </p>
+      ) : null}
+      <div className={`mt-5 flex justify-center rounded-[32px] ${drawGlowClass(strongest?.prize_level)}`}>
         <PrizeMedia
           fallbackClassName="flex h-32 w-32 items-center justify-center text-7xl"
           imageClassName="h-32 w-32 rounded-[28px] border border-white/10 object-cover shadow-[0_16px_48px_rgba(0,0,0,0.35)]"
@@ -2106,6 +2267,3 @@ function DrawResultView({
   );
 }
 
-function levelScore(level: string): number {
-  return { limited: 5, S: 5, secret: 4, A: 3, rare: 3, B: 2, common: 1 }[level] ?? 0;
-}

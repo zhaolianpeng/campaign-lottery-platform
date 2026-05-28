@@ -279,6 +279,12 @@ export class MemoryStore {
   private readonly fulfillmentTaskItems: FulfillmentTask[] = [];
   private readonly checkInDates = new Map<string, string>();
   private readonly checkInStreaks = new Map<string, number>();
+  private readonly dailyAssistByHelper = new Map<string, number>();
+  private readonly complianceSettings = {
+    disclosure_updated_at: '2026-05-28T00:00:00.000Z',
+    filing_number: '',
+    rules_text: '抽奖结果由系统随机生成，概率公示信息仅供参考。未成年人请在监护人指导下消费。',
+  };
   private readonly shareCounts = new Map<string, number>();
   private readonly userCards = new Map<string, UserCard>();
   private readonly userItems = new Map<string, UserItem>();
@@ -1111,12 +1117,14 @@ export class MemoryStore {
     };
   }
 
-  public leaderboard(limit: number): readonly LeaderboardEntry[] {
+  public leaderboard(limit: number, campaignId?: string): readonly LeaderboardEntry[] {
     const entries = [...this.users.values()].map((user) => {
-      const collectedIds = new Set(
-        this.inventory.filter((item) => item.user_id === user.id).map((item) => item.prize_id),
-      );
-      const totalCount = [...this.prizesByCampaign.values()].reduce((sum, prizes) => sum + prizes.length, 0);
+      const userItems = this.inventory.filter((item) => item.user_id === user.id);
+      const scoped = campaignId ? userItems.filter((item) => item.campaign_id === campaignId) : userItems;
+      const collectedIds = new Set(scoped.map((item) => item.prize_id));
+      const totalCount = campaignId
+        ? (this.prizesByCampaign.get(campaignId)?.length ?? 0)
+        : [...this.prizesByCampaign.values()].reduce((sum, prizes) => sum + prizes.length, 0);
       return {
         rank: 0,
         user_id: user.id,
@@ -1132,6 +1140,40 @@ export class MemoryStore {
       .sort((left, right) => right.collected_count - left.collected_count)
       .slice(0, limit)
       .map((entry, index) => ({ ...entry, rank: index + 1 }));
+  }
+
+  public publicUserInventory(userId: string): readonly { readonly prize_id: string; readonly prize_name: string; readonly prize_level: string; readonly campaign_id: string; readonly count: number }[] {
+    const counts = new Map<string, { readonly prize_id: string; readonly prize_name: string; readonly prize_level: string; readonly campaign_id: string; count: number }>();
+    for (const item of this.inventory.filter((row) => row.user_id === userId)) {
+      const current = counts.get(item.prize_id) ?? {
+        prize_id: item.prize_id,
+        prize_name: item.prize_name,
+        prize_level: item.prize_level,
+        campaign_id: item.campaign_id,
+        count: 0,
+      };
+      counts.set(item.prize_id, { ...current, count: current.count + 1 });
+    }
+    return [...counts.values()];
+  }
+
+  public compliancePublic(): { readonly disclosure_updated_at: string; readonly filing_number: string; readonly rules_text: string } {
+    return { ...this.complianceSettings };
+  }
+
+  public recordInviteRegistration(inviterId: string, inviteeId: string): void {
+    if (!inviterId || inviterId === inviteeId) {
+      return;
+    }
+    if (this.inviteRecords.some((row) => row.invitee_id === inviteeId)) {
+      return;
+    }
+    this.inviteRecords.unshift({
+      id: randomId('invte'),
+      inviter_id: inviterId,
+      invitee_id: inviteeId,
+      created_at: nowISO(),
+    });
   }
 
   public adminLogin(username: string, password: string): string {
@@ -1447,9 +1489,31 @@ export class MemoryStore {
     this.firstRechargePackList = next;
   }
 
-  public adminDrawRecords(token: string): readonly DrawRecord[] {
+  public adminDrawRecords(
+    token: string,
+    filters?: { readonly user_id?: string; readonly campaign_id?: string; readonly result?: string; readonly from?: string; readonly to?: string },
+  ): readonly DrawRecord[] {
     this.ensureAdmin(token);
-    return this.drawRecords.map((record) => ({ ...record }));
+    return this.drawRecords
+      .filter((record) => {
+        if (filters?.user_id && record.user_id !== filters.user_id) {
+          return false;
+        }
+        if (filters?.campaign_id && record.campaign_id !== filters.campaign_id) {
+          return false;
+        }
+        if (filters?.result && record.result !== filters.result) {
+          return false;
+        }
+        if (filters?.from && record.drawn_at < filters.from) {
+          return false;
+        }
+        if (filters?.to && record.drawn_at > filters.to) {
+          return false;
+        }
+        return true;
+      })
+      .map((record) => ({ ...record }));
   }
 
   public adminUsers(token: string, query: { readonly page?: number; readonly page_size?: number; readonly keyword?: string; readonly status?: string; readonly register_source?: string }): AdminUserListResult {
@@ -1959,10 +2023,17 @@ export class MemoryStore {
   }
 
   public recordAssist(userId: string, assistType: AssistType, helperId: string): AssistProgress {
+    const today = new Date().toISOString().slice(0, 10);
+    const limitKey = `${helperId || 'anon'}:${today}`;
+    const used = this.dailyAssistByHelper.get(limitKey) ?? 0;
+    if (helperId && used >= 10) {
+      throw new AppError('assist_daily_limit', '今日助力次数已达上限', 429);
+    }
     const progress = this.getAssistProgress(userId, assistType);
     const next = { ...progress, current: Math.min(progress.target_count, progress.current + (helperId ? 1 : 0)) };
     this.assistProgress.set(`${userId}:${assistType}`, next);
     if (helperId) {
+      this.dailyAssistByHelper.set(limitKey, used + 1);
       this.inviteRecords.unshift({ id: randomId('invte'), inviter_id: userId, invitee_id: helperId, created_at: nowISO() });
     }
     return next;

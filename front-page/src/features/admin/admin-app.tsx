@@ -368,6 +368,9 @@ export function AdminApp(): React.ReactNode {
   const [pityEditor, setPityEditor] = useState<PityEditorValues | null>(null);
   const [shopItemEditor, setShopItemEditor] = useState<{ readonly itemId?: string; readonly values: ShopItemEditorValues } | null>(null);
   const [firstRechargeEditor, setFirstRechargeEditor] = useState<{ readonly packId?: string; readonly values: FirstRechargeEditorValues } | null>(null);
+  const [recordUserId, setRecordUserId] = useState('');
+  const [recordCampaignId, setRecordCampaignId] = useState('');
+  const [recordResult, setRecordResult] = useState('');
   const queryClient = useQueryClient();
 
   const loginForm = useForm<LoginValues>({
@@ -428,9 +431,28 @@ export function AdminApp(): React.ReactNode {
   });
 
   const recordsQuery = useQuery({
-    queryKey: ['admin-records', token],
-    queryFn: () => apiRequest<DrawRecord[]>('/api/v1/admin/draw-records', token),
+    queryKey: ['admin-records', token, recordUserId, recordCampaignId, recordResult],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (recordUserId.trim()) {
+        params.set('user_id', recordUserId.trim());
+      }
+      if (recordCampaignId.trim()) {
+        params.set('campaign_id', recordCampaignId.trim());
+      }
+      if (recordResult.trim()) {
+        params.set('result', recordResult.trim());
+      }
+      const query = params.toString();
+      return apiRequest<DrawRecord[]>(`/api/v1/admin/draw-records${query ? `?${query}` : ''}`, token);
+    },
     enabled: Boolean(token) && tab === 'records',
+  });
+
+  const statisticsQuery = useQuery({
+    queryKey: ['admin-statistics', token],
+    queryFn: () => apiRequest<{ readonly total_draws: number; readonly total_wins: number; readonly win_rate: number }>('/api/v1/admin/statistics', token),
+    enabled: Boolean(token) && tab === 'overview',
   });
 
   const battlePassQuery = useQuery({
@@ -708,6 +730,14 @@ export function AdminApp(): React.ReactNode {
     },
   });
 
+  const kickSessionsMutation = useMutation({
+    mutationFn: (userId: string) =>
+      apiRequest(`/api/v1/admin/users/${userId}/kick-sessions`, token, { method: 'POST', body: '{}' }),
+    onSuccess: () => {
+      window.alert('已踢出该用户全部会话');
+    },
+  });
+
   const campaigns = campaignsQuery.data ?? [];
   const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId);
   const selectedPrizes = prizesQuery.data ?? [];
@@ -952,6 +982,12 @@ export function AdminApp(): React.ReactNode {
                 </div>
               ))}
             </div>
+            {statisticsQuery.data ? (
+              <div className="rounded-xl border border-zinc-800 bg-[#1a1a24] p-4 text-sm text-zinc-400">
+                统计：总抽 {statisticsQuery.data.total_draws} · 中奖 {statisticsQuery.data.total_wins} · 中奖率{' '}
+                {statisticsQuery.data.win_rate.toFixed(1)}%
+              </div>
+            ) : null}
             <AdminList title="盲盒列表">
               {(overviewQuery.data?.campaigns ?? []).map((campaign) => (
                 <DataCard
@@ -1072,6 +1108,14 @@ export function AdminApp(): React.ReactNode {
                         type="button"
                       >
                         调整积分
+                      </button>
+                      <button
+                        className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 disabled:opacity-50"
+                        disabled={kickSessionsMutation.isPending}
+                        onClick={() => kickSessionsMutation.mutate(userDetailQuery.data.user.id)}
+                        type="button"
+                      >
+                        踢出会话
                       </button>
                     </div>
 
@@ -1417,6 +1461,29 @@ export function AdminApp(): React.ReactNode {
         {tab === 'records' ? (
           <section className="space-y-4">
             <h2 className="text-xl font-black text-white">抽奖记录</h2>
+            <div className="flex flex-wrap gap-2">
+              <input
+                className="rounded-lg border border-zinc-700 bg-[#222] px-3 py-2 text-xs text-zinc-100"
+                onChange={(event) => setRecordUserId(event.target.value)}
+                placeholder="用户 ID"
+                value={recordUserId}
+              />
+              <input
+                className="rounded-lg border border-zinc-700 bg-[#222] px-3 py-2 text-xs text-zinc-100"
+                onChange={(event) => setRecordCampaignId(event.target.value)}
+                placeholder="盲盒 ID"
+                value={recordCampaignId}
+              />
+              <select
+                className="rounded-lg border border-zinc-700 bg-[#222] px-3 py-2 text-xs text-zinc-100"
+                onChange={(event) => setRecordResult(event.target.value)}
+                value={recordResult}
+              >
+                <option value="">全部结果</option>
+                <option value="win">win</option>
+                <option value="miss">miss</option>
+              </select>
+            </div>
             <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-[#1a1a24]">
               <table className="w-full min-w-[640px] border-collapse text-sm">
                 <thead className="bg-white/[0.04] text-left text-xs text-zinc-500">

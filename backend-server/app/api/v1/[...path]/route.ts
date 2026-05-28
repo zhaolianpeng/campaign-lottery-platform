@@ -14,7 +14,7 @@ import {
   upsertShopItem,
 } from '@/server/admin-config-repository';
 import { getAppConfig } from '@/server/config';
-import { notFound, phoneVerificationRequired } from '@/server/errors';
+import { AppError, notFound, phoneVerificationRequired } from '@/server/errors';
 import { getService } from '@/server/singleton';
 import { getOauthUrl, getJssdkConfig } from '@/server/wechat-service';
 
@@ -29,6 +29,7 @@ export function OPTIONS(): Response {
 
 const guestLoginSchema = z.object({
   nickname: z.string().optional().default(''),
+  invite_from: z.string().optional(),
 });
 
 const drawSchema = z.object({
@@ -290,7 +291,14 @@ async function handleReadRequest(request: Request, context: RouteContext): Promi
         mock_enabled: config.sms.provider.toLowerCase() === 'mock',
       },
       c_end_features: service.cEndFeatureToggles(),
+      compliance: service.compliancePublic(),
     });
+  }
+  if (path.join('/') === 'auth/carrier-login') {
+    throw new AppError('not_implemented', '运营商一键登录暂未开通', 501);
+  }
+  if (path[0] === 'users' && path[1] && path[2] === 'public-inventory') {
+    return ok('public inventory', service.publicUserInventory(path[1]));
   }
   if (path.join('/') === 'campaigns') {
     return ok('campaign list', service.campaignList());
@@ -330,7 +338,8 @@ async function handleReadRequest(request: Request, context: RouteContext): Promi
   }
   if (path.join('/') === 'blindbox/leaderboard') {
     const limit = Number(searchParam(request, 'limit') || 20);
-    return ok('leaderboard', service.leaderboard(limit));
+    const campaignId = searchParam(request, 'campaign_id') || undefined;
+    return ok('leaderboard', service.leaderboard(limit, campaignId));
   }
   if (path.join('/') === 'admin/overview') {
     return ok('admin overview', service.adminOverview(token));
@@ -361,7 +370,13 @@ async function handleReadRequest(request: Request, context: RouteContext): Promi
     return ok('fulfillment tasks', service.fulfillmentTasks(token));
   }
   if (path.join('/') === 'admin/draw-records' || path.join('/') === 'admin/lottery-logs') {
-    return ok('draw records', service.adminDrawRecords(token));
+    return ok('draw records', service.adminDrawRecords(token, {
+      user_id: searchParam(request, 'user_id') || undefined,
+      campaign_id: searchParam(request, 'campaign_id') || undefined,
+      result: searchParam(request, 'result') || undefined,
+      from: searchParam(request, 'from') || undefined,
+      to: searchParam(request, 'to') || undefined,
+    }));
   }
   if (path.join('/') === 'admin/statistics') {
     return ok('statistics', service.drawStatistics(token, searchParam(request, 'campaign_id')));
@@ -497,7 +512,8 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     const body = await readJson(request);
 
     if (path.join('/') === 'auth/guest-login') {
-      const result = service.guestLogin(guestLoginSchema.parse(body).nickname);
+      const guestInput = guestLoginSchema.parse(body);
+      const result = service.guestLogin(guestInput.nickname, guestInput.invite_from);
       const claimedPendingDraws = service.claimAnonymousWins(guestDrawToken, result.user.id);
       if (claimedPendingDraws > 0) {
         await deletePendingAnonymousWins(guestDrawToken);

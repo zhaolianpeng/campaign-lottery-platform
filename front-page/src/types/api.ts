@@ -27,6 +27,11 @@ export interface PublicConfig {
     readonly mock_enabled: boolean;
   };
   readonly c_end_features?: CEndFeatureToggles;
+  readonly compliance?: {
+    readonly disclosure_updated_at: string;
+    readonly filing_number: string;
+    readonly rules_text: string;
+  };
 }
 
 export interface User {
@@ -482,6 +487,61 @@ export interface FlashListInfo {
   };
   readonly subscribed: boolean;
   readonly purchasable: boolean;
+}
+
+export interface BlendResult {
+  readonly source_prize_id: string;
+  readonly source_prize_name: string;
+  readonly source_level: string;
+  readonly result_prize_id: string;
+  readonly result_prize_name: string;
+  readonly result_level: string;
+  readonly remaining_src: number;
+}
+
+export interface RedeemResult {
+  readonly record_id: string;
+  readonly prize_id: string;
+  readonly prize_name: string;
+  readonly points_cost: number;
+  readonly remaining: number;
+}
+
+export interface CheckInResult {
+  readonly points_awarded: number;
+  readonly streak_days: number;
+  readonly is_bonus: boolean;
+  readonly new_balance: number;
+}
+
+export interface HintMessage {
+  readonly type: string;
+  readonly content: string;
+}
+
+export interface ShareCard {
+  readonly id: string;
+  readonly title: string;
+  readonly description: string;
+  readonly invite_link?: string;
+  readonly prize_name?: string;
+  readonly prize_level?: string;
+}
+
+export interface PublicInventoryItem {
+  readonly prize_id: string;
+  readonly prize_name: string;
+  readonly prize_level: string;
+  readonly campaign_id: string;
+  readonly count: number;
+}
+
+export interface AdminStatistics {
+  readonly total_users: number;
+  readonly total_draws: number;
+  readonly total_wins: number;
+  readonly total_revenue_cents: number;
+  readonly campaign_draws: readonly { readonly campaign_id: string; readonly campaign_name: string; readonly draws: number }[];
 }
 
 export interface ActivityListInfo {

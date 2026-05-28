@@ -90,8 +90,20 @@ export class LotteryService {
 
   public constructor(private readonly store: MemoryStore) {}
 
-  public guestLogin(nickname: string): ReturnType<MemoryStore['createGuestSession']> {
-    return this.store.createGuestSession(nickname);
+  public guestLogin(nickname: string, inviteFrom?: string): ReturnType<MemoryStore['createGuestSession']> {
+    const result = this.store.createGuestSession(nickname);
+    if (inviteFrom) {
+      this.store.recordInviteRegistration(inviteFrom, result.user.id);
+    }
+    return result;
+  }
+
+  public compliancePublic(): ReturnType<MemoryStore['compliancePublic']> {
+    return this.store.compliancePublic();
+  }
+
+  public publicUserInventory(userId: string): ReturnType<MemoryStore['publicUserInventory']> {
+    return this.store.publicUserInventory(userId);
   }
 
   public async wechatLogin(code: string): Promise<WechatLoginResult> {
@@ -437,8 +449,8 @@ export class LotteryService {
     return this.store.shareReward(user.id);
   }
 
-  public leaderboard(limit: number): readonly LeaderboardEntry[] {
-    return this.store.leaderboard(limit);
+  public leaderboard(limit: number, campaignId?: string): readonly LeaderboardEntry[] {
+    return this.store.leaderboard(limit, campaignId);
   }
 
   public drawRecords(token: string): readonly DrawRecord[] {
@@ -514,8 +526,11 @@ export class LotteryService {
     return this.store.updateFulfillmentTask(token, taskId, input);
   }
 
-  public adminDrawRecords(token: string): readonly DrawRecord[] {
-    return this.store.adminDrawRecords(token);
+  public adminDrawRecords(
+    token: string,
+    filters?: { readonly user_id?: string; readonly campaign_id?: string; readonly result?: string; readonly from?: string; readonly to?: string },
+  ): readonly DrawRecord[] {
+    return this.store.adminDrawRecords(token, filters);
   }
 
   public drawStatistics(token: string, campaignId: string): DrawStatistics {
