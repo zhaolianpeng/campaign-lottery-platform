@@ -82,12 +82,16 @@ const prizeMutationSchema = z.object({
 });
 
 const exchangeOfferSchema = z.object({
-  have_prize_id: z.string().min(1),
+  have_inventory_item_ids: z.array(z.string().min(1)).min(1),
   want_prize_id: z.string().min(1),
 });
 
 const redeemSchema = z.object({
   prize_id: z.string().min(1),
+});
+
+const deliveryRequestSchema = z.object({
+  item_ids: z.array(z.string().min(1)).min(1),
 });
 
 const fulfillmentMutationSchema = z.object({
@@ -569,6 +573,9 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     }
     if (path.join('/') === 'blindbox/redeem') {
       return ok('redeem completed', service.redeemPrize(token, redeemSchema.parse(body)));
+    }
+    if (path.join('/') === 'blindbox/delivery/request') {
+      return ok('delivery request submitted', service.submitDeliveryRequest(token, deliveryRequestSchema.parse(body).item_ids));
     }
     if (path.join('/') === 'blindbox/checkin') {
       return ok('checkin completed', service.dailyCheckIn(token));

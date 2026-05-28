@@ -34,6 +34,7 @@ import type {
   CampaignListItem,
   CheckInResult,
   CEndFeatureToggles,
+  DeliverySubmitResult,
   ExchangeOffer,
   FirstRechargePack,
   FlashListInfo,
@@ -97,7 +98,7 @@ const loginSchema = z.object({
 });
 
 const exchangeSchema = z.object({
-  have_prize_id: z.string().min(1),
+  have_inventory_item_ids: z.array(z.string().min(1)).min(1),
   want_prize_id: z.string().min(1),
 });
 
@@ -240,8 +241,9 @@ export function LotteryApp(): React.ReactNode {
 
   const exchangeForm = useForm<ExchangeFormValues>({
     resolver: zodResolver(exchangeSchema),
-    defaultValues: { have_prize_id: '', want_prize_id: '' },
+    defaultValues: { have_inventory_item_ids: [], want_prize_id: '' },
   });
+  const selectedExchangeItemIds = exchangeForm.watch('have_inventory_item_ids');
 
   const publicConfigQuery = useQuery({
     queryKey: ['public-config'],
@@ -608,20 +610,13 @@ export function LotteryApp(): React.ReactNode {
     [allPrizes],
   );
 
-  const duplicateInventory = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const item of inventoryQuery.data ?? []) {
-      counts.set(item.prize_id, (counts.get(item.prize_id) ?? 0) + 1);
-    }
-    const seen = new Set<string>();
-    return (inventoryQuery.data ?? []).filter((item) => {
-      if ((counts.get(item.prize_id) ?? 0) < 2 || seen.has(item.prize_id)) {
-        return false;
-      }
-      seen.add(item.prize_id);
-      return true;
-    });
-  }, [inventoryQuery.data]);
+  const exchangeableInventory = useMemo(
+    () =>
+      (inventoryQuery.data ?? []).filter(
+        (item) => item.delivery_status === 'not_requested' && !item.exchange_offer_id,
+      ),
+    [inventoryQuery.data],
+  );
 
   const drawMutation = useMutation({
     mutationFn: async (drawCount: number) => {
@@ -804,6 +799,7 @@ export function LotteryApp(): React.ReactNode {
       setShowExchangeModal(false);
       exchangeForm.reset();
       void queryClient.invalidateQueries({ queryKey: ['exchange-offers', token] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory', token] });
     },
   });
 
@@ -822,6 +818,7 @@ export function LotteryApp(): React.ReactNode {
       apiRequest(`/api/v1/blindbox/exchange-offers/${offerId}`, token, { method: 'DELETE' }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['exchange-offers', token] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory', token] });
     },
   });
 
@@ -845,6 +842,40 @@ export function LotteryApp(): React.ReactNode {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['inventory', token] });
       void queryClient.invalidateQueries({ queryKey: ['member', token] });
+    },
+  });
+
+  const deliveryMutation = useMutation({
+    mutationFn: (itemIds: readonly string[]) =>
+      apiRequest<DeliverySubmitResult>('/api/v1/blindbox/delivery/request', token, {
+        method: 'POST',
+        body: JSON.stringify({ item_ids: itemIds }),
+      }),
+    onSuccess: async (result) => {
+      if (result.requires_payment) {
+        await runCashPay({
+          client_request_id: `delivery_${result.delivery_request_id}_${Date.now()}`,
+          channel: 'wechat',
+          amount_cents: result.shipping_fee_cents,
+          subject: '盲盒奖品运费',
+          body: `发货 ${result.submitted_item_count} 件奖品`,
+          business_type: 'inventory_delivery',
+          business_id: result.delivery_request_id,
+          product_snapshot: {
+            subtotal_yuan: result.subtotal_yuan,
+            submitted_item_count: result.submitted_item_count,
+            free_shipping: result.free_shipping,
+          },
+        });
+        return;
+      }
+      await queryClient.invalidateQueries({ queryKey: ['inventory', token] });
+      await queryClient.invalidateQueries({ queryKey: ['admin-delivery', token] });
+      window.alert(
+        result.free_shipping
+          ? `已提交 ${result.submitted_item_count} 件奖品发货申请，当前订单已包邮`
+          : '发货申请已提交',
+      );
     },
   });
 
@@ -1504,11 +1535,16 @@ export function LotteryApp(): React.ReactNode {
             {activeTab === 'inventory' ? (
               <InventoryTabPanel
                 blendPending={blendMutation.isPending}
+                deliveryPending={deliveryMutation.isPending || payingCash}
                 isLoading={inventoryQuery.isLoading}
                 items={inventoryQuery.data}
                 onBlend={(prizeId, campaignId) => blendMutation.mutateAsync({ prizeId, campaignId })}
                 onRedeem={(prizeId) => redeemMutation.mutateAsync(prizeId)}
+                onSubmitDelivery={async (itemIds) => {
+                  await deliveryMutation.mutateAsync(itemIds);
+                }}
                 onViewModeChange={setInventoryViewMode}
+                paymentEnabled={paymentEnabled}
                 prizeImageUrlById={prizeImageUrlById}
                 redeemPending={redeemMutation.isPending}
                 viewMode={inventoryViewMode}
@@ -1538,7 +1574,7 @@ export function LotteryApp(): React.ReactNode {
                         {offer.have_prize_name} <span className="mx-1 text-violet-100/35">→</span> {offer.want_prize_name}
                       </div>
                     </div>
-                    {offer.user_id !== token.slice(0, 20) && offer.status === 'pending' ? (
+                    {offer.user_id !== accountQuery.data?.user.id && offer.status === 'pending' ? (
                       <button
                         className="shrink-0 rounded-xl bg-violet-400 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
                         disabled={acceptExchangeMutation.isPending}
@@ -2120,18 +2156,28 @@ export function LotteryApp(): React.ReactNode {
               </button>
             </div>
             <label className="mb-3 block text-sm text-violet-100/70">
-              我有（重复款）
-              <select
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-white px-3 py-3 text-slate-950"
-                {...exchangeForm.register('have_prize_id')}
-              >
-                <option value="">选择重复款</option>
-                {duplicateInventory.map((item) => (
-                  <option key={item.prize_id} value={item.prize_id}>
-                    {item.prize_name}
-                  </option>
-                ))}
-              </select>
+              我有（未发货奖品）
+              <div className="mt-2 space-y-2 rounded-2xl border border-white/10 bg-white/5 p-3">
+                <div className="text-xs text-violet-100/55">可同时勾选多个奖品，当前已选 {selectedExchangeItemIds.length} 件</div>
+                <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
+                  {exchangeableInventory.map((item) => (
+                    <label className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2" key={item.id}>
+                      <input
+                        checked={selectedExchangeItemIds.includes(item.id)}
+                        className="h-4 w-4 accent-violet-400"
+                        onChange={(event) => {
+                          const current = exchangeForm.getValues('have_inventory_item_ids');
+                          const next = event.target.checked ? [...current, item.id] : current.filter((value) => value !== item.id);
+                          exchangeForm.setValue('have_inventory_item_ids', next, { shouldValidate: true, shouldDirty: true });
+                        }}
+                        type="checkbox"
+                      />
+                      <span className="min-w-0 flex-1 truncate text-sm text-white">{item.prize_name}</span>
+                    </label>
+                  ))}
+                  {exchangeableInventory.length === 0 ? <p className="text-xs text-violet-100/45">暂无可用于交换的奖品</p> : null}
+                </div>
+              </div>
             </label>
             <label className="mb-4 block text-sm text-violet-100/70">
               我想要

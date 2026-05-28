@@ -34,6 +34,7 @@ import type {
   ClaimFirstRechargeResult,
   ComposePuzzleResult,
   CreateTeamRequest,
+  DeliverySubmitResult,
   DrawConfig,
   DrawRecord,
   DrawStatistics,
@@ -397,6 +398,15 @@ export class LotteryService {
   public userInventory(token: string): readonly UserInventory[] {
     const user = this.store.userFromToken(token);
     return this.store.getUserInventory(user.id);
+  }
+
+  public submitDeliveryRequest(token: string, itemIds: readonly string[]): DeliverySubmitResult {
+    const user = this.assetUserFromToken(token);
+    return this.store.submitDeliveryRequest(user.id, itemIds);
+  }
+
+  public fulfillDeliveryRequestByUserId(userId: string, requestId: string, amountCents: number): DeliverySubmitResult {
+    return this.store.fulfillDeliveryRequest(userId, requestId, amountCents);
   }
 
   public seriesProgress(token: string, campaignId: string): SeriesProgress {

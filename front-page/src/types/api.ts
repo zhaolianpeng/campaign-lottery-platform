@@ -6,6 +6,7 @@ export type ExchangeOfferStatus = 'pending' | 'matched' | 'completed' | 'cancell
 export type UserStatus = 'pending_phone' | 'active' | 'frozen' | 'disabled' | 'cancelled';
 export type RegisterSource = 'wechat' | 'mobile' | 'guest' | 'admin_import';
 export type TabKey = 'series' | 'inventory' | 'exchange' | 'rank' | 'member' | 'shop' | 'social' | 'puzzle';
+export type InventoryDeliveryStatus = 'not_requested' | 'pending_payment' | 'pending_fulfillment' | 'fulfilled';
 
 export interface CEndFeatureToggles {
   readonly series: boolean;
@@ -258,14 +259,28 @@ export interface UserInventory {
   readonly prize_level: string;
   readonly campaign_id: string;
   readonly source: 'draw' | 'exchange' | 'redeem' | 'collection_reward';
+  readonly shipping_value_yuan: number;
+  readonly delivery_status: InventoryDeliveryStatus;
+  readonly delivery_request_id?: string;
+  readonly exchange_offer_id?: string;
   readonly created_at: string;
+}
+
+export interface DeliverySubmitResult {
+  readonly delivery_request_id: string;
+  readonly subtotal_yuan: number;
+  readonly shipping_fee_cents: number;
+  readonly free_shipping: boolean;
+  readonly requires_payment: boolean;
+  readonly submitted_item_count: number;
 }
 
 export interface ExchangeOffer {
   readonly id: string;
   readonly user_id: string;
   readonly user_nickname?: string;
-  readonly have_prize_id: string;
+  readonly have_inventory_item_ids: readonly string[];
+  readonly have_prize_ids: readonly string[];
   readonly have_prize_name: string;
   readonly want_prize_id: string;
   readonly want_prize_name: string;

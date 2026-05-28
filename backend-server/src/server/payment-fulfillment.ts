@@ -106,6 +106,9 @@ async function runBusinessFulfillment(
     case 'points_pack':
       return service.grantPointsPackByUserId(userId, businessId, amountCents);
 
+    case 'inventory_delivery':
+      return service.fulfillDeliveryRequestByUserId(userId, businessId, amountCents);
+
     default:
       throw new AppError('unsupported_business_type', `不支持的业务类型: ${businessType}`, 400);
   }

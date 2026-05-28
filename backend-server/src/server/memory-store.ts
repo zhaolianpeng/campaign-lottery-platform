@@ -51,6 +51,8 @@ import type {
   CreateTeamRequest,
   DrawRecord,
   DrawStatistics,
+  DeliveryRequest,
+  DeliverySubmitResult,
   ExchangeOffer,
   ExchangeOfferMutation,
   FirstRechargePack,
@@ -66,6 +68,7 @@ import type {
   InviteRecord,
   InviteStats,
   ItemType,
+  InventoryDeliveryStatus,
   LeaderboardEntry,
   MonthCardPurchaseResult,
   MonthCardStatus,
@@ -111,6 +114,8 @@ import type {
 
 const POINTS_PER_DRAW = 100;
 const PHONE_CODE_TTL_MS = 5 * 60 * 1000;
+const FREE_SHIPPING_THRESHOLD_YUAN = 98;
+const SHIPPING_FEE_CENTS = 990;
 
 interface PhoneVerificationCode {
   readonly id: number;
@@ -269,6 +274,7 @@ export class MemoryStore {
   private readonly drawRecords: DrawRecord[] = [];
   private readonly quotaUsed = new Map<string, number>();
   private readonly inventory: UserInventory[] = [];
+  private readonly deliveryRequests: DeliveryRequest[] = [];
   private readonly exchangeOffers: ExchangeOffer[] = [];
   private readonly members = new Map<string, UserMember>();
   private readonly pointsLogs: UserPointsLog[] = [];
@@ -792,25 +798,8 @@ export class MemoryStore {
     };
     this.drawRecords.unshift(record);
     this.inventory.unshift({
-      id: randomId('inv'),
-      user_id: userId,
-      prize_id: prize.id,
-      prize_name: prize.name,
-      prize_level: prize.level,
+      ...this.createInventoryItem(userId, prize, 'draw', record.drawn_at),
       campaign_id: campaignId,
-      source: 'draw',
-      created_at: record.drawn_at,
-    });
-    this.fulfillmentTaskItems.unshift({
-      id: this.fulfillmentTaskItems.length + 1,
-      draw_record_id: record.id,
-      user_id: userId,
-      prize_id: prize.id,
-      status: 'pending',
-      payload_json: JSON.stringify({ prize_name: prize.name }),
-      operator_note: '',
-      created_at: record.drawn_at,
-      updated_at: record.drawn_at,
     });
     return record;
   }
@@ -891,7 +880,7 @@ export class MemoryStore {
   }
 
   public getUserInventory(userId: string): readonly UserInventory[] {
-    return this.inventory.filter((item) => item.user_id === userId).map((item) => ({ ...item }));
+    return this.inventory.filter((item) => item.user_id === userId).map((item) => this.normalizeInventoryItem(item));
   }
 
   private finalizeAnonymousWinClaim(userId: string, pendingWin: PendingAnonymousWin): DrawRecord {
@@ -907,27 +896,88 @@ export class MemoryStore {
     };
     this.drawRecords.unshift(record);
     this.inventory.unshift({
-      id: randomId('inv'),
-      user_id: userId,
-      prize_id: pendingWin.prize_id,
-      prize_name: pendingWin.prize_name,
-      prize_level: pendingWin.prize_level,
+      ...this.createInventoryItem(
+        userId,
+        {
+          ...this.findPrize(pendingWin.prize_id),
+          level: pendingWin.prize_level,
+          name: pendingWin.prize_name,
+        },
+        'draw',
+        pendingWin.drawn_at,
+      ),
       campaign_id: pendingWin.campaign_id,
-      source: 'draw',
-      created_at: pendingWin.drawn_at,
-    });
-    this.fulfillmentTaskItems.unshift({
-      id: this.fulfillmentTaskItems.length + 1,
-      draw_record_id: record.id,
-      user_id: userId,
-      prize_id: pendingWin.prize_id,
-      status: 'pending',
-      payload_json: JSON.stringify({ prize_name: pendingWin.prize_name }),
-      operator_note: 'anonymous draw claimed after login',
-      created_at: pendingWin.drawn_at,
-      updated_at: pendingWin.drawn_at,
     });
     return record;
+  }
+
+  public submitDeliveryRequest(userId: string, itemIds: readonly string[]): DeliverySubmitResult {
+    const uniqueItemIds = [...new Set(itemIds.map((itemId) => itemId.trim()).filter(Boolean))];
+    if (!uniqueItemIds.length) {
+      throw new AppError('delivery_items_required', '请先勾选需要发货的奖品', 400);
+    }
+
+    const selected = this.inventory
+      .map((item, index) => ({ item: this.normalizeInventoryItem(item), index }))
+      .filter(({ item }) => item.user_id === userId && uniqueItemIds.includes(item.id));
+
+    if (selected.length !== uniqueItemIds.length) {
+      throw new AppError('delivery_item_not_found', '部分奖品不存在或已失效', 404);
+    }
+    if (selected.some(({ item }) => item.delivery_status !== 'not_requested')) {
+      throw new AppError('delivery_status_invalid', '所选奖品已在发货流程中，请刷新后重试', 400);
+    }
+    if (selected.some(({ item }) => item.exchange_offer_id)) {
+      throw new AppError('delivery_item_listed_exchange', '已挂到交换市场的奖品不能提交发货', 400);
+    }
+
+    const subtotalYuan = Number(selected.reduce((sum, { item }) => sum + item.shipping_value_yuan, 0).toFixed(2));
+    const shippingFeeCents = subtotalYuan >= FREE_SHIPPING_THRESHOLD_YUAN ? 0 : SHIPPING_FEE_CENTS;
+    const createdAt = nowISO();
+    const request: DeliveryRequest = {
+      id: randomId('ship'),
+      user_id: userId,
+      item_ids: uniqueItemIds,
+      subtotal_yuan: subtotalYuan,
+      shipping_fee_cents: shippingFeeCents,
+      status: shippingFeeCents > 0 ? 'pending_payment' : 'pending_fulfillment',
+      created_at: createdAt,
+      updated_at: createdAt,
+      paid_at: shippingFeeCents > 0 ? undefined : createdAt,
+    };
+    this.deliveryRequests.unshift(request);
+
+    if (shippingFeeCents > 0) {
+      for (const { index, item } of selected) {
+        this.inventory[index] = {
+          ...item,
+          delivery_status: 'pending_payment',
+          delivery_request_id: request.id,
+        };
+      }
+      return this.deliverySubmitResult(request);
+    }
+
+    const activated = this.activateDeliveryRequest(request.id, createdAt);
+    return this.deliverySubmitResult(activated);
+  }
+
+  public fulfillDeliveryRequest(userId: string, requestId: string, amountCents: number): DeliverySubmitResult {
+    const request = this.deliveryRequests.find((item) => item.id === requestId && item.user_id === userId);
+    if (!request) {
+      throw notFound;
+    }
+    if (request.status === 'pending_fulfillment' || request.status === 'fulfilled') {
+      return this.deliverySubmitResult(request);
+    }
+    if (request.shipping_fee_cents <= 0) {
+      throw new AppError('delivery_fee_not_required', '当前发货申请无需支付运费', 400);
+    }
+    if (request.shipping_fee_cents !== amountCents) {
+      throw new AppError('payment_amount_mismatch', '运费支付金额不匹配', 400);
+    }
+    const activated = this.activateDeliveryRequest(request.id, nowISO());
+    return this.deliverySubmitResult(activated);
   }
 
   public getSeriesProgress(userId: string, campaignId: string, campaignName: string): SeriesProgress {
@@ -973,20 +1023,48 @@ export class MemoryStore {
   }
 
   public createExchangeOffer(userId: string, input: ExchangeOfferMutation): ExchangeOffer {
-    const have = this.findPrize(input.have_prize_id);
+    const uniqueInventoryIds = [...new Set(input.have_inventory_item_ids.map((itemId) => itemId.trim()).filter(Boolean))];
+    if (!uniqueInventoryIds.length) {
+      throw new AppError('exchange_item_required', '请先勾选用于交换的奖品', 400);
+    }
+
+    const selectedInventory = uniqueInventoryIds.map((itemId) => {
+      const index = this.inventory.findIndex((item) => item.id === itemId && item.user_id === userId);
+      const inventoryItem = index >= 0 ? this.normalizeInventoryItem(this.inventory[index]) : null;
+      if (!inventoryItem) {
+        throw notFound;
+      }
+      if (inventoryItem.delivery_status !== 'not_requested') {
+        throw new AppError('exchange_item_delivery_locked', '发货流程中的奖品不能挂交换', 400);
+      }
+      if (inventoryItem.exchange_offer_id) {
+        throw new AppError('exchange_item_already_listed', '所选奖品中有部分已挂到交换市场', 400);
+      }
+      return { index, item: inventoryItem };
+    });
+
     const want = this.findPrize(input.want_prize_id);
     const user = this.users.get(userId);
+    const havePrizeNames = selectedInventory.map(({ item }) => item.prize_name);
+    const havePrizeIds = selectedInventory.map(({ item }) => item.prize_id);
     const offer: ExchangeOffer = {
       id: randomId('ex'),
       user_id: userId,
       user_nickname: user?.nickname ?? '',
-      have_prize_id: have.id,
-      have_prize_name: have.name,
+      have_inventory_item_ids: selectedInventory.map(({ item }) => item.id),
+      have_prize_ids: havePrizeIds,
+      have_prize_name: havePrizeNames.join(' + '),
       want_prize_id: want.id,
       want_prize_name: want.name,
       status: 'pending',
       created_at: nowISO(),
     };
+    for (const { index, item } of selectedInventory) {
+      this.inventory[index] = {
+        ...item,
+        exchange_offer_id: offer.id,
+      };
+    }
     this.exchangeOffers.unshift(offer);
     return offer;
   }
@@ -996,7 +1074,15 @@ export class MemoryStore {
     if (index < 0) {
       throw notFound;
     }
-    this.exchangeOffers[index] = { ...this.exchangeOffers[index], status: 'cancelled' };
+    const offer = this.exchangeOffers[index];
+    this.exchangeOffers[index] = { ...offer, status: 'cancelled' };
+    for (const inventoryItemId of offer.have_inventory_item_ids) {
+      const inventoryIndex = this.inventory.findIndex((item) => item.id === inventoryItemId && item.user_id === userId);
+      if (inventoryIndex >= 0) {
+        const inventoryItem = this.normalizeInventoryItem(this.inventory[inventoryIndex]);
+        this.inventory[inventoryIndex] = { ...inventoryItem, exchange_offer_id: undefined };
+      }
+    }
   }
 
   public acceptExchangeOffer(userId: string, offerId: string): ExchangeOffer {
@@ -1005,6 +1091,65 @@ export class MemoryStore {
     if (!offer || offer.status !== 'pending' || offer.user_id === userId) {
       throw notFound;
     }
+
+    const offerInventories = offer.have_inventory_item_ids.map((inventoryItemId) => {
+      const inventoryIndex = this.inventory.findIndex((item) => item.id === inventoryItemId && item.user_id === offer.user_id);
+      const inventoryItem = inventoryIndex >= 0 ? this.normalizeInventoryItem(this.inventory[inventoryIndex]) : null;
+      if (!inventoryItem || inventoryItem.exchange_offer_id !== offer.id) {
+        throw new AppError('exchange_offer_unavailable', '该交换挂单已失效', 400);
+      }
+      return { index: inventoryIndex, item: inventoryItem };
+    });
+
+    const takerInventoryIndex = this.inventory.findIndex((item) => {
+      const current = this.normalizeInventoryItem(item);
+      return (
+        current.user_id === userId &&
+        current.prize_id === offer.want_prize_id &&
+        current.delivery_status === 'not_requested' &&
+        !current.exchange_offer_id
+      );
+    });
+    const takerInventory = takerInventoryIndex >= 0 ? this.normalizeInventoryItem(this.inventory[takerInventoryIndex]) : null;
+    if (!takerInventory) {
+      throw new AppError('exchange_target_missing', '你当前没有可交换的目标奖品', 400);
+    }
+
+    const primaryOfferInventory = offerInventories[0]?.item;
+    if (!primaryOfferInventory) {
+      throw new AppError('exchange_offer_unavailable', '该交换挂单已失效', 400);
+    }
+
+    this.inventory[offerInventories[0].index] = {
+      ...primaryOfferInventory,
+      user_id: offer.user_id,
+      prize_id: takerInventory.prize_id,
+      prize_name: takerInventory.prize_name,
+      prize_level: takerInventory.prize_level,
+      campaign_id: takerInventory.campaign_id,
+      source: 'exchange',
+      shipping_value_yuan: this.prizeShippingValueYuan(takerInventory.prize_level),
+      exchange_offer_id: undefined,
+    };
+    for (const { index, item } of offerInventories.slice(1)) {
+      this.inventory[index] = {
+        ...item,
+        user_id,
+        source: 'exchange',
+        exchange_offer_id: undefined,
+      };
+    }
+    this.inventory[takerInventoryIndex] = {
+      ...takerInventory,
+      user_id,
+      prize_id: primaryOfferInventory.prize_id,
+      prize_name: primaryOfferInventory.prize_name,
+      prize_level: primaryOfferInventory.prize_level,
+      campaign_id: primaryOfferInventory.campaign_id,
+      source: 'exchange',
+      shipping_value_yuan: this.prizeShippingValueYuan(primaryOfferInventory.prize_level),
+      exchange_offer_id: undefined,
+    };
     this.exchangeOffers[index] = { ...offer, status: 'completed' };
     return this.exchangeOffers[index];
   }
@@ -1045,14 +1190,7 @@ export class MemoryStore {
     this.updateUserMember(updated);
     this.logPoints(userId, -cost, updated.points, 'redeem', `兑换 ${prize.name}`);
     this.inventory.unshift({
-      id: randomId('inv'),
-      user_id: userId,
-      prize_id: prize.id,
-      prize_name: prize.name,
-      prize_level: prize.level,
-      campaign_id: prize.campaign_id,
-      source: 'redeem',
-      created_at: nowISO(),
+      ...this.createInventoryItem(userId, prize, 'redeem'),
     });
 
     return {
@@ -1675,6 +1813,20 @@ export class MemoryStore {
       fulfilled_at: input.status === 'fulfilled' ? nowISO() : task.fulfilled_at,
     };
     this.fulfillmentTaskItems[index] = updated;
+    if (updated.status === 'fulfilled' && updated.inventory_item_id) {
+      const inventoryIndex = this.inventory.findIndex((item) => item.id === updated.inventory_item_id);
+      if (inventoryIndex >= 0) {
+        const inventoryItem = this.normalizeInventoryItem(this.inventory[inventoryIndex]);
+        this.inventory[inventoryIndex] = {
+          ...inventoryItem,
+          delivery_status: 'fulfilled',
+          delivery_request_id: updated.delivery_request_id ?? inventoryItem.delivery_request_id,
+        };
+      }
+      if (updated.delivery_request_id) {
+        this.refreshDeliveryRequestStatus(updated.delivery_request_id);
+      }
+    }
     return updated;
   }
 
@@ -1955,14 +2107,7 @@ export class MemoryStore {
     }
     const result = this.prizeList(input.campaign_id).find((candidate) => candidate.level === nextLevel) ?? source;
     this.inventory.unshift({
-      id: randomId('inv'),
-      user_id: userId,
-      prize_id: result.id,
-      prize_name: result.name,
-      prize_level: result.level,
-      campaign_id: result.campaign_id,
-      source: 'collection_reward',
-      created_at: nowISO(),
+      ...this.createInventoryItem(userId, result, 'collection_reward'),
     });
     return {
       source_prize_id: source.id,
@@ -2135,14 +2280,17 @@ export class MemoryStore {
     const newItemId = randomId('inv');
     this.gifts[index] = { ...gift, status: 'received', received_at: nowISO() };
     this.inventory.unshift({
-      id: newItemId,
-      user_id: userId,
-      prize_id: gift.prize_id,
-      prize_name: gift.prize_name,
-      prize_level: gift.prize_level,
-      campaign_id: this.findPrize(gift.prize_id).campaign_id,
-      source: 'exchange',
-      created_at: nowISO(),
+      ...this.createInventoryItem(
+        userId,
+        {
+          ...this.findPrize(gift.prize_id),
+          name: gift.prize_name,
+          level: gift.prize_level,
+        },
+        'exchange',
+        nowISO(),
+        newItemId,
+      ),
     });
     return { gift_id: giftId, prize_name: gift.prize_name, prize_level: gift.prize_level, new_item_id: newItemId };
   }
@@ -2753,6 +2901,126 @@ export class MemoryStore {
       return 500;
     }
     return 200;
+  }
+
+  private prizeShippingValueYuan(level: string): number {
+    if (level === 'limited' || level === 'S') {
+      return 99;
+    }
+    if (level === 'secret' || level === 'A') {
+      return 69;
+    }
+    if (level === 'rare') {
+      return 39;
+    }
+    return 19;
+  }
+
+  private normalizeInventoryItem(item: UserInventory): UserInventory {
+    return {
+      ...item,
+      shipping_value_yuan: item.shipping_value_yuan ?? this.prizeShippingValueYuan(item.prize_level),
+      delivery_status: (item.delivery_status ?? 'not_requested') as InventoryDeliveryStatus,
+    };
+  }
+
+  private createInventoryItem(
+    userId: string,
+    prize: Prize,
+    source: UserInventory['source'],
+    createdAt = nowISO(),
+    inventoryItemId = randomId('inv'),
+  ): UserInventory {
+    return {
+      id: inventoryItemId,
+      user_id: userId,
+      prize_id: prize.id,
+      prize_name: prize.name,
+      prize_level: prize.level,
+      campaign_id: prize.campaign_id,
+      source,
+      shipping_value_yuan: this.prizeShippingValueYuan(prize.level),
+      delivery_status: 'not_requested',
+      created_at: createdAt,
+    };
+  }
+
+  private deliverySubmitResult(request: DeliveryRequest): DeliverySubmitResult {
+    return {
+      delivery_request_id: request.id,
+      subtotal_yuan: request.subtotal_yuan,
+      shipping_fee_cents: request.shipping_fee_cents,
+      free_shipping: request.shipping_fee_cents === 0,
+      requires_payment: request.status === 'pending_payment',
+      submitted_item_count: request.item_ids.length,
+    };
+  }
+
+  private activateDeliveryRequest(requestId: string, paidAt: string): DeliveryRequest {
+    const requestIndex = this.deliveryRequests.findIndex((item) => item.id === requestId);
+    const request = this.deliveryRequests[requestIndex];
+    if (!request) {
+      throw notFound;
+    }
+
+    const updatedRequest: DeliveryRequest = {
+      ...request,
+      status: 'pending_fulfillment',
+      updated_at: paidAt,
+      paid_at: request.shipping_fee_cents > 0 ? paidAt : request.paid_at ?? paidAt,
+    };
+    this.deliveryRequests[requestIndex] = updatedRequest;
+
+    for (const itemId of request.item_ids) {
+      const inventoryIndex = this.inventory.findIndex((item) => item.id === itemId && item.user_id === request.user_id);
+      if (inventoryIndex < 0) {
+        continue;
+      }
+      const inventoryItem = this.normalizeInventoryItem(this.inventory[inventoryIndex]);
+      this.inventory[inventoryIndex] = {
+        ...inventoryItem,
+        delivery_status: 'pending_fulfillment',
+        delivery_request_id: request.id,
+      };
+      if (!this.fulfillmentTaskItems.some((task) => task.inventory_item_id === itemId)) {
+        this.fulfillmentTaskItems.unshift({
+          id: this.fulfillmentTaskItems.length + 1,
+          draw_record_id: request.id,
+          user_id: request.user_id,
+          prize_id: inventoryItem.prize_id,
+          inventory_item_id: itemId,
+          delivery_request_id: request.id,
+          status: 'pending',
+          payload_json: JSON.stringify({
+            prize_name: inventoryItem.prize_name,
+            subtotal_yuan: request.subtotal_yuan,
+            shipping_fee_cents: request.shipping_fee_cents,
+            free_shipping: request.shipping_fee_cents === 0,
+          }),
+          operator_note: request.shipping_fee_cents === 0 ? '满额包邮自动提交发货' : '用户已支付运费，待发货',
+          created_at: paidAt,
+          updated_at: paidAt,
+        });
+      }
+    }
+
+    return updatedRequest;
+  }
+
+  private refreshDeliveryRequestStatus(requestId: string): void {
+    const requestIndex = this.deliveryRequests.findIndex((item) => item.id === requestId);
+    const request = this.deliveryRequests[requestIndex];
+    if (!request) {
+      return;
+    }
+    const relatedTasks = this.fulfillmentTaskItems.filter((task) => task.delivery_request_id === requestId);
+    if (relatedTasks.length > 0 && relatedTasks.every((task) => task.status === 'fulfilled')) {
+      this.deliveryRequests[requestIndex] = {
+        ...request,
+        status: 'fulfilled',
+        updated_at: nowISO(),
+      };
+    }
   }
 
   public spendDrawPoints(userId: string, drawCount: number): UserMember {
