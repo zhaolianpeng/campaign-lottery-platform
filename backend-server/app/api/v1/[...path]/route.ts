@@ -263,7 +263,11 @@ async function readJson(request: Request): Promise<unknown> {
   if (!request.body) {
     return {};
   }
-  return request.json();
+  const text = await request.text();
+  if (!text.trim()) {
+    return {};
+  }
+  return JSON.parse(text) as unknown;
 }
 
 async function segments(context: RouteContext): Promise<readonly string[]> {
