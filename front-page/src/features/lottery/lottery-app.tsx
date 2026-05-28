@@ -138,6 +138,11 @@ interface CampaignProbabilities {
   } | null;
 }
 
+type PrizePreview = Prize & {
+  readonly base_prob?: string;
+  readonly owned_count?: number;
+};
+
 const tabs = LOTTERY_TABS;
 
 export function LotteryApp(): React.ReactNode {
@@ -172,6 +177,7 @@ export function LotteryApp(): React.ReactNode {
   const [payingCash, setPayingCash] = useState(false);
   const [showPointsRechargeModal, setShowPointsRechargeModal] = useState(false);
   const [customRechargeYuan, setCustomRechargeYuan] = useState('10');
+  const [selectedPrizePreview, setSelectedPrizePreview] = useState<PrizePreview | null>(null);
   const pointsRequestSeedRef = useRef(0);
 
   useEffect(() => {
@@ -1248,6 +1254,7 @@ export function LotteryApp(): React.ReactNode {
               onClick={() => {
                 setSelectedCampaignId(null);
                 setLastDraw(null);
+                setSelectedPrizePreview(null);
               }}
               type="button"
             >
@@ -1315,11 +1322,19 @@ export function LotteryApp(): React.ReactNode {
                 const meta = levelMeta(prize.level);
                 const probabilityPrize = prize as Prize & { readonly base_prob?: string };
                 return (
-                  <div
-                    className={`relative rounded-2xl border bg-white/[0.06] px-2 py-3 text-center ${
+                  <button
+                    className={`relative rounded-2xl border bg-white/[0.06] px-2 py-3 text-center transition active:scale-[0.98] ${
                       owned ? 'border-violet-300/60 shadow-[0_0_18px_rgba(167,139,250,0.22)]' : 'border-white/10'
                     }`}
                     key={prize.id}
+                    onClick={() =>
+                      setSelectedPrizePreview({
+                        ...prize,
+                        base_prob: probabilityPrize.base_prob,
+                        owned_count: owned?.count,
+                      })
+                    }
+                    type="button"
                   >
                     {owned ? (
                       <span className="absolute -right-1 -top-1 rounded-full bg-pink-400 px-1.5 text-[10px] font-bold text-white">
@@ -1338,7 +1353,7 @@ export function LotteryApp(): React.ReactNode {
                     {probabilityPrize.base_prob ? (
                       <div className="text-[11px] text-violet-100/45">{probabilityPrize.base_prob}</div>
                     ) : null}
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -2180,6 +2195,45 @@ export function LotteryApp(): React.ReactNode {
               </div>
             ))}
             {!publicInventoryQuery.data?.length ? <p className="text-violet-100/60">暂无公开收藏</p> : null}
+          </div>
+        </Modal>
+      ) : null}
+
+      {selectedPrizePreview ? (
+        <Modal onClose={() => setSelectedPrizePreview(null)} title="奖品预览" wide>
+          <div className="space-y-4">
+            <div className="overflow-hidden rounded-[28px] border border-white/10 bg-[linear-gradient(160deg,rgba(167,139,250,0.18),rgba(15,23,42,0.88))] p-5 text-center shadow-[0_20px_60px_rgba(0,0,0,0.4)]">
+              <div className="mx-auto flex h-48 w-full max-w-[240px] items-center justify-center rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+                <PrizeMedia
+                  fallbackClassName="flex h-40 w-40 items-center justify-center text-7xl"
+                  imageClassName="h-40 w-40 rounded-[22px] border border-white/10 object-cover"
+                  imageUrl={selectedPrizePreview.image_url}
+                  meta={levelMeta(selectedPrizePreview.level)}
+                  name={selectedPrizePreview.name}
+                />
+              </div>
+              <div className={`mt-4 text-xl font-black ${levelMeta(selectedPrizePreview.level).className}`}>{selectedPrizePreview.name}</div>
+              <div className="mt-2 text-sm text-violet-100/70">{selectedCampaign?.campaign.name ?? '盲盒奖品'}</div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-3 text-center">
+                <div className="text-[11px] uppercase tracking-[0.18em] text-violet-100/45">Rarity</div>
+                <div className={`mt-2 font-bold ${levelMeta(selectedPrizePreview.level).className}`}>{levelMeta(selectedPrizePreview.level).label}</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-3 text-center">
+                <div className="text-[11px] uppercase tracking-[0.18em] text-violet-100/45">Probability</div>
+                <div className="mt-2 font-bold text-white">{selectedPrizePreview.base_prob ?? '待公示'}</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-3 text-center">
+                <div className="text-[11px] uppercase tracking-[0.18em] text-violet-100/45">Owned</div>
+                <div className="mt-2 font-bold text-white">x{selectedPrizePreview.owned_count ?? 0}</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-3 text-center">
+                <div className="text-[11px] uppercase tracking-[0.18em] text-violet-100/45">Campaign</div>
+                <div className="mt-2 font-bold text-white">{selectedCampaign?.prizes.length ?? 0} 款</div>
+              </div>
+            </div>
           </div>
         </Modal>
       ) : null}
