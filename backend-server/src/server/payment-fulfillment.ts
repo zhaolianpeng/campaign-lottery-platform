@@ -1,7 +1,7 @@
-import type { CardType } from './types.js';
-import { AppError, paymentForbidden, paymentNotPaid, unauthorized } from './errors.js';
-import { getPaymentModule, isPaymentEnabled } from './payment-gateway.js';
-import { getService } from './singleton.js';
+import type { CardType } from './types';
+import { AppError, paymentForbidden, paymentNotPaid, unauthorized } from './errors';
+import { getPaymentModule, isPaymentEnabled } from './payment-gateway';
+import { getService } from './singleton';
 
 export const MEMBERSHIP_CASH_CENTS: Record<CardType, number> = {
   weekly: 990,
