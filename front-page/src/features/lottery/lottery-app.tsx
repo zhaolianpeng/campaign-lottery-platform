@@ -12,7 +12,6 @@ import {
   RefreshCw,
   Share2,
   ShoppingBag,
-  Sparkles,
   Trophy,
   UserRound,
   Users,
@@ -81,7 +80,7 @@ import {
   MONTHLY_CARD_POINTS,
 } from '@/features/lottery/constants';
 import { useAssetGate } from '@/features/lottery/hooks/use-asset-gate';
-import { levelMeta, PrizeMedia } from '@/features/lottery/rarity';
+import { levelMeta, PrizeMedia } from './rarity';
 import {
   anonymousDrawHeaders,
   drawGlowClass,
@@ -95,16 +94,11 @@ import {
   pointsByYuan,
 } from '@/features/lottery/utils';
 
-const loginSchema = z.object({
-  nickname: z.string().max(32).optional(),
-});
-
 const exchangeSchema = z.object({
   have_inventory_item_ids: z.array(z.string().min(1)).min(1),
   want_prize_id: z.string().min(1),
 });
 
-type LoginFormValues = z.infer<typeof loginSchema>;
 type ExchangeFormValues = z.infer<typeof exchangeSchema>;
 
 interface LoginPayload {
@@ -256,11 +250,6 @@ export function LotteryApp(): React.ReactNode {
     }
   }
 
-  const loginForm = useForm<LoginFormValues>({
-    resolver: zodResolver(loginSchema),
-    defaultValues: { nickname: '' },
-  });
-
   const exchangeForm = useForm<ExchangeFormValues>({
     resolver: zodResolver(exchangeSchema),
     defaultValues: { have_inventory_item_ids: [], want_prize_id: '' },
@@ -387,29 +376,6 @@ export function LotteryApp(): React.ReactNode {
       }
     }
   };
-
-  const loginMutation = useMutation({
-    mutationFn: (values: LoginFormValues) => {
-      const inviteFrom = typeof window !== 'undefined' ? window.localStorage.getItem(INVITE_FROM_KEY) : null;
-      return apiRequest<LoginPayload>('/api/v1/auth/guest-login', '', {
-        method: 'POST',
-        body: JSON.stringify({ ...values, invite_from: inviteFrom || undefined }),
-        headers: anonymousDrawHeaders(anonymousDrawToken),
-      });
-    },
-    onSuccess: (payload) => {
-      setToken(payload.session.token);
-      setNickname(payload.user.nickname);
-      setViewerMode(false);
-      if (payload.claimed_pending_draws) {
-        window.alert(`已将 ${payload.claimed_pending_draws} 个中奖结果放入你的盲盒。`);
-      }
-      setAnonymousDrawToken('');
-      if (typeof window !== 'undefined') {
-        window.localStorage.removeItem(INVITE_FROM_KEY);
-      }
-    },
-  });
 
   const sendPhoneCodeMutation = useMutation({
     mutationFn: (phone: string) =>
@@ -1114,37 +1080,15 @@ export function LotteryApp(): React.ReactNode {
             </div>
             <h1 className="text-4xl font-black tracking-tight text-white">BOX·MAGIC</h1>
             <p className="mt-3 text-sm text-violet-100/70">盲盒抽奖平台 · 开启你的收藏之旅</p>
-            <form
-              className="mt-7 space-y-3 text-left"
-              onSubmit={loginForm.handleSubmit((values) => loginMutation.mutate(values))}
-            >
-              <input
-                className="w-full rounded-2xl border-0 bg-white px-4 py-3 text-[15px] text-slate-950 outline-none ring-2 ring-transparent placeholder:text-slate-400 focus:ring-violet-300"
-                placeholder="输入昵称（留空随机）"
-                {...loginForm.register('nickname')}
-              />
-              <button
-                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#f472b6,#a78bfa)] px-4 py-3 font-bold text-white disabled:opacity-60"
-                disabled={loginMutation.isPending}
-                type="submit"
-              >
-                {loginMutation.isPending ? <Loader2 className="animate-spin" size={18} /> : <Sparkles size={18} />}
-                开始抽盒
-              </button>
-              {loginMutation.error ? (
-                <p className="rounded-xl border border-red-300/20 bg-red-500/15 px-4 py-3 text-sm text-red-100">
-                  {loginMutation.error.message}
-                </p>
-              ) : null}
-            </form>
             <button
-              className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-3 font-medium text-white hover:bg-white/[0.10]"
+              className="mt-7 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-3 font-medium text-white hover:bg-white/[0.10]"
               onClick={() => setViewerMode(true)}
               type="button"
             >
               <Gift size={18} />
               先试玩抽盒
             </button>
+            <p className="mt-3 text-xs text-violet-100/60">试玩模式仅支持抽盒体验，其他功能需登录后使用。</p>
             {anonymousDrawToken ? (
               <p className="mt-3 rounded-xl border border-amber-300/20 bg-amber-500/15 px-4 py-3 text-sm text-amber-100">
                 你有未领取的中奖结果，登录后会自动放入盲盒仓库。

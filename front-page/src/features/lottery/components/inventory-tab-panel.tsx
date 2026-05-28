@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { BlendResult, RedeemResult, UserInventory } from '@/types/api';
 import { levelMeta, PrizeMedia } from '../rarity';
 import { EmptyState, SkeletonCards } from './ui/empty-state';
@@ -68,13 +68,14 @@ export function InventoryTabPanel({
     [items],
   );
 
-  useEffect(() => {
-    setSelectedItemIds((current) => current.filter((itemId) => deliverableIds.has(itemId)));
-  }, [deliverableIds]);
+  const validSelectedItemIds = useMemo(
+    () => selectedItemIds.filter((itemId) => deliverableIds.has(itemId)),
+    [deliverableIds, selectedItemIds],
+  );
 
   const selectedItems = useMemo(
-    () => detailItems.filter((item) => selectedItemIds.includes(item.id) && item.delivery_status === 'not_requested'),
-    [detailItems, selectedItemIds],
+    () => detailItems.filter((item) => validSelectedItemIds.includes(item.id) && item.delivery_status === 'not_requested'),
+    [detailItems, validSelectedItemIds],
   );
 
   const deliverySubtotalYuan = useMemo(
@@ -218,7 +219,7 @@ export function InventoryTabPanel({
                   key={item.id}
                 >
                   <input
-                    checked={selectedItemIds.includes(item.id)}
+                    checked={validSelectedItemIds.includes(item.id)}
                     className="h-4 w-4 accent-violet-400"
                     disabled={!selectable || deliveryPending}
                     onChange={() => toggleItemSelection(item.id)}
@@ -260,7 +261,7 @@ export function InventoryTabPanel({
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 className="rounded-full border border-white/15 px-4 py-2 text-xs text-violet-100 disabled:opacity-50"
-                disabled={deliveryPending || selectedItemIds.length === 0}
+                disabled={deliveryPending || validSelectedItemIds.length === 0}
                 onClick={() => setSelectedItemIds([])}
                 type="button"
               >

@@ -9,14 +9,13 @@ export default function PayOrderPage(): React.ReactNode {
   const params = useParams<{ orderNo: string }>();
   const router = useRouter();
   const orderNo = params.orderNo;
-  const [status, setStatus] = useState<'pending' | 'paid' | 'error'>('pending');
-  const [message, setMessage] = useState('正在确认支付结果…');
+  const token = typeof window !== 'undefined' ? (window.sessionStorage.getItem('campaign-lottery-token') ?? '') : '';
+  const invalidAccess = !token || !orderNo;
+  const [status, setStatus] = useState<'pending' | 'paid' | 'error'>(invalidAccess ? 'error' : 'pending');
+  const [message, setMessage] = useState(invalidAccess ? '请先登录后再查看支付结果' : '正在确认支付结果…');
 
   useEffect(() => {
-    const token = typeof window !== 'undefined' ? window.sessionStorage.getItem('campaign-lottery-token') : '';
-    if (!token || !orderNo) {
-      setStatus('error');
-      setMessage('请先登录后再查看支付结果');
+    if (invalidAccess) {
       return;
     }
     void (async () => {
@@ -36,7 +35,7 @@ export default function PayOrderPage(): React.ReactNode {
         setMessage(error instanceof Error ? error.message : '支付确认失败');
       }
     })();
-  }, [orderNo]);
+  }, [invalidAccess, orderNo, token]);
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-[#0d0f1a] px-4 text-center text-violet-50">
