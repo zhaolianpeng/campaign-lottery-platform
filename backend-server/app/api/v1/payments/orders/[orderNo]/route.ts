@@ -23,7 +23,7 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
     const no = await orderNo(context);
     const syncChannel = new URL(request.url).searchParams.get('sync_channel') === 'true';
 
-    const payment = getPaymentModule();
+    const payment = await getPaymentModule();
     const { order, channelPaid } = await payment.queryOrder(no, { syncChannel });
 
     if (order.userId !== userId) {

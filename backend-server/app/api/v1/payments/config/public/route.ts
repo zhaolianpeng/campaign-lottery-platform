@@ -1,7 +1,6 @@
-import { loadPaymentConfig } from '@campaign-lottery/payment-module';
 import { fail, ok } from '@/server/api-response';
 import { paymentOptions } from '@/server/payment-http';
-import { getPaymentConfigPath, isPaymentEnabled, toAppError } from '@/server/payment-gateway';
+import { isPaymentEnabled, loadPaymentConfigFromRuntime, toAppError } from '@/server/payment-gateway';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,7 +17,7 @@ export async function GET(): Promise<Response> {
 
     if (isPaymentEnabled()) {
       try {
-        const config = loadPaymentConfig(getPaymentConfigPath());
+        const config = await loadPaymentConfigFromRuntime();
         channels = {
           wechat: Boolean(config.wechat?.enabled),
           alipay: Boolean(config.alipay?.enabled),

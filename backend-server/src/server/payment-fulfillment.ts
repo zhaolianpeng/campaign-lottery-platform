@@ -30,7 +30,7 @@ export async function fulfillPaymentOrder(token: string, orderNo: string): Promi
 
   const service = await getService();
   const user = service.currentUser(token);
-  const payment = getPaymentModule();
+  const payment = await getPaymentModule();
   const order = payment.getOrder(orderNo);
 
   if (order.userId !== user.id) {

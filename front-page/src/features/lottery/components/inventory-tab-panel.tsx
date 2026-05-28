@@ -12,6 +12,7 @@ const SHIPPING_FEE_CENTS = 990;
 export function InventoryTabPanel({
   items,
   prizeImageUrlById,
+  campaignNameById,
   isLoading,
   viewMode,
   onViewModeChange,
@@ -25,6 +26,7 @@ export function InventoryTabPanel({
 }: {
   readonly items: readonly UserInventory[] | undefined;
   readonly prizeImageUrlById: ReadonlyMap<string, string>;
+  readonly campaignNameById: ReadonlyMap<string, string>;
   readonly isLoading: boolean;
   readonly viewMode: 'list' | 'grouped';
   onViewModeChange: (mode: 'list' | 'grouped') => void;
@@ -117,14 +119,17 @@ export function InventoryTabPanel({
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-lg font-black text-white">我的收藏</h2>
+        <div>
+          <h2 className="text-lg font-black text-white">我的图鉴</h2>
+          <p className="mt-1 text-xs text-violet-100/60">按系列查看已收集款式，也可以切换到按奖品浏览。</p>
+        </div>
         <div className="flex gap-2">
           <button
             className={`rounded-full px-3 py-1.5 text-xs ${viewMode === 'list' ? 'bg-violet-500 text-white' : 'border border-white/15 bg-white/10'}`}
             onClick={() => onViewModeChange('list')}
             type="button"
           >
-            列表
+            按奖品
           </button>
           <button
             className={`rounded-full px-3 py-1.5 text-xs ${viewMode === 'grouped' ? 'bg-violet-500 text-white' : 'border border-white/15 bg-white/10'}`}
@@ -141,7 +146,9 @@ export function InventoryTabPanel({
         <div className="space-y-4">
           {grouped.map((group) => (
             <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3" key={group.campaign_id}>
-              <div className="mb-2 text-xs font-bold text-violet-200/80">系列 {group.campaign_id.slice(0, 8)}</div>
+              <div className="mb-2 text-xs font-bold text-violet-200/80">
+                {campaignNameById.get(group.campaign_id) ?? `系列 ${group.campaign_id.slice(0, 8)}`}
+              </div>
               <div className="grid grid-cols-3 gap-2">
                 {[...group.items.values()].map(({ item, count }) => {
                   const meta = levelMeta(item.prize_level);
@@ -152,7 +159,7 @@ export function InventoryTabPanel({
                       key={item.id}
                       meta={meta}
                       onBlend={() => setBlendTarget(item)}
-                      onRedeem={() => void onRedeem(item.prize_id).then(() => window.alert('兑换成功'))}
+                      onRedeem={() => void onRedeem(item.prize_id).then(() => window.alert('积分兑换成功'))}
                       prizeImageUrl={prizeImageUrlById.get(item.prize_id)}
                       redeemPending={redeemPending}
                       showBlend={count >= 3}
@@ -176,7 +183,7 @@ export function InventoryTabPanel({
                 key={item.id}
                 meta={meta}
                 onBlend={() => setBlendTarget(item)}
-                onRedeem={() => void onRedeem(item.prize_id).then(() => window.alert('兑换成功'))}
+                onRedeem={() => void onRedeem(item.prize_id).then(() => window.alert('积分兑换成功'))}
                 prizeImageUrl={prizeImageUrlById.get(item.prize_id)}
                 redeemPending={redeemPending}
                 showBlend={count >= 3}
@@ -396,7 +403,7 @@ function InventoryCard({
           </button>
         ) : null}
         <button className="rounded-lg border border-white/15 py-1 text-[10px] text-violet-100" disabled={redeemPending} onClick={onRedeem} type="button">
-          兑换
+          积分兑换
         </button>
       </div>
     </div>

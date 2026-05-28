@@ -3,6 +3,8 @@ import type { ComponentType } from 'react';
 import type { CEndFeatureToggles, TabKey } from '@/types/api';
 
 export const ANONYMOUS_DRAW_TOKEN_KEY = 'campaign-lottery-anonymous-draw-token';
+export const USER_TOKEN_KEY = 'campaign-lottery-user-token';
+export const USER_NICKNAME_KEY = 'campaign-lottery-user-nickname';
 export const DEVICE_ID_KEY = 'campaign-lottery-device-id';
 export const INVITE_FROM_KEY = 'campaign-lottery-invite-from';
 

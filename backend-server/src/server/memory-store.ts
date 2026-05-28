@@ -1,4 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import {
+  BUILTIN_STARRY_ACTIVITY_BANNER_URL,
+  BUILTIN_STARRY_CAMPAIGN_BANNER_URL,
+  BUILTIN_SUMMER_ACTIVITY_BANNER_URL,
+  BUILTIN_SUMMER_CAMPAIGN_BANNER_URL,
+} from './builtin-banner-assets';
 import { syncAdminConfigWithMysql } from './admin-config-repository';
 import { getAppConfig } from './config';
 import {
@@ -2580,12 +2586,12 @@ export class MemoryStore {
         daily_draw_limit: 3,
         requires_phone_login: false,
         miss_weight: 86,
-        banner_image_url: '',
+        banner_image_url: BUILTIN_SUMMER_CAMPAIGN_BANNER_URL,
         campaign_summary: '新用户登录即可参与，中奖后进入发奖队列，支持后台配置库存和概率。',
       },
       {
-        id: 'series_starry_001',
-        name: '星空系列',
+        id: 'camp_blindbox_001',
+        name: '梦幻星辰系列盲盒',
         slug: 'starry-night',
         status: 'online',
         starts_at: startsAt,
@@ -2593,8 +2599,8 @@ export class MemoryStore {
         daily_draw_limit: 10,
         requires_phone_login: false,
         miss_weight: 72,
-        banner_image_url: '',
-        campaign_summary: '收集星光、月色与银河，集齐普通款和隐藏款可解锁限定奖励。',
+        banner_image_url: BUILTIN_STARRY_CAMPAIGN_BANNER_URL,
+        campaign_summary: '收集12款星辰主题公仔，集齐全套可兑换隐藏款，活动期内隐藏款概率提升。',
         pity_config: {
           enabled: true,
           soft_pity_n: 20,
@@ -2627,17 +2633,17 @@ export class MemoryStore {
       { id: 'prize_002', campaign_id: 'camp_launch_001', name: '20元优惠券', level: 'A', stock: 60, probability_weight: 18, status: 'active' },
       { id: 'prize_003', campaign_id: 'camp_launch_001', name: '品牌周边礼盒', level: 'B', stock: 20, probability_weight: 8, status: 'active' },
     ]);
-    this.prizesByCampaign.set('series_starry_001', [
-      { id: 'star_01', campaign_id: 'series_starry_001', name: '繁星点点', level: 'common', stock: 500, probability_weight: 15, status: 'active' },
-      { id: 'star_02', campaign_id: 'series_starry_001', name: '月光如水', level: 'common', stock: 500, probability_weight: 15, status: 'active' },
-      { id: 'star_03', campaign_id: 'series_starry_001', name: '银河之泪', level: 'common', stock: 400, probability_weight: 14, status: 'active' },
-      { id: 'star_04', campaign_id: 'series_starry_001', name: '流星划过', level: 'common', stock: 400, probability_weight: 12, status: 'active' },
-      { id: 'star_05', campaign_id: 'series_starry_001', name: '极光之舞', level: 'common', stock: 300, probability_weight: 10, status: 'active' },
-      { id: 'star_06', campaign_id: 'series_starry_001', name: '星云之眼', level: 'common', stock: 300, probability_weight: 6, status: 'active' },
-      { id: 'star_07', campaign_id: 'series_starry_001', name: '星月传说', level: 'rare', stock: 100, probability_weight: 15, status: 'active' },
-      { id: 'star_08', campaign_id: 'series_starry_001', name: '北极光', level: 'rare', stock: 80, probability_weight: 10, status: 'active' },
-      { id: 'star_09', campaign_id: 'series_starry_001', name: '宇宙之心', level: 'secret', stock: 10, probability_weight: 2, status: 'active' },
-      { id: 'star_10', campaign_id: 'series_starry_001', name: '星辰大海', level: 'limited', stock: 3, probability_weight: 1, status: 'active' },
+    this.prizesByCampaign.set('camp_blindbox_001', [
+      { id: 'star_01', campaign_id: 'camp_blindbox_001', name: '繁星点点', level: 'common', stock: 500, probability_weight: 15, status: 'active' },
+      { id: 'star_02', campaign_id: 'camp_blindbox_001', name: '月光如水', level: 'common', stock: 500, probability_weight: 15, status: 'active' },
+      { id: 'star_03', campaign_id: 'camp_blindbox_001', name: '银河之泪', level: 'common', stock: 400, probability_weight: 14, status: 'active' },
+      { id: 'star_04', campaign_id: 'camp_blindbox_001', name: '流星划过', level: 'common', stock: 400, probability_weight: 12, status: 'active' },
+      { id: 'star_05', campaign_id: 'camp_blindbox_001', name: '极光之舞', level: 'common', stock: 300, probability_weight: 10, status: 'active' },
+      { id: 'star_06', campaign_id: 'camp_blindbox_001', name: '星云之眼', level: 'common', stock: 300, probability_weight: 6, status: 'active' },
+      { id: 'star_07', campaign_id: 'camp_blindbox_001', name: '星月传说', level: 'rare', stock: 100, probability_weight: 15, status: 'active' },
+      { id: 'star_08', campaign_id: 'camp_blindbox_001', name: '北极光', level: 'rare', stock: 80, probability_weight: 10, status: 'active' },
+      { id: 'star_09', campaign_id: 'camp_blindbox_001', name: '宇宙之心', level: 'secret', stock: 10, probability_weight: 2, status: 'active' },
+      { id: 'star_10', campaign_id: 'camp_blindbox_001', name: '星辰大海', level: 'limited', stock: 3, probability_weight: 1, status: 'active' },
     ]);
     this.prizesByCampaign.set('series_cat_001', [
       { id: 'cat_01', campaign_id: 'series_cat_001', name: '英短蓝猫', level: 'common', stock: 600, probability_weight: 16, status: 'active' },
@@ -2718,7 +2724,7 @@ export class MemoryStore {
       {
         id: 'puzzle_starry_week',
         name: '星空拼图周挑战',
-        campaign_id: 'series_starry_001',
+        campaign_id: 'camp_blindbox_001',
         total_pieces: 6,
         piece_names: ['星芒', '月影', '银河', '流光', '极光', '宇宙'],
         reward_type: 'points',
@@ -2746,7 +2752,7 @@ export class MemoryStore {
     this.flashSales = [
       {
         id: 'flash_starry_secret',
-        campaign_id: 'series_starry_001',
+        campaign_id: 'camp_blindbox_001',
         name: '宇宙之心限时抢购',
         description: '会员专属隐藏款限量抢购。',
         price_points: 1500,
@@ -2764,10 +2770,10 @@ export class MemoryStore {
     this.activities = [
       {
         id: 'activity_launch_week',
-        name: '开服星光周',
-        description: '参与活动领取额外积分，抽盒与收集都有奖励。',
+        name: '夏季开门红抽奖活动',
+        description: '新用户登录即可参与，中奖后进入发奖队列，支持后台配置库存和概率。',
         type: 'festival',
-        banner_url: '',
+        banner_url: BUILTIN_SUMMER_ACTIVITY_BANNER_URL,
         rules: { campaign_id: 'camp_launch_001', checkin_multiplier: 2 },
         sort_order: 1,
         status: 'active',
@@ -2778,11 +2784,11 @@ export class MemoryStore {
       },
       {
         id: 'activity_up_starry',
-        name: '星空隐藏 UP',
-        description: '宇宙之心限时概率提升。',
+        name: '梦幻星辰系列盲盒',
+        description: '宇宙之心限时概率提升，活动期内冲刺隐藏款。',
         type: 'up_pool',
-        banner_url: '',
-        rules: { campaign_id: 'camp_blindbox_001', up_campaign_id: 'camp_blindbox_001', up_prize_id: 'prize_bb_secret', up_multiplier: 3, up_level: 'secret' },
+        banner_url: BUILTIN_STARRY_ACTIVITY_BANNER_URL,
+        rules: { campaign_id: 'camp_blindbox_001', up_campaign_id: 'camp_blindbox_001', up_prize_id: 'star_09', up_multiplier: 3, up_level: 'secret' },
         sort_order: 2,
         status: 'active',
         start_at: startsAt,

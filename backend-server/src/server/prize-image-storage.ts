@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
+import { getBuiltInBannerAsset } from './builtin-banner-assets';
 
 const MAX_PRIZE_IMAGE_BYTES = 5 * 1024 * 1024;
 const SAFE_FILENAME = /^[A-Za-z0-9._-]+$/;
@@ -10,12 +11,14 @@ const EXTENSION_TO_MIME: Record<string, string> = {
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
   '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
 };
 const MIME_TO_EXTENSION: Record<string, string> = {
   'image/png': '.png',
   'image/jpeg': '.jpg',
   'image/webp': '.webp',
   'image/gif': '.gif',
+  'image/svg+xml': '.svg',
 };
 
 function uploadDir(): string {
@@ -40,7 +43,7 @@ function contentTypeForFilename(filename: string): string | null {
 export async function savePrizeImage(file: File): Promise<string> {
   const extension = resolveExtension(file);
   if (!extension) {
-    throw new Error('仅支持 PNG、JPG、WEBP、GIF 图片');
+    throw new Error('仅支持 PNG、JPG、WEBP、GIF、SVG 图片');
   }
   if (file.size <= 0) {
     throw new Error('上传文件不能为空');
@@ -59,6 +62,10 @@ export async function savePrizeImage(file: File): Promise<string> {
 export async function readPrizeImage(filename: string): Promise<{ readonly buffer: Buffer; readonly contentType: string } | null> {
   if (!SAFE_FILENAME.test(filename)) {
     return null;
+  }
+  const builtInAsset = getBuiltInBannerAsset(filename);
+  if (builtInAsset) {
+    return builtInAsset;
   }
   const contentType = contentTypeForFilename(filename);
   if (!contentType) {

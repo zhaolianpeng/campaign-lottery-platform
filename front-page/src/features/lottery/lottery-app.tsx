@@ -69,6 +69,8 @@ import { Modal } from '@/features/lottery/components/ui/modal';
 import {
   ANONYMOUS_DRAW_TOKEN_KEY,
   INVITE_FROM_KEY,
+  USER_NICKNAME_KEY,
+  USER_TOKEN_KEY,
   LOTTERY_TABS,
   MEMBER_LEVEL_BENEFITS,
   POINTS_PER_YUAN,
@@ -185,6 +187,13 @@ export function LotteryApp(): React.ReactNode {
     if (typeof window === 'undefined') {
       return;
     }
+    const storedUserToken = window.localStorage.getItem(USER_TOKEN_KEY) ?? '';
+    const storedUserNickname = window.localStorage.getItem(USER_NICKNAME_KEY) ?? '';
+    if (storedUserToken) {
+      setToken(storedUserToken);
+      setNickname(storedUserNickname);
+      setViewerMode(false);
+    }
     const storedToken = window.localStorage.getItem(ANONYMOUS_DRAW_TOKEN_KEY) ?? '';
     if (storedToken) {
       setAnonymousDrawToken(storedToken);
@@ -196,6 +205,19 @@ export function LotteryApp(): React.ReactNode {
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (token) {
+      window.localStorage.setItem(USER_TOKEN_KEY, token);
+      window.localStorage.setItem(USER_NICKNAME_KEY, nickname);
+      return;
+    }
+    window.localStorage.removeItem(USER_TOKEN_KEY);
+    window.localStorage.removeItem(USER_NICKNAME_KEY);
+  }, [nickname, token]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -565,11 +587,14 @@ export function LotteryApp(): React.ReactNode {
   function activityTargetCampaignId(item: ActivityListInfo): string | null {
     const campaigns = campaignsQuery.data ?? [];
     const targetId = item.activity.rules?.campaign_id ?? item.activity.rules?.up_campaign_id;
-    if (!targetId) {
-      return null;
+    if (targetId) {
+      const matched = campaigns.find((campaignItem) => campaignItem.campaign.id === targetId || campaignItem.campaign.slug === targetId);
+      if (matched?.campaign.id) {
+        return matched.campaign.id;
+      }
     }
-    const matched = campaigns.find((campaignItem) => campaignItem.campaign.id === targetId || campaignItem.campaign.slug === targetId);
-    return matched?.campaign.id ?? null;
+    const matchedByName = campaigns.find((campaignItem) => campaignItem.campaign.name === item.activity.name);
+    return matchedByName?.campaign.id ?? null;
   }
 
   const selectedCampaign = campaignsQuery.data?.find((item) => item.campaign.id === selectedCampaignId);
@@ -609,6 +634,36 @@ export function LotteryApp(): React.ReactNode {
     () => new Map(allPrizes.map((prize) => [prize.id, prize.image_url ?? ''])),
     [allPrizes],
   );
+
+  const campaignNameById = useMemo(
+    () => new Map((campaignsQuery.data ?? []).map((item) => [item.campaign.id, item.campaign.name])),
+    [campaignsQuery.data],
+  );
+
+  const campaignHeroImageUrlById = useMemo(
+    () =>
+      new Map(
+        (campaignsQuery.data ?? []).map((item) => [
+          item.campaign.id,
+          item.campaign.banner_image_url || item.prizes.find((prize) => prize.image_url)?.image_url || '',
+        ]),
+      ),
+    [campaignsQuery.data],
+  );
+
+    const campaignBannerMetaById = useMemo(
+      () =>
+        new Map(
+          (campaignsQuery.data ?? []).map((item) => [
+            item.campaign.id,
+            {
+              dailyDrawLimit: item.campaign.daily_draw_limit,
+              prizeCount: item.prizes.length,
+            },
+          ]),
+        ),
+      [campaignsQuery.data],
+    );
 
   const exchangeableInventory = useMemo(
     () =>
@@ -920,11 +975,41 @@ export function LotteryApp(): React.ReactNode {
     setLastDraw(null);
   }
 
+  const multiDrawCount = selectedCampaign?.campaign.daily_draw_limit === 5 ? 5 : 10;
+  const multiDrawLabel = multiDrawCount === 5 ? '五连' : '十连';
+  const multiDrawCost = multiDrawCount * 95;
+
   function handleDraw(drawCount: number): void {
     setShowBoxModal(true);
     setBoxAnimating(true);
     setLastDraw(null);
     drawMutation.mutate(drawCount);
+  }
+
+  function activityBannerFallbackClass(type: string): string {
+    switch (type) {
+      case 'festival':
+        return 'bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.45),transparent_38%),radial-gradient(circle_at_bottom_right,rgba(244,114,182,0.34),transparent_36%),linear-gradient(135deg,rgba(168,85,247,0.96),rgba(67,56,202,0.96))]';
+      case 'up_pool':
+        return 'bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.4),transparent_40%),radial-gradient(circle_at_bottom_right,rgba(167,139,250,0.34),transparent_34%),linear-gradient(135deg,rgba(59,130,246,0.96),rgba(109,40,217,0.96))]';
+      case 'flash_sale':
+        return 'bg-[radial-gradient(circle_at_top_left,rgba(251,146,60,0.42),transparent_38%),radial-gradient(circle_at_bottom_right,rgba(239,68,68,0.3),transparent_32%),linear-gradient(135deg,rgba(234,88,12,0.96),rgba(153,27,27,0.96))]';
+      default:
+        return 'bg-[radial-gradient(circle_at_top_left,rgba(244,114,182,0.32),transparent_36%),radial-gradient(circle_at_bottom_right,rgba(192,132,252,0.28),transparent_30%),linear-gradient(135deg,rgba(124,58,237,0.96),rgba(67,56,202,0.96))]';
+    }
+  }
+
+  function activityBannerAccentLabel(type: string): string {
+    switch (type) {
+      case 'festival':
+        return '活动';
+      case 'up_pool':
+        return '盲盒';
+      case 'flash_sale':
+        return '限时';
+      default:
+        return '推荐';
+    }
   }
 
   function updatePhoneLoginForm(field: keyof PhoneLoginFormValues, value: string): void {
@@ -1454,10 +1539,10 @@ export function LotteryApp(): React.ReactNode {
               <button
                 className="rounded-2xl bg-[linear-gradient(135deg,#a78bfa,#7c3aed)] px-4 py-3 font-black text-white disabled:opacity-50"
                 disabled={drawMutation.isPending || payingCash || (token ? !assetGate.canUseAssets : false)}
-                onClick={() => handleDraw(10)}
+                onClick={() => handleDraw(multiDrawCount)}
                 type="button"
               >
-                十连 950分
+                {multiDrawLabel} {multiDrawCost}分
               </button>
             </div>
             {drawMutation.error ? (
@@ -1474,32 +1559,72 @@ export function LotteryApp(): React.ReactNode {
 
             {activeTab === 'series' ? (
               <section className="space-y-3">
-                {(activitiesQuery.data ?? []).map((item) => {
-                  const targetCampaignId = activityTargetCampaignId(item);
-                  return (
-                    <button
-                      className="w-full rounded-3xl border border-pink-300/30 bg-pink-400/10 p-4 text-left transition active:scale-[0.98] disabled:cursor-default disabled:opacity-80"
-                      disabled={!targetCampaignId}
-                      key={item.activity.id}
-                      onClick={() => {
-                        if (targetCampaignId) {
-                          openCampaign(targetCampaignId);
-                        }
-                      }}
-                      type="button"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-xs font-bold text-pink-200">{item.activity.type}</div>
-                        {targetCampaignId ? <div className="text-[11px] font-semibold text-pink-100/80">点击前往盲盒活动</div> : null}
-                      </div>
-                      <h3 className="mt-1 font-black text-white">{item.activity.name}</h3>
-                      <p className="mt-1 text-sm text-violet-100/65">{item.activity.description}</p>
-                      {item.rewards?.[0] ? (
-                        <div className="mt-2 text-xs text-pink-100/80">奖励：{item.rewards[0].reward_name} x{item.rewards[0].reward_qty}</div>
-                      ) : null}
-                    </button>
-                  );
-                })}
+                {(activitiesQuery.data ?? []).length > 0 ? (
+                  <div className="grid grid-cols-2 gap-3">
+                    {(activitiesQuery.data ?? []).map((item) => {
+                      const targetCampaignId = activityTargetCampaignId(item);
+                      const activityBannerUrl = item.activity.banner_url?.trim() || (targetCampaignId ? campaignHeroImageUrlById.get(targetCampaignId) ?? '' : '');
+                      const activityBannerClass = activityBannerFallbackClass(item.activity.type);
+                      const activityAccentLabel = activityBannerAccentLabel(item.activity.type);
+                      const activityCampaignMeta = targetCampaignId ? campaignBannerMetaById.get(targetCampaignId) : undefined;
+                      return (
+                        <button
+                          className={`group relative min-h-40 overflow-hidden rounded-3xl border border-pink-300/30 text-left transition active:scale-[0.98] disabled:cursor-default disabled:opacity-80 ${activityBannerUrl ? 'bg-pink-400/10' : activityBannerClass}`}
+                          disabled={!targetCampaignId}
+                          key={item.activity.id}
+                          onClick={() => {
+                            if (targetCampaignId) {
+                              openCampaign(targetCampaignId);
+                            }
+                          }}
+                          type="button"
+                        >
+                          {activityBannerUrl ? (
+                            <img
+                              alt={item.activity.name}
+                              className="absolute inset-0 h-full w-full scale-[1.03] object-cover transition duration-500 group-hover:scale-[1.07]"
+                              src={apiAssetUrl(activityBannerUrl)}
+                            />
+                          ) : null}
+                          {activityBannerUrl ? <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.18),transparent_34%)]" /> : null}
+                          {!activityBannerUrl ? (
+                            <>
+                              <div className="absolute inset-y-0 right-0 w-[42%] bg-white/12 [clip-path:polygon(24%_0,100%_0,100%_100%,0_100%)]" />
+                              <div className="absolute -left-6 top-3 h-24 w-24 rounded-full bg-white/12 blur-2xl" />
+                            </>
+                          ) : null}
+                          <div className="absolute right-4 top-4 flex min-h-16 min-w-16 items-center justify-center rounded-[22px] border border-white/20 bg-white/12 px-3 text-center text-sm font-black tracking-[0.2em] text-white/90 backdrop-blur-sm">{activityAccentLabel}</div>
+                          <div className="absolute bottom-4 right-4 rounded-full border border-white/18 bg-white/12 px-3 py-1 text-[11px] font-semibold text-white/90 backdrop-blur-sm">立即前往</div>
+                          {activityCampaignMeta ? (
+                            <div className="absolute right-4 top-24 rounded-2xl border border-white/12 bg-black/16 px-3 py-2 text-right backdrop-blur-sm">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/55">Series</div>
+                              <div className="mt-1 text-base font-black text-white">{activityCampaignMeta.prizeCount}</div>
+                              <div className="text-[11px] text-white/72">目标款式</div>
+                            </div>
+                          ) : null}
+                          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(45,22,82,0.05),rgba(45,22,82,0.48)_54%,rgba(45,22,82,0.9))]" />
+                          <div className="relative flex h-full min-h-36 flex-col justify-between p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="rounded-full bg-pink-300 px-2 py-0.5 text-[11px] font-bold text-white">{item.activity.status}</div>
+                              {targetCampaignId ? <div className="text-[11px] font-semibold text-pink-100/80">点击前往盲盒活动</div> : null}
+                            </div>
+                            <div>
+                              <h3 className="mt-2 line-clamp-2 font-black text-white">{item.activity.name}</h3>
+                              <p className="mt-2 line-clamp-3 text-sm text-violet-100/75">{item.activity.description}</p>
+                              <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-white/85">
+                                {activityCampaignMeta ? <div className="rounded-full border border-white/15 bg-black/15 px-2.5 py-1 backdrop-blur-sm">目标 {activityCampaignMeta.prizeCount} 款</div> : null}
+                                {activityCampaignMeta ? <div className="rounded-full border border-white/15 bg-black/15 px-2.5 py-1 backdrop-blur-sm">每日 {activityCampaignMeta.dailyDrawLimit} 次</div> : null}
+                              </div>
+                              {item.rewards?.[0] ? (
+                                <div className="mt-2 text-xs text-pink-100/80">奖励：{item.rewards[0].reward_name} x{item.rewards[0].reward_qty}</div>
+                              ) : null}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
                 {campaignsQuery.isLoading ? <SkeletonCards /> : null}
                 {(campaignsQuery.data ?? []).map((item) => (
                   <button
@@ -1535,6 +1660,7 @@ export function LotteryApp(): React.ReactNode {
             {activeTab === 'inventory' ? (
               <InventoryTabPanel
                 blendPending={blendMutation.isPending}
+                campaignNameById={campaignNameById}
                 deliveryPending={deliveryMutation.isPending || payingCash}
                 isLoading={inventoryQuery.isLoading}
                 items={inventoryQuery.data}

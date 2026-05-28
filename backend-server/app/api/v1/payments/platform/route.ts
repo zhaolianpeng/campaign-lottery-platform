@@ -2,10 +2,10 @@ import { z } from 'zod';
 import {
   detectClientPlatform,
   detectPlatformForChannel,
-} from '@campaign-lottery/payment-module';
+  toAppError,
+} from '@/server/payment-gateway';
 import { fail, ok } from '@/server/api-response';
 import { paymentOptions, userAgentFromRequest } from '@/server/payment-http';
-import { toAppError } from '@/server/payment-gateway';
 
 export const dynamic = 'force-dynamic';
 

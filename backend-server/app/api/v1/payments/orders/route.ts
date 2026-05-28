@@ -31,7 +31,7 @@ export async function POST(request: Request): Promise<Response> {
   return withPaymentApi(async () => {
     const userId = await requireUserId(request);
     const input = createCheckoutSchema.parse(await request.json());
-    const payment = getPaymentModule();
+    const payment = await getPaymentModule();
 
     const checkout = await payment.createCheckout({
       userId,

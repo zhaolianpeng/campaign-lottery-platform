@@ -53,7 +53,7 @@ export async function withPaymentNotify(
       headers[key] = value;
     });
 
-    const payment = getPaymentModule();
+    const payment = await getPaymentModule();
     const result = await payment.handlePaymentNotify(channel, headers, rawBody);
 
     return new Response(result.channelResponseBody, {
