@@ -18,7 +18,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useState, type ComponentType } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { ApiRequestError, apiAssetUrl, apiPostRequest, apiRequest } from '@/client/api';
@@ -109,8 +109,11 @@ interface TabItem {
 const phonePattern = /^1[3-9]\d{9}$/;
 
 const MONTHLY_CARD_CASH_CENTS = 2800;
+const MONTHLY_CARD_POINTS = 2800;
 const BATTLE_PASS_CASH_CENTS = 6800;
-const POINTS_RECHARGE_CASH_CENTS = 1000;
+const BATTLE_PASS_POINTS = 680;
+const POINTS_PER_YUAN = 100;
+const POINTS_RECHARGE_FIXED_YUAN_SKUS = [1, 6, 12, 30, 68] as const;
 
 const tabs: readonly TabItem[] = [
   { key: 'series', label: '系列', icon: Home },
@@ -157,6 +160,13 @@ function mapDrawErrorMessage(error: unknown): Error {
     return new Error('当前盲盒要求先绑定手机号后才能抽取，请先完成手机号登录或绑定。');
   }
   return error instanceof Error ? error : new Error('抽奖失败，请稍后重试');
+}
+
+function mapPurchaseErrorMessage(error: unknown): Error {
+  if (error instanceof ApiRequestError && error.code === 'insufficient_points') {
+    return new Error(error.message === 'insufficient points' ? '积分不足，无法完成购买' : error.message);
+  }
+  return error instanceof Error ? error : new Error('购买失败，请稍后重试');
 }
 
 function anonymousDrawHeaders(token: string): HeadersInit | undefined {
@@ -256,6 +266,9 @@ export function LotteryApp(): React.ReactNode {
   const [phoneCodeMessage, setPhoneCodeMessage] = useState('');
   const [qrCheckout, setQrCheckout] = useState<QrcodeCheckout | null>(null);
   const [payingCash, setPayingCash] = useState(false);
+  const [showPointsRechargeModal, setShowPointsRechargeModal] = useState(false);
+  const [customRechargeYuan, setCustomRechargeYuan] = useState('10');
+  const pointsRequestSeedRef = useRef(0);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -765,6 +778,10 @@ export function LotteryApp(): React.ReactNode {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['member', token] });
       void queryClient.invalidateQueries({ queryKey: ['month-card', token] });
+      void queryClient.invalidateQueries({ queryKey: ['points-log', token] });
+    },
+    onError: (error) => {
+      window.alert(mapPurchaseErrorMessage(error).message);
     },
   });
 
@@ -910,6 +927,49 @@ export function LotteryApp(): React.ReactNode {
     }
     setWechatError('');
     phoneLoginMutation.mutate({ phone, code });
+  }
+
+  function pointsByYuan(yuan: number): number {
+    return Math.max(1, Math.floor(yuan * POINTS_PER_YUAN));
+  }
+
+  function startPointsRecharge(yuanAmount: number): void {
+    if (!token) {
+      return;
+    }
+    if (!paymentEnabled) {
+      window.alert('支付功能未启用');
+      return;
+    }
+    const normalizedYuan = Math.round(yuanAmount * 100) / 100;
+    if (!Number.isFinite(normalizedYuan) || normalizedYuan <= 0) {
+      window.alert('请输入正确的充值金额');
+      return;
+    }
+    const amountCents = Math.round(normalizedYuan * 100);
+    pointsRequestSeedRef.current += 1;
+    setShowPointsRechargeModal(false);
+    void runCashPay({
+      client_request_id: `points_${amountCents}_${pointsRequestSeedRef.current}`,
+      channel: 'wechat',
+      amount_cents: amountCents,
+      subject: '积分充值',
+      business_type: 'points_pack',
+      business_id: `recharge_${amountCents}`,
+      product_snapshot: {
+        name: `积分充值 ${normalizedYuan.toFixed(2)}元`,
+        points: pointsByYuan(normalizedYuan),
+      },
+    });
+  }
+
+  function handleCustomPointsRecharge(): void {
+    const parsed = Number(customRechargeYuan.trim());
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      window.alert('请输入大于 0 的金额');
+      return;
+    }
+    startPointsRecharge(parsed);
   }
 
   if (!token && !viewerMode) {
@@ -1111,9 +1171,14 @@ export function LotteryApp(): React.ReactNode {
           </div>
           {token ? (
             <>
-              <span className="rounded-full bg-[linear-gradient(135deg,#fbbf24,#f59e0b)] px-3 py-1 text-xs font-black text-slate-950">
+              <button
+                className="rounded-full bg-[linear-gradient(135deg,#fbbf24,#f59e0b)] px-3 py-1 text-xs font-black text-slate-950 transition hover:brightness-105 disabled:opacity-60"
+                disabled={payingCash}
+                onClick={() => setShowPointsRechargeModal(true)}
+                type="button"
+              >
                 {memberQuery.data?.points ?? 0}
-              </span>
+              </button>
               <button
                 className="rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                 disabled={checkInMutation.isPending}
@@ -1250,25 +1315,6 @@ export function LotteryApp(): React.ReactNode {
                 十连 950分
               </button>
             </div>
-            {paymentEnabled ? (
-              <button
-                className="mt-2 w-full rounded-2xl border border-amber-300/30 bg-amber-400/15 px-4 py-2 text-sm font-bold text-amber-100 disabled:opacity-50"
-                disabled={payingCash}
-                onClick={() =>
-                  void runCashPay({
-                    client_request_id: `points_${Date.now()}`,
-                    channel: 'wechat',
-                    amount_cents: POINTS_RECHARGE_CASH_CENTS,
-                    subject: '积分充值',
-                    business_type: 'points_pack',
-                    business_id: 'recharge_100',
-                  })
-                }
-                type="button"
-              >
-                现金充值积分 {formatCentsToYuan(POINTS_RECHARGE_CASH_CENTS)}
-              </button>
-            ) : null}
             {drawMutation.error ? (
               <p className="rounded-xl border border-red-300/20 bg-red-500/15 px-4 py-3 text-sm text-red-100">
                 {drawMutation.error.message}
@@ -1469,7 +1515,9 @@ export function LotteryApp(): React.ReactNode {
                     {battlePassQuery.data?.season?.name ?? '暂无赛季'} · 等级 {battlePassQuery.data?.user_pass?.level ?? 1}
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {paymentEnabled ? (
+                    {monthCardQuery.data?.has_card ? (
+                      <span className="self-center text-xs text-emerald-300">已开通月卡</span>
+                    ) : paymentEnabled ? (
                       <button
                         className="rounded-2xl bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50"
                         disabled={payingCash}
@@ -1490,11 +1538,19 @@ export function LotteryApp(): React.ReactNode {
                     ) : (
                       <button
                         className="rounded-2xl bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50"
-                        disabled={buyMonthCardMutation.isPending}
+                        disabled={
+                          buyMonthCardMutation.isPending ||
+                          (memberQuery.data?.points ?? 0) < MONTHLY_CARD_POINTS
+                        }
                         onClick={() => buyMonthCardMutation.mutate('monthly')}
+                        title={
+                          (memberQuery.data?.points ?? 0) < MONTHLY_CARD_POINTS
+                            ? `需要 ${MONTHLY_CARD_POINTS} 积分，当前 ${memberQuery.data?.points ?? 0} 积分`
+                            : undefined
+                        }
                         type="button"
                       >
-                        积分购买月卡
+                        积分购买月卡（{MONTHLY_CARD_POINTS}）
                       </button>
                     )}
                     {battlePassQuery.data?.user_pass?.pass_type !== 'paid' ? (
@@ -1518,17 +1574,37 @@ export function LotteryApp(): React.ReactNode {
                         </button>
                       ) : (
                         <button
-                          className="rounded-2xl border border-violet-300/40 bg-violet-500/20 px-3 py-2 text-xs font-bold text-violet-100"
-                          onClick={() => apiRequest('/api/v1/battle-pass/buy', token, { method: 'POST' }).then(() => queryClient.invalidateQueries({ queryKey: ['battle-pass', token] }))}
+                          className="rounded-2xl border border-violet-300/40 bg-violet-500/20 px-3 py-2 text-xs font-bold text-violet-100 disabled:opacity-50"
+                          disabled={(memberQuery.data?.points ?? 0) < BATTLE_PASS_POINTS}
+                          onClick={() =>
+                            apiRequest('/api/v1/battle-pass/buy', token, { method: 'POST' })
+                              .then(() => {
+                                void queryClient.invalidateQueries({ queryKey: ['battle-pass', token] });
+                                void queryClient.invalidateQueries({ queryKey: ['member', token] });
+                              })
+                              .catch((error) => {
+                                window.alert(mapPurchaseErrorMessage(error).message);
+                              })
+                          }
+                          title={
+                            (memberQuery.data?.points ?? 0) < BATTLE_PASS_POINTS
+                              ? `需要 ${BATTLE_PASS_POINTS} 积分，当前 ${memberQuery.data?.points ?? 0} 积分`
+                              : undefined
+                          }
                           type="button"
                         >
-                          积分购买战令
+                          积分购买战令（{BATTLE_PASS_POINTS}）
                         </button>
                       )
                     ) : (
                       <span className="self-center text-xs text-emerald-300">已开通付费战令</span>
                     )}
                   </div>
+                  {!paymentEnabled && !monthCardQuery.data?.has_card && (memberQuery.data?.points ?? 0) < MONTHLY_CARD_POINTS ? (
+                    <p className="mt-2 text-xs text-amber-200/80">
+                      月卡需 {MONTHLY_CARD_POINTS} 积分，当前 {memberQuery.data?.points ?? 0} 积分。可通过签到、分享或商店获取积分。
+                    </p>
+                  ) : null}
                 </div>
                 <div>
                   <h3 className="mb-2 text-base font-black text-white">积分变动</h3>
@@ -1888,6 +1964,62 @@ export function LotteryApp(): React.ReactNode {
               </p>
             ) : null}
           </form>
+        </div>
+      ) : null}
+
+      {showPointsRechargeModal ? (
+        <div className="fixed inset-0 z-[55] flex items-end bg-black/70 p-3 backdrop-blur-md sm:items-center sm:justify-center">
+          <div className="w-full rounded-[28px] border border-white/15 bg-[linear-gradient(160deg,#1a1040,#0f2027)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.55)] sm:max-w-[380px]">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-black text-white">积分充值</h3>
+              <button className="rounded-full bg-white/10 p-2" onClick={() => setShowPointsRechargeModal(false)} type="button">
+                <X size={16} />
+              </button>
+            </div>
+
+            <p className="mb-3 text-xs text-violet-100/65">兑换规则：1 元 = 100 分</p>
+            <div className="grid grid-cols-2 gap-2">
+              {POINTS_RECHARGE_FIXED_YUAN_SKUS.map((yuan) => (
+                <button
+                  className="rounded-2xl border border-white/10 bg-white/[0.06] p-3 text-left transition hover:bg-white/[0.1] disabled:opacity-50"
+                  disabled={payingCash || !paymentEnabled}
+                  key={yuan}
+                  onClick={() => startPointsRecharge(yuan)}
+                  type="button"
+                >
+                  <div className="text-sm font-black text-white">￥{yuan}</div>
+                  <div className="mt-1 text-xs text-amber-200">{pointsByYuan(yuan)} 积分</div>
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.05] p-3">
+              <div className="text-sm font-semibold text-white">自定义金额</div>
+              <div className="mt-2 flex gap-2">
+                <input
+                  className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white px-3 py-2 text-sm text-slate-950 outline-none ring-2 ring-transparent focus:ring-violet-300"
+                  inputMode="decimal"
+                  min="0.01"
+                  onChange={(event) => setCustomRechargeYuan(event.target.value)}
+                  placeholder="输入金额（元）"
+                  value={customRechargeYuan}
+                />
+                <button
+                  className="rounded-xl bg-[linear-gradient(135deg,#f472b6,#a78bfa)] px-3 py-2 text-sm font-bold text-white disabled:opacity-50"
+                  disabled={payingCash || !paymentEnabled}
+                  onClick={handleCustomPointsRecharge}
+                  type="button"
+                >
+                  充值
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-violet-100/65">
+                预计到账：{Number.isFinite(Number(customRechargeYuan)) && Number(customRechargeYuan) > 0 ? pointsByYuan(Number(customRechargeYuan)) : 0} 积分
+              </p>
+            </div>
+
+            {!paymentEnabled ? <p className="mt-3 text-xs text-amber-200/90">当前支付通道未启用，暂不可充值。</p> : null}
+          </div>
         </div>
       ) : null}
     </main>

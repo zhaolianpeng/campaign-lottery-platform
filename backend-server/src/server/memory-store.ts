@@ -1644,7 +1644,11 @@ export class MemoryStore {
     const config = cardConfigs[input.card_type];
     const member = this.getUserMember(userId);
     if (member.points < config.price) {
-      throw insufficientPoints;
+      throw new AppError(
+        'insufficient_points',
+        `积分不足：需要 ${config.price} 积分，当前 ${member.points} 积分`,
+        409,
+      );
     }
     const updated = { ...member, points: member.points - config.price, total_spent: member.total_spent + config.price };
     this.updateUserMember(updated);
