@@ -131,6 +131,9 @@ export function createPaymentModule(options: PaymentModuleOptions = {}): Payment
       });
 
       store.markPending(order.orderNo);
+      if (config.mock) {
+        store.markPaid(order.orderNo, `mock_${order.orderNo}`, new Date().toISOString());
+      }
 
       const platform = detectClientPlatform(input.userAgent);
       const base = {

@@ -22,6 +22,7 @@ type PaymentRuntimeModule = {
 };
 
 type ResolvedPaymentConfig = {
+  readonly mock?: boolean;
   readonly alipay?: { readonly enabled?: boolean } | null;
   readonly wechat?: { readonly enabled?: boolean } | null;
 };

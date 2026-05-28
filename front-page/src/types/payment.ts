@@ -8,6 +8,7 @@ export interface PaymentPublicConfig {
     readonly wechat: boolean;
     readonly alipay: boolean;
   };
+  readonly mock: boolean;
 }
 
 export interface CheckoutBase {

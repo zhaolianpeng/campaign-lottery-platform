@@ -111,6 +111,11 @@ export async function runPaymentCheckout(options: RunPaymentCheckoutOptions): Pr
     channel,
   });
 
+  if (config.mock) {
+    await fulfillPaymentOrder(options.token, checkout.order_no);
+    return checkout.order_no;
+  }
+
   if (checkout.presentation === 'qrcode' && options.onQrcode) {
     await options.onQrcode(checkout);
     return checkout.order_no;

@@ -14,6 +14,7 @@ export async function GET(): Promise<Response> {
       wechat: false,
       alipay: false,
     };
+    let mock = false;
 
     if (isPaymentEnabled()) {
       try {
@@ -22,14 +23,17 @@ export async function GET(): Promise<Response> {
           wechat: Boolean(config.wechat?.enabled),
           alipay: Boolean(config.alipay?.enabled),
         };
+        mock = Boolean(config.mock);
       } catch {
         channels = { wechat: false, alipay: false };
+        mock = false;
       }
     }
 
     return ok('payment public config', {
       enabled: isPaymentEnabled(),
       channels,
+      mock,
     });
   } catch (error) {
     return fail(toAppError(error));
