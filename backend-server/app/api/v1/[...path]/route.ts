@@ -508,14 +508,25 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
 
 export async function POST(request: Request, context: RouteContext): Promise<Response> {
   try {
+    const path = await segments(context);
+    const token = bearerToken(request);
+
+    if (path.join('/') === 'blindbox/exchange-offers') {
+      const body = await readJson(request);
+      const parsed = exchangeOfferSchema.safeParse(body);
+      if (parsed.success) {
+        const service = await getService();
+        return ok('exchange offer created', service.createExchangeOffer(token, parsed.data), 201);
+      }
+      return ok('exchange offers', (await getService()).exchangeOffers());
+    }
+
     const readResponse = await handleReadRequest(request, context);
     if (readResponse) {
       return readResponse;
     }
 
-    const path = await segments(context);
     const service = await getService();
-    const token = bearerToken(request);
     const guestDrawToken = anonymousDrawToken(request);
     const body = await readJson(request);
 
@@ -564,9 +575,6 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
         await replacePendingAnonymousWins(result.anonymous_draw_token, service.pendingAnonymousWins(result.anonymous_draw_token));
       }
       return ok('blind box draw completed', result);
-    }
-    if (path.join('/') === 'blindbox/exchange-offers') {
-      return ok('exchange offer created', service.createExchangeOffer(token, exchangeOfferSchema.parse(body)), 201);
     }
     if (path[0] === 'blindbox' && path[1] === 'exchange-offers' && path[2] && path[3] === 'accept') {
       return ok('exchange offer accepted', service.acceptExchangeOffer(token, path[2]));

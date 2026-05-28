@@ -75,6 +75,7 @@ import type {
   PendingAnonymousWin,
   PityConfig,
   Prize,
+  PrizeLevel,
   PrizeMutation,
   PrizeSummary,
   PuzzleInfo,
@@ -900,7 +901,7 @@ export class MemoryStore {
         userId,
         {
           ...this.findPrize(pendingWin.prize_id),
-          level: pendingWin.prize_level,
+          level: pendingWin.prize_level as PrizeLevel,
           name: pendingWin.prize_name,
         },
         'draw',
@@ -1134,14 +1135,14 @@ export class MemoryStore {
     for (const { index, item } of offerInventories.slice(1)) {
       this.inventory[index] = {
         ...item,
-        user_id,
+        user_id: userId,
         source: 'exchange',
         exchange_offer_id: undefined,
       };
     }
     this.inventory[takerInventoryIndex] = {
       ...takerInventory,
-      user_id,
+      user_id: userId,
       prize_id: primaryOfferInventory.prize_id,
       prize_name: primaryOfferInventory.prize_name,
       prize_level: primaryOfferInventory.prize_level,
@@ -2285,7 +2286,7 @@ export class MemoryStore {
         {
           ...this.findPrize(gift.prize_id),
           name: gift.prize_name,
-          level: gift.prize_level,
+          level: gift.prize_level as PrizeLevel,
         },
         'exchange',
         nowISO(),
