@@ -4,6 +4,8 @@ export interface ApiEnvelope<T> {
   readonly data: T;
 }
 
+export const AUTH_EXPIRED_EVENT = 'lottery:auth-expired';
+
 export class ApiRequestError extends Error {
   public readonly code: string;
   public readonly status: number;
@@ -29,6 +31,14 @@ export function apiAssetUrl(path: string): string {
   return apiUrl(path);
 }
 
+function normalizeAuthExpiredMessage(message: string | undefined): string {
+  const trimmed = message?.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'unauthorized') {
+    return '登录状态已失效，请重新登录后继续。';
+  }
+  return trimmed;
+}
+
 export async function apiRequest<T>(
   path: string,
   token: string,
@@ -49,6 +59,17 @@ export async function apiRequest<T>(
   });
   const payload = (await response.json()) as ApiEnvelope<T>;
   if (!response.ok || payload.code !== 'ok') {
+    if (response.status === 401 && token && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent(AUTH_EXPIRED_EVENT, {
+          detail: {
+            path,
+            code: payload.code || 'request_failed',
+            message: normalizeAuthExpiredMessage(payload.message),
+          },
+        }),
+      );
+    }
     throw new ApiRequestError(payload.code || 'request_failed', payload.message || '请求失败', response.status);
   }
   return payload.data;

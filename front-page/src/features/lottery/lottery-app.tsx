@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Share2,
   ShoppingBag,
+  Sparkles,
   Trophy,
   UserRound,
   Users,
@@ -20,7 +21,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
-import { ApiRequestError, apiAssetUrl, apiPostRequest, apiRequest } from '@/client/api';
+import { AUTH_EXPIRED_EVENT, ApiRequestError, apiAssetUrl, apiPostRequest, apiRequest } from '@/client/api';
 import { fetchPaymentPublicConfig, fulfillPaymentOrder, pollPaymentUntilPaid } from '@/client/payment-api';
 import { formatCentsToYuan, resumePendingPayment, runPaymentCheckout } from '@/client/payment-checkout';
 import type { CreateCheckoutInput, QrcodeCheckout } from '@/types/payment';
@@ -94,11 +95,16 @@ import {
   pointsByYuan,
 } from '@/features/lottery/utils';
 
+const loginSchema = z.object({
+  nickname: z.string().max(32).optional(),
+});
+
 const exchangeSchema = z.object({
   have_inventory_item_ids: z.array(z.string().min(1)).min(1),
   want_prize_id: z.string().min(1),
 });
 
+type LoginFormValues = z.infer<typeof loginSchema>;
 type ExchangeFormValues = z.infer<typeof exchangeSchema>;
 
 interface LoginPayload {
@@ -170,12 +176,14 @@ export function LotteryApp(): React.ReactNode {
   const [showPhoneLogin, setShowPhoneLogin] = useState(false);
   const [phoneLoginForm, setPhoneLoginForm] = useState<PhoneLoginFormValues>({ phone: '', code: '' });
   const [phoneCodeMessage, setPhoneCodeMessage] = useState('');
+  const [loginGuideMessage, setLoginGuideMessage] = useState('');
   const [qrCheckout, setQrCheckout] = useState<QrcodeCheckout | null>(null);
   const [payingCash, setPayingCash] = useState(false);
   const [showPointsRechargeModal, setShowPointsRechargeModal] = useState(false);
   const [customRechargeYuan, setCustomRechargeYuan] = useState('10');
   const [selectedPrizePreview, setSelectedPrizePreview] = useState<PrizePreview | null>(null);
   const pointsRequestSeedRef = useRef(0);
+  const authRecoveryRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -224,6 +232,44 @@ export function LotteryApp(): React.ReactNode {
     window.localStorage.removeItem(ANONYMOUS_DRAW_TOKEN_KEY);
   }, [anonymousDrawToken]);
 
+  useEffect(() => {
+    if (token) {
+      authRecoveryRef.current = false;
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const handleAuthExpired = (event: Event) => {
+      if (authRecoveryRef.current) {
+        return;
+      }
+      authRecoveryRef.current = true;
+      const message =
+        event instanceof CustomEvent && typeof event.detail?.message === 'string' && event.detail.message.trim()
+          ? event.detail.message
+          : '登录状态已失效，请重新登录后继续。';
+      setToken('');
+      setNickname('');
+      setViewerMode(false);
+      setSelectedCampaignId(null);
+      setTab('series');
+      setShowPhoneLogin(true);
+      setPhoneCodeMessage('');
+      setWechatError('');
+      setLoginGuideMessage(message);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired as EventListener);
+    return () => {
+      window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired as EventListener);
+    };
+  }, []);
+
   // 在组件挂载时检查微信登录回调
   if (typeof window !== 'undefined' && !token && !wechatLoggingIn) {
     const params = new URLSearchParams(window.location.search);
@@ -249,6 +295,11 @@ export function LotteryApp(): React.ReactNode {
         });
     }
   }
+
+  const loginForm = useForm<LoginFormValues>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { nickname: '' },
+  });
 
   const exchangeForm = useForm<ExchangeFormValues>({
     resolver: zodResolver(exchangeSchema),
@@ -377,6 +428,31 @@ export function LotteryApp(): React.ReactNode {
     }
   };
 
+  const loginMutation = useMutation({
+    mutationFn: (values: LoginFormValues) => {
+      const inviteFrom = typeof window !== 'undefined' ? window.localStorage.getItem(INVITE_FROM_KEY) : null;
+      return apiRequest<LoginPayload>('/api/v1/auth/guest-login', '', {
+        method: 'POST',
+        body: JSON.stringify({ ...values, invite_from: inviteFrom || undefined }),
+        headers: anonymousDrawHeaders(anonymousDrawToken),
+      });
+    },
+    onSuccess: (payload) => {
+      setToken(payload.session.token);
+      setNickname(payload.user.nickname);
+      setViewerMode(false);
+      setShowPhoneLogin(false);
+      setLoginGuideMessage('');
+      if (payload.claimed_pending_draws) {
+        window.alert(`已将 ${payload.claimed_pending_draws} 个中奖结果放入你的盲盒。`);
+      }
+      setAnonymousDrawToken('');
+      if (typeof window !== 'undefined') {
+        window.localStorage.removeItem(INVITE_FROM_KEY);
+      }
+    },
+  });
+
   const sendPhoneCodeMutation = useMutation({
     mutationFn: (phone: string) =>
       apiRequest<PhoneCodePayload>('/api/v1/auth/phone/code', '', {
@@ -411,6 +487,7 @@ export function LotteryApp(): React.ReactNode {
       setNickname(payload.user.nickname);
       setViewerMode(false);
       setShowPhoneLogin(false);
+      setLoginGuideMessage('');
       setPhoneLoginForm({ phone: '', code: '' });
       setPhoneCodeMessage('');
       setWechatError('');
@@ -617,18 +694,18 @@ export function LotteryApp(): React.ReactNode {
     [campaignsQuery.data],
   );
 
-    const campaignBannerMetaById = useMemo(
-      () =>
-        new Map(
-          (campaignsQuery.data ?? []).map((item) => [
-            item.campaign.id,
-            {
-              dailyDrawLimit: item.campaign.daily_draw_limit,
-              prizeCount: item.prizes.length,
-            },
-          ]),
-        ),
-      [campaignsQuery.data],
+  const campaignBannerMetaById = useMemo(
+    () =>
+      new Map(
+        (campaignsQuery.data ?? []).map((item) => [
+          item.campaign.id,
+          {
+            dailyDrawLimit: item.campaign.daily_draw_limit,
+            prizeCount: item.prizes.length,
+          },
+        ]),
+      ),
+    [campaignsQuery.data],
     );
 
   const exchangeableInventory = useMemo(
@@ -1080,9 +1157,40 @@ export function LotteryApp(): React.ReactNode {
             </div>
             <h1 className="text-4xl font-black tracking-tight text-white">BOX·MAGIC</h1>
             <p className="mt-3 text-sm text-violet-100/70">盲盒抽奖平台 · 开启你的收藏之旅</p>
+            {loginGuideMessage ? (
+              <p className="mt-4 rounded-xl border border-amber-300/20 bg-amber-500/15 px-4 py-3 text-sm text-amber-100">
+                {loginGuideMessage}
+              </p>
+            ) : null}
+            <form
+              className="mt-7 space-y-3 text-left"
+              onSubmit={loginForm.handleSubmit((values) => loginMutation.mutate(values))}
+            >
+              <input
+                className="w-full rounded-2xl border-0 bg-white px-4 py-3 text-[15px] text-slate-950 outline-none ring-2 ring-transparent placeholder:text-slate-400 focus:ring-violet-300"
+                placeholder="输入昵称（留空随机）"
+                {...loginForm.register('nickname')}
+              />
+              <button
+                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[linear-gradient(135deg,#f472b6,#a78bfa)] px-4 py-3 font-bold text-white disabled:opacity-60"
+                disabled={loginMutation.isPending}
+                type="submit"
+              >
+                {loginMutation.isPending ? <Loader2 className="animate-spin" size={18} /> : <Sparkles size={18} />}
+                开始抽盒
+              </button>
+              {loginMutation.error ? (
+                <p className="rounded-xl border border-red-300/20 bg-red-500/15 px-4 py-3 text-sm text-red-100">
+                  {loginMutation.error.message}
+                </p>
+              ) : null}
+            </form>
             <button
-              className="mt-7 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-3 font-medium text-white hover:bg-white/[0.10]"
-              onClick={() => setViewerMode(true)}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/[0.06] px-4 py-3 font-medium text-white hover:bg-white/[0.10]"
+              onClick={() => {
+                setLoginGuideMessage('');
+                setViewerMode(true);
+              }}
               type="button"
             >
               <Gift size={18} />
@@ -1128,6 +1236,7 @@ export function LotteryApp(): React.ReactNode {
               type="button"
               onClick={() => {
                 setShowPhoneLogin((current) => !current);
+                setLoginGuideMessage('');
                 setWechatError('');
                 setPhoneCodeMessage('');
               }}
@@ -1504,16 +1613,15 @@ export function LotteryApp(): React.ReactNode {
             {activeTab === 'series' ? (
               <section className="space-y-3">
                 {(activitiesQuery.data ?? []).length > 0 ? (
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-3">
                     {(activitiesQuery.data ?? []).map((item) => {
                       const targetCampaignId = activityTargetCampaignId(item);
                       const activityBannerUrl = item.activity.banner_url?.trim() || (targetCampaignId ? campaignHeroImageUrlById.get(targetCampaignId) ?? '' : '');
                       const activityBannerClass = activityBannerFallbackClass(item.activity.type);
-                      const activityAccentLabel = activityBannerAccentLabel(item.activity.type);
                       const activityCampaignMeta = targetCampaignId ? campaignBannerMetaById.get(targetCampaignId) : undefined;
                       return (
                         <button
-                          className={`group relative min-h-40 overflow-hidden rounded-3xl border border-pink-300/30 text-left transition active:scale-[0.98] disabled:cursor-default disabled:opacity-80 ${activityBannerUrl ? 'bg-pink-400/10' : activityBannerClass}`}
+                          className={`relative h-[136px] w-full overflow-hidden rounded-3xl border border-white/10 p-4 text-left shadow-[0_8px_32px_rgba(0,0,0,0.32)] transition active:scale-[0.98] disabled:cursor-default disabled:opacity-80 ${activityBannerUrl ? 'bg-white/[0.06]' : activityBannerClass}`}
                           disabled={!targetCampaignId}
                           key={item.activity.id}
                           onClick={() => {
@@ -1526,42 +1634,27 @@ export function LotteryApp(): React.ReactNode {
                           {activityBannerUrl ? (
                             <img
                               alt={item.activity.name}
-                              className="absolute inset-0 h-full w-full scale-[1.03] object-cover transition duration-500 group-hover:scale-[1.07]"
+                              className="absolute inset-0 h-full w-full object-cover opacity-18"
                               src={apiAssetUrl(activityBannerUrl)}
                             />
                           ) : null}
-                          {activityBannerUrl ? <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.18),transparent_34%)]" /> : null}
-                          {!activityBannerUrl ? (
-                            <>
-                              <div className="absolute inset-y-0 right-0 w-[42%] bg-white/12 [clip-path:polygon(24%_0,100%_0,100%_100%,0_100%)]" />
-                              <div className="absolute -left-6 top-3 h-24 w-24 rounded-full bg-white/12 blur-2xl" />
-                            </>
-                          ) : null}
-                          <div className="absolute right-4 top-4 flex min-h-16 min-w-16 items-center justify-center rounded-[22px] border border-white/20 bg-white/12 px-3 text-center text-sm font-black tracking-[0.2em] text-white/90 backdrop-blur-sm">{activityAccentLabel}</div>
-                          <div className="absolute bottom-4 right-4 rounded-full border border-white/18 bg-white/12 px-3 py-1 text-[11px] font-semibold text-white/90 backdrop-blur-sm">立即前往</div>
-                          {activityCampaignMeta ? (
-                            <div className="absolute right-4 top-24 rounded-2xl border border-white/12 bg-black/16 px-3 py-2 text-right backdrop-blur-sm">
-                              <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/55">Series</div>
-                              <div className="mt-1 text-base font-black text-white">{activityCampaignMeta.prizeCount}</div>
-                              <div className="text-[11px] text-white/72">目标款式</div>
-                            </div>
-                          ) : null}
-                          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(45,22,82,0.05),rgba(45,22,82,0.48)_54%,rgba(45,22,82,0.9))]" />
-                          <div className="relative flex h-full min-h-36 flex-col justify-between p-4">
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="rounded-full bg-pink-300 px-2 py-0.5 text-[11px] font-bold text-white">{item.activity.status}</div>
-                              {targetCampaignId ? <div className="text-[11px] font-semibold text-pink-100/80">点击前往盲盒活动</div> : null}
-                            </div>
+                          <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(17,14,37,0.88)_0%,rgba(17,14,37,0.72)_56%,rgba(17,14,37,0.52)_100%)]" />
+                          <div className="relative flex h-full flex-col justify-between">
                             <div>
-                              <h3 className="mt-2 line-clamp-2 font-black text-white">{item.activity.name}</h3>
-                              <p className="mt-2 line-clamp-3 text-sm text-violet-100/75">{item.activity.description}</p>
-                              <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-white/85">
-                                {activityCampaignMeta ? <div className="rounded-full border border-white/15 bg-black/15 px-2.5 py-1 backdrop-blur-sm">目标 {activityCampaignMeta.prizeCount} 款</div> : null}
-                                {activityCampaignMeta ? <div className="rounded-full border border-white/15 bg-black/15 px-2.5 py-1 backdrop-blur-sm">每日 {activityCampaignMeta.dailyDrawLimit} 次</div> : null}
-                              </div>
-                              {item.rewards?.[0] ? (
-                                <div className="mt-2 text-xs text-pink-100/80">奖励：{item.rewards[0].reward_name} x{item.rewards[0].reward_qty}</div>
-                              ) : null}
+                              <h3 className="text-lg font-black text-white">{item.activity.name}</h3>
+                              <p className="mt-1 line-clamp-2 text-sm text-violet-100/65">{item.activity.description}</p>
+                            </div>
+                            <div className="mt-3 flex gap-3 text-xs text-violet-100/55">
+                              {activityCampaignMeta ? <span>目标 {activityCampaignMeta.prizeCount} 款</span> : null}
+                              {activityCampaignMeta ? <span>每日 {activityCampaignMeta.dailyDrawLimit} 次</span> : null}
+                              <span>{item.activity.status}</span>
+                            </div>
+                            <div className="mt-2 text-xs text-violet-100/55">
+                              {item.rewards?.[0]
+                                ? `奖励 ${item.rewards[0].reward_name} x${item.rewards[0].reward_qty}`
+                                : targetCampaignId
+                                  ? '点击进入盲盒活动'
+                                  : '活动详情敬请期待'}
                             </div>
                           </div>
                         </button>
@@ -2073,21 +2166,39 @@ export function LotteryApp(): React.ReactNode {
             {activeTab === 'puzzle' ? (
               <section className="space-y-4">
                 <h2 className="text-lg font-black text-white">碎片拼图</h2>
+                {puzzleQuery.isLoading ? <SkeletonCards /> : null}
+                {puzzleQuery.error && !(puzzleQuery.error instanceof ApiRequestError && puzzleQuery.error.status === 401) ? (
+                  <EmptyState icon="!" title="拼图加载失败" description={puzzleQuery.error.message} />
+                ) : null}
+                {!puzzleQuery.isLoading && !puzzleQuery.error && (puzzleQuery.data ?? []).length === 0 ? (
+                  <EmptyState icon="🧩" title="暂无拼图挑战" description="当前还没有可参与的拼图活动。" />
+                ) : null}
                 {(puzzleQuery.data ?? []).map((item) => (
                   <article className="rounded-3xl border border-white/10 bg-white/[0.06] p-4" key={item.template.id}>
                     <h3 className="font-bold text-white">{item.template.name}</h3>
                     <p className="mt-1 text-sm text-violet-100/65">
                       已收集 {item.progress.collected.length}/{item.template.total_pieces} · 奖励 {item.template.reward_name}
                     </p>
+                    <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-semibold text-violet-100/75">
+                      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">已收集：{item.collected_names.join('、') || '暂无'}</span>
+                      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">待补：{item.missing_names.join('、') || '已完成'}</span>
+                    </div>
                     <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
                       <div className="h-full rounded-full bg-emerald-300" style={{ width: `${item.progress_percent}%` }} />
                     </div>
-                    <button className="mt-3 rounded-xl bg-emerald-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50" disabled={composePuzzleMutation.isPending} onClick={() => composePuzzleMutation.mutate(item.template.id)} type="button">
-                      拼合领奖
+                    <button className="mt-3 rounded-xl bg-emerald-400 px-3 py-2 text-xs font-bold text-slate-950 disabled:opacity-50" disabled={composePuzzleMutation.isPending || item.progress.collected.length < item.template.total_pieces} onClick={() => composePuzzleMutation.mutate(item.template.id)} type="button">
+                      {item.progress.collected.length < item.template.total_pieces ? '碎片未集齐' : '拼合领奖'}
                     </button>
                   </article>
                 ))}
                 <h2 className="text-lg font-black text-white">限时抢购</h2>
+                {flashQuery.isLoading ? <SkeletonCards /> : null}
+                {flashQuery.error && !(flashQuery.error instanceof ApiRequestError && flashQuery.error.status === 401) ? (
+                  <EmptyState icon="!" title="抢购活动加载失败" description={flashQuery.error.message} />
+                ) : null}
+                {!flashQuery.isLoading && !flashQuery.error && (flashQuery.data ?? []).length === 0 ? (
+                  <EmptyState icon="⚡" title="暂无限时抢购" description="当前没有可预约或抢购的活动。" />
+                ) : null}
                 {(flashQuery.data ?? []).map((item) => (
                   <article className="rounded-3xl border border-white/10 bg-white/[0.06] p-4" key={item.flash.id}>
                     <h3 className="font-bold text-white">{item.flash.name}</h3>
