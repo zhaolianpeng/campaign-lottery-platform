@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { AppError } from './errors';
 import { getAppConfig } from './config';
 
@@ -52,10 +51,11 @@ const WECHAT_UA_PATTERN = /MicroMessenger/i;
 
 async function loadPaymentRuntime(): Promise<PaymentRuntimeModule> {
   if (!cachedRuntime) {
-    const moduleUrl = pathToFileURL(
-      resolve(process.cwd(), '../payment-module/dist/index.js'),
-    ).href;
-    cachedRuntime = import(moduleUrl) as Promise<PaymentRuntimeModule>;
+    cachedRuntime = import(
+      /* webpackIgnore: true */
+      /* turbopackIgnore: true */
+      '@campaign-lottery/payment-module',
+    ).then((module) => module as unknown as PaymentRuntimeModule);
   }
   return cachedRuntime;
 }

@@ -4,7 +4,7 @@ const nextConfig = {
     externalDir: true,
   },
   reactStrictMode: true,
-  transpilePackages: ['@campaign-lottery/payment-module'],
+  serverExternalPackages: ['@campaign-lottery/payment-module'],
 };
 
 export default nextConfig;
