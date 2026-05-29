@@ -19,6 +19,8 @@ module.exports = {
         MYSQL_PASSWORD: 'change-me',
         MYSQL_CONNECTION_LIMIT: '10',
         REDIS_ENABLED: 'false',
+        PAYMENT_ENABLED: 'true',
+        PAYMENT_CONFIG_PATH: 'config/payment.config.json',
       },
       max_memory_restart: '500M',
       error_file: '/home/ubuntu/.pm2/logs/campaign-lottery-api-error.log',

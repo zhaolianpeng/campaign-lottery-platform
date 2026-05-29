@@ -35,6 +35,7 @@ MYSQL_PASSWORD='MySQL 业务密码' \
    - `ADMIN_PASSWORD`
    - `MYSQL_PASSWORD`
    - 如有跨域要求，调整 `CORS_ALLOW_ORIGIN`
+   - 支付联调：`PAYMENT_ENABLED=true`，并确保 `backend-server/config/payment.config.json` 存在（发布脚本会从 `payment.config.mock.json` 复制）
 3. 在 `backend-server` 目录执行 `rm -rf .next && npm install && npm run migrate && npm run build`。
 4. 在 `front-page` 目录执行 `rm -rf .next && npm install && npm run build`（必须先删 `.next`，否则可能继续提供旧登录页静态资源）。
 5. 使用 PM2 启动或重载：

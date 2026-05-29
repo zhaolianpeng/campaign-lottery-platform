@@ -1,6 +1,8 @@
-import { resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { AppError } from './errors';
+import { getAppConfig } from './config';
 
 let cachedModule: PaymentModule | null = null;
 let cachedRuntime: Promise<PaymentRuntimeModule> | null = null;
@@ -50,15 +52,16 @@ const WECHAT_UA_PATTERN = /MicroMessenger/i;
 
 async function loadPaymentRuntime(): Promise<PaymentRuntimeModule> {
   if (!cachedRuntime) {
-    const moduleUrl = pathToFileURL(resolve(process.cwd(), '..', 'payment-module', 'dist', 'index.js')).href;
+    const moduleUrl = pathToFileURL(
+      resolve(process.cwd(), '../payment-module/dist/index.js'),
+    ).href;
     cachedRuntime = import(moduleUrl) as Promise<PaymentRuntimeModule>;
   }
   return cachedRuntime;
 }
 
 export function isPaymentEnabled(): boolean {
-  const flag = process.env.PAYMENT_ENABLED?.trim().toLowerCase() ?? '';
-  return ['true', '1', 'yes', 'on'].includes(flag);
+  return getAppConfig().payment.enabled;
 }
 
 export function assertPaymentEnabled(): void {
@@ -68,11 +71,11 @@ export function assertPaymentEnabled(): void {
 }
 
 export function getPaymentConfigPath(): string {
-  const fromEnv = process.env.PAYMENT_CONFIG_PATH?.trim();
-  if (fromEnv) {
-    return fromEnv;
+  const fromConfig = getAppConfig().payment.configPath.trim();
+  if (!fromConfig) {
+    return resolve(process.cwd(), 'config/payment.config.json');
   }
-  return resolve(process.cwd(), 'config/payment.config.json');
+  return isAbsolute(fromConfig) ? fromConfig : resolve(process.cwd(), fromConfig);
 }
 
 export async function getPaymentModule(): Promise<PaymentModule> {
@@ -87,6 +90,29 @@ export async function getPaymentModule(): Promise<PaymentModule> {
 export async function loadPaymentConfigFromRuntime(): Promise<ResolvedPaymentConfig> {
   const runtime = await loadPaymentRuntime();
   return runtime.loadPaymentConfig(getPaymentConfigPath());
+}
+
+/** 公开探测接口用：不依赖 payment-module 动态加载，直接读 JSON */
+export function readPaymentConfigFlagsFromFile(): {
+  readonly channels: { readonly wechat: boolean; readonly alipay: boolean };
+  readonly mock: boolean;
+} | null {
+  try {
+    const raw = JSON.parse(readFileSync(getPaymentConfigPath(), 'utf8')) as {
+      readonly mock?: boolean;
+      readonly wechat?: { readonly enabled?: boolean };
+      readonly alipay?: { readonly enabled?: boolean };
+    };
+    return {
+      channels: {
+        wechat: Boolean(raw.wechat?.enabled),
+        alipay: Boolean(raw.alipay?.enabled),
+      },
+      mock: Boolean(raw.mock),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function resetPaymentModuleForTests(): void {

@@ -99,7 +99,8 @@ echo "[2/6] Upload deploy templates"
 "${scp_cmd[@]}" "$tmp_dir/gaokao-api.conf" "$REMOTE_USER@$REMOTE_HOST:/tmp/campaign-lottery-gaokao-api.conf"
 
 echo "[3/6] Install backend dependencies and run migrations"
-"${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/backend-server' && npm install --no-fund --no-audit && npm run migrate"
+"${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/backend-server' && npm install --no-fund --no-audit && npm run migrate && \
+  if [ ! -f config/payment.config.json ]; then cp config/payment.config.mock.json config/payment.config.json; fi"
 "${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/payment-module' && rm -rf node_modules dist && ln -s ../backend-server/node_modules node_modules && ../backend-server/node_modules/.bin/tsc -p tsconfig.build.json"
 "${ssh_cmd[@]}" "rm -rf '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery/payment-module' && mkdir -p '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery' && cp -R '$REMOTE_PROJECT_DIR/payment-module' '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery/payment-module' && rm -rf '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery/payment-module/node_modules'"
 

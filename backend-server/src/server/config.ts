@@ -53,6 +53,9 @@ const envSchema = z.object({
   CARRIER_AUTH_PROVIDER: z.string().default(''),
   CARRIER_AUTH_APP_ID: z.string().default(''),
   CARRIER_AUTH_API_KEY: z.string().default(''),
+
+  PAYMENT_ENABLED: envBoolean.default(false),
+  PAYMENT_CONFIG_PATH: z.string().default('config/payment.config.json'),
 });
 
 export interface AppConfig {
@@ -101,6 +104,10 @@ export interface AppConfig {
     readonly provider: string;
     readonly appId: string;
     readonly apiKey: string;
+  };
+  readonly payment: {
+    readonly enabled: boolean;
+    readonly configPath: string;
   };
 }
 
@@ -158,6 +165,10 @@ export function getAppConfig(): AppConfig {
       provider: env.CARRIER_AUTH_PROVIDER,
       appId: env.CARRIER_AUTH_APP_ID,
       apiKey: env.CARRIER_AUTH_API_KEY,
+    },
+    payment: {
+      enabled: env.PAYMENT_ENABLED,
+      configPath: env.PAYMENT_CONFIG_PATH,
     },
   };
 

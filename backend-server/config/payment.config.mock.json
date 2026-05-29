@@ -1,0 +1,27 @@
+{
+  "notifyBaseUrl": "http://127.0.0.1:18100",
+  "orderExpireMinutes": 30,
+  "mock": true,
+  "wechat": {
+    "enabled": true,
+    "appId": "wx_mock_app_id",
+    "mchId": "1900000001",
+    "apiV3Key": "01234567890123456789012345678901",
+    "serialNo": "MOCK_SERIAL_NO",
+    "privateKeyPath": "../payment-module/certs/apiclient_key.pem",
+    "platformCertPath": "../payment-module/certs/wechatpay_platform.pem",
+    "notifyPath": "/api/v1/payments/wechat/notify",
+    "h5AppName": "Campaign Lottery Mock",
+    "h5AppUrl": "http://127.0.0.1:3000"
+  },
+  "alipay": {
+    "enabled": true,
+    "appId": "2021000000000000",
+    "privateKeyPath": "../payment-module/certs/alipay_app_private.pem",
+    "alipayPublicKeyPath": "../payment-module/certs/alipay_public.pem",
+    "gateway": "https://openapi.alipay.com/gateway.do",
+    "notifyPath": "/api/v1/payments/alipay/notify",
+    "signType": "RSA2",
+    "returnUrl": "http://127.0.0.1:3000"
+  }
+}

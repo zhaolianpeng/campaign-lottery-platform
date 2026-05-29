@@ -1,6 +1,11 @@
 import { fail, ok } from '@/server/api-response';
 import { paymentOptions } from '@/server/payment-http';
-import { isPaymentEnabled, loadPaymentConfigFromRuntime, toAppError } from '@/server/payment-gateway';
+import {
+  isPaymentEnabled,
+  loadPaymentConfigFromRuntime,
+  readPaymentConfigFlagsFromFile,
+  toAppError,
+} from '@/server/payment-gateway';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,9 +29,16 @@ export async function GET(): Promise<Response> {
           alipay: Boolean(config.alipay?.enabled),
         };
         mock = Boolean(config.mock);
-      } catch {
-        channels = { wechat: false, alipay: false };
-        mock = false;
+      } catch (error) {
+        console.error('[payments] load payment config failed:', error);
+        const fallback = readPaymentConfigFlagsFromFile();
+        if (fallback) {
+          channels = fallback.channels;
+          mock = fallback.mock;
+        } else {
+          channels = { wechat: false, alipay: false };
+          mock = false;
+        }
       }
     }
 
