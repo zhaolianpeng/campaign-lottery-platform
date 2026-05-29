@@ -1,5 +1,6 @@
 import { LotteryService } from './lottery-service';
 import { createMemoryStore, type MemoryStore } from './memory-store';
+import { getRepositories } from './repositories';
 
 interface GlobalServices {
   readonly store: MemoryStore;
@@ -18,6 +19,7 @@ export async function getService(): Promise<LotteryService> {
 
   if (!globalForServices.__campaignLotteryServicesPromise) {
     globalForServices.__campaignLotteryServicesPromise = createMemoryStore().then((store) => {
+      getRepositories(store);
       const services = {
         store,
         service: new LotteryService(store),

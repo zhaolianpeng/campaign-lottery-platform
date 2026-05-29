@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { anonymousDrawToken, bearerToken, corsHeaders, fail, ok } from '@/server/api-response';
+import { anonymousDrawToken, bearerToken, corsHeaders, fail, ok, requestIdFromRequest } from '@/server/api-response';
 import {
   deletePendingAnonymousWins,
   deleteCampaignConfig,
@@ -17,6 +17,10 @@ import { getAppConfig } from '@/server/config';
 import { AppError, notFound, phoneVerificationRequired } from '@/server/errors';
 import { getService } from '@/server/singleton';
 import { getOauthUrl, getJssdkConfig } from '@/server/wechat-service';
+import { verifyAdminLogin } from '@/server/admin-auth';
+import { writeAdminAudit } from '@/server/audit-log';
+import { getRepositories } from '@/server/repositories';
+import { incrementRateLimit } from '@/server/redis-helpers';
 
 export const dynamic = 'force-dynamic';
 
@@ -352,6 +356,38 @@ async function handleReadRequest(request: Request, context: RouteContext): Promi
   if (path.join('/') === 'admin/overview') {
     return ok('admin overview', service.adminOverview(token));
   }
+  if (path.join('/') === 'admin/audit-logs') {
+    service.adminOverview(token);
+    const logs = await getRepositories().adminAudit.listRecent(Number(searchParam(request, 'limit') || 100));
+    return ok('admin audit logs', logs);
+  }
+  if (path.join('/') === 'admin/draw-records/export') {
+    const records = service.adminDrawRecords(token, {
+      user_id: searchParam(request, 'user_id') || undefined,
+      campaign_id: searchParam(request, 'campaign_id') || undefined,
+      result: searchParam(request, 'result') || undefined,
+      from: searchParam(request, 'from') || undefined,
+      to: searchParam(request, 'to') || undefined,
+    });
+    const header = 'id,campaign_id,user_id,prize_name,result,drawn_at\n';
+    const csv =
+      header +
+      records
+        .map((row) =>
+          [row.id, row.campaign_id, row.user_id, row.prize_name, row.result, row.drawn_at]
+            .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
+            .join(','),
+        )
+        .join('\n');
+    return new Response(csv, {
+      status: 200,
+      headers: {
+        ...corsHeaders(),
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="draw-records.csv"',
+      },
+    });
+  }
   if (path.join('/') === 'admin/shop-items') {
     return ok('admin shop items', service.adminShopItems(token));
   }
@@ -554,6 +590,11 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     }
     if (path.join('/') === 'auth/phone/code') {
       const input = phoneCodeSchema.parse(body);
+      const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1';
+      const allowed = await incrementRateLimit(`phone-code:${ip}`, 10, 3600);
+      if (!allowed) {
+        throw new AppError('rate_limited', '验证码请求过于频繁，请稍后再试', 429);
+      }
       return ok('phone code sent', service.sendPhoneCode(input.phone, input.scene));
     }
     if (path.join('/') === 'auth/phone/verify') {
@@ -673,7 +714,29 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     }
     if (path.join('/') === 'admin/login') {
       const input = adminLoginSchema.parse(body);
-      return ok('admin login succeeded', service.adminLogin(input.username, input.password));
+      const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1';
+      const admin = await verifyAdminLogin(input.username, input.password, ip);
+      const { token: adminToken } = service.adminLogin(input.username, input.password);
+      await writeAdminAudit({
+        adminUserId: admin.adminUserId,
+        adminUsername: admin.username,
+        action: 'admin.login',
+        resourceType: 'admin_session',
+        resourceId: adminToken,
+        requestId: requestIdFromRequest(request),
+        ipAddress: ip,
+      });
+      return ok('admin login succeeded', { token: adminToken });
+    }
+    if (path.join('/') === 'admin/compliance') {
+      const input = z
+        .object({
+          disclosure_updated_at: z.string().optional(),
+          filing_number: z.string().optional(),
+          rules_text: z.string().optional(),
+        })
+        .parse(body);
+      return ok('compliance updated', service.updateCompliance(token, input));
     }
     if (path.join('/') === 'admin/campaigns') {
       const campaign = service.createCampaign(token, campaignMutationSchema.parse(body));

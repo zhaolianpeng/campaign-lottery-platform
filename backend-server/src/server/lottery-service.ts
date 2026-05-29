@@ -103,6 +103,11 @@ export class LotteryService {
     return this.store.compliancePublic();
   }
 
+  public updateCompliance(token: string, input: Parameters<MemoryStore['updateCompliance']>[0]): ReturnType<MemoryStore['updateCompliance']> {
+    this.adminOverview(token);
+    return this.store.updateCompliance(input);
+  }
+
   public publicUserInventory(userId: string): ReturnType<MemoryStore['publicUserInventory']> {
     return this.store.publicUserInventory(userId);
   }
@@ -405,8 +410,16 @@ export class LotteryService {
     return this.store.submitDeliveryRequest(user.id, itemIds);
   }
 
+  public getDeliveryShippingFeeCentsByUserId(userId: string, requestId: string): number {
+    return this.store.getDeliveryShippingFeeCents(userId, requestId);
+  }
+
   public fulfillDeliveryRequestByUserId(userId: string, requestId: string, amountCents: number): DeliverySubmitResult {
     return this.store.fulfillDeliveryRequest(userId, requestId, amountCents);
+  }
+
+  public deliveryRequestById(requestId: string) {
+    return this.store.getDeliveryRequest(requestId);
   }
 
   public seriesProgress(token: string, campaignId: string): SeriesProgress {

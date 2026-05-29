@@ -64,10 +64,12 @@ export interface QueryPaymentOrderResult {
 export interface CreateCheckoutInput {
   readonly client_request_id: string;
   readonly channel: PaymentChannel;
-  readonly amount_cents: number;
+  /** @deprecated Server-side pricing; kept for local display only */
+  readonly amount_cents?: number;
   readonly subject: string;
   readonly body?: string;
   readonly business_type: string;
   readonly business_id?: string;
   readonly product_snapshot?: Record<string, unknown>;
+  readonly presentation_override?: PaymentPresentation;
 }

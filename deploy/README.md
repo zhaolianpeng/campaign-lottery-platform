@@ -17,6 +17,7 @@ cd deploy
 DEPLOY_PASSWORD='服务器 SSH 密码' \
 ADMIN_PASSWORD='后台登录密码' \
 MYSQL_PASSWORD='MySQL 业务密码' \
+CORS_ALLOW_ORIGIN='https://your-domain.example' \
 ./release_82.sh
 ```
 
@@ -24,13 +25,31 @@ MYSQL_PASSWORD='MySQL 业务密码' \
 
 - `DEPLOY_HOST`：默认 `82.156.54.232`
 - `DEPLOY_USER`：默认 `ubuntu`
-- `REMOTE_PROJECT_DIR`：默认 `/home/ubuntu/campaign-lottery-next`（发布脚本会把模板中的路径替换为该值；若与 PM2/nginx 实际目录不一致，会跑错代码或健康检查失败）
+- `REMOTE_PROJECT_DIR`：默认 `/home/ubuntu/campaign-lottery-platform`（发布脚本会把模板中的路径替换为该值；若与 PM2/nginx 实际目录不一致，会跑错代码或健康检查失败）
 - `NGINX_SITE_PATH`：默认 `/etc/nginx/sites-available/gaokao-api`
-- `CORS_ALLOW_ORIGIN`：默认 `*`
+- `CORS_ALLOW_ORIGIN`：**必填**，生产禁止使用 `*`
+
+## HTTPS（生产推荐）
+
+nginx 模板默认 `listen 80`。上线 HTTPS 时可用 certbot：
+
+```bash
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d your-domain.example
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+外网验证：`curl -fsS https://your-domain.example/healthz` 应返回 `"status":"ok"`（`STORAGE_MODE=mysql` 且 MySQL/Redis 正常时）。
+
+## 监控与日志
+
+- API healthz：`GET /healthz`（含 `storage_mode`、`schema_version`）
+- PM2 日志：`~/.pm2/logs/campaign-lottery-api-*.log`、`campaign-lottery-front-*.log`
+- 可选：设置 `SENTRY_DSN` 环境变量接入错误追踪（后续接入）
 
 ## PM2 发布步骤
 
-1. 将 `deploy/pm2/ecosystem.config.cjs` 复制到服务器项目根目录，例如 `/home/ubuntu/campaign-lottery-next/ecosystem.config.cjs`。
+1. 将 `deploy/pm2/ecosystem.config.cjs` 复制到服务器项目根目录，例如 `/home/ubuntu/campaign-lottery-platform/ecosystem.config.cjs`。
 2. 按实际环境修改以下变量：
    - `ADMIN_PASSWORD`
    - `MYSQL_PASSWORD`

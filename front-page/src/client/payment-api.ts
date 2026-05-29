@@ -28,12 +28,12 @@ export function createPaymentCheckout(token: string, input: CreateCheckoutInput)
     body: JSON.stringify({
       client_request_id: input.client_request_id,
       channel: input.channel,
-      amount_cents: input.amount_cents,
       subject: input.subject,
       body: input.body,
       business_type: input.business_type,
       business_id: input.business_id,
       product_snapshot: input.product_snapshot,
+      presentation_override: input.presentation_override,
     }),
   });
 }
@@ -50,7 +50,13 @@ export function queryPaymentOrder(
 export function fulfillPaymentOrder(
   token: string,
   orderNo: string,
-): Promise<{ readonly order_no: string; readonly status: string; readonly already_fulfilled: boolean }> {
+): Promise<{
+  readonly order_no: string;
+  readonly status: string;
+  readonly already_fulfilled: boolean;
+  readonly business_type: string;
+  readonly business_id: string;
+}> {
   return apiPostRequest(`/api/v1/payments/orders/${encodeURIComponent(orderNo)}/fulfill`, token, {
     body: JSON.stringify({}),
   });

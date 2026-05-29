@@ -1,5 +1,5 @@
 import type { CardType } from './types';
-import { AppError, paymentForbidden, paymentNotPaid, unauthorized } from './errors';
+import { AppError, paymentForbidden, unauthorized } from './errors';
 import { getPaymentModule, isPaymentEnabled } from './payment-gateway';
 import { getService } from './singleton';
 
@@ -20,7 +20,19 @@ export interface PaymentFulfillmentResult {
   readonly result: unknown;
 }
 
-export async function fulfillPaymentOrder(token: string, orderNo: string): Promise<PaymentFulfillmentResult> {
+export interface PaymentFulfillmentStatus {
+  readonly order_no: string;
+  readonly status: string;
+  readonly business_type: string;
+  readonly business_id: string;
+  readonly already_fulfilled: boolean;
+  readonly result: unknown;
+}
+
+export async function getPaymentFulfillmentStatus(
+  token: string,
+  orderNo: string,
+): Promise<PaymentFulfillmentStatus> {
   if (!token) {
     throw unauthorized;
   }
@@ -48,15 +60,51 @@ export async function fulfillPaymentOrder(token: string, orderNo: string): Promi
     };
   }
 
-  if (order.status !== 'paid' && order.status !== 'fulfilling') {
-    throw paymentNotPaid;
+  return {
+    order_no: orderNo,
+    status: order.status,
+    business_type: order.businessType,
+    business_id: order.businessId,
+    already_fulfilled: false,
+    result: null,
+  };
+}
+
+/** Server-side fulfillment after payment is confirmed (notify / query sync / mock checkout). */
+export async function tryFulfillPaidOrder(orderNo: string): Promise<PaymentFulfillmentResult | null> {
+  if (!isPaymentEnabled()) {
+    return null;
   }
 
+  const payment = await getPaymentModule();
+  let order;
+  try {
+    order = payment.getOrder(orderNo);
+  } catch {
+    return null;
+  }
+
+  if (order.status === 'fulfilled') {
+    return {
+      order_no: orderNo,
+      status: order.status,
+      business_type: order.businessType,
+      business_id: order.businessId,
+      already_fulfilled: true,
+      result: null,
+    };
+  }
+
+  if (order.status !== 'paid' && order.status !== 'fulfilling') {
+    return null;
+  }
+
+  const service = await getService();
   payment.beginFulfillment(orderNo);
 
   let result: unknown;
   try {
-    result = await runBusinessFulfillment(service, user.id, order.businessType, order.businessId, order.amountCents);
+    result = await runBusinessFulfillment(service, order.userId, order.businessType, order.businessId, order.amountCents);
     payment.completeFulfillment(orderNo);
   } catch (error) {
     payment.getOrder(orderNo);

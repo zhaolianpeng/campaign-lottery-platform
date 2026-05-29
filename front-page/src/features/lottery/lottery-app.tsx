@@ -142,12 +142,17 @@ type PrizePreview = Prize & {
 
 const tabs = LOTTERY_TABS;
 
-export function LotteryApp(): React.ReactNode {
+export interface LotteryAppProps {
+  readonly initialTab?: TabKey;
+}
+
+export function LotteryApp(props: LotteryAppProps = {}): React.ReactNode {
+  const { initialTab = 'series' } = props;
   const [token, setToken] = useState('');
   const [nickname, setNickname] = useState('');
   const [viewerMode, setViewerMode] = useState(false);
   const [anonymousDrawToken, setAnonymousDrawToken] = useState('');
-  const [tab, setTab] = useState<TabKey>('series');
+  const [tab, setTab] = useState<TabKey>(initialTab);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null);
   const [showBoxModal, setShowBoxModal] = useState(false);
   const [boxAnimating, setBoxAnimating] = useState(false);
@@ -424,7 +429,8 @@ export function LotteryApp(): React.ReactNode {
         body: JSON.stringify({ phone, scene: 'login' }),
       }),
     onSuccess: (payload) => {
-      setPhoneCodeMessage(payload.dev_code ? `${payload.message} 开发验证码：${payload.dev_code}` : payload.message);
+      const showDevCode = process.env.NODE_ENV === 'development' && payload.dev_code;
+      setPhoneCodeMessage(showDevCode ? `${payload.message} 开发验证码：${payload.dev_code}` : payload.message);
       setWechatError('');
     },
     onError: (error) => {
@@ -918,7 +924,6 @@ export function LotteryApp(): React.ReactNode {
         await runCashPay({
           client_request_id: `delivery_${result.delivery_request_id}_${Date.now()}`,
           channel: 'wechat',
-          amount_cents: result.shipping_fee_cents,
           subject: '盲盒奖品运费',
           body: `发货 ${result.submitted_item_count} 件奖品`,
           business_type: 'inventory_delivery',
@@ -1091,7 +1096,6 @@ export function LotteryApp(): React.ReactNode {
     void runCashPay({
       client_request_id: `points_${amountCents}_${pointsRequestSeedRef.current}`,
       channel: 'wechat',
-      amount_cents: amountCents,
       subject: '积分充值',
       business_type: 'points_pack',
       business_id: `recharge_${amountCents}`,
@@ -1803,7 +1807,6 @@ export function LotteryApp(): React.ReactNode {
                           void runCashPay({
                             client_request_id: `monthly_${Date.now()}`,
                             channel: 'wechat',
-                            amount_cents: MONTHLY_CARD_CASH_CENTS,
                             subject: '月卡',
                             business_type: 'membership',
                             business_id: 'monthly',
@@ -1840,7 +1843,6 @@ export function LotteryApp(): React.ReactNode {
                             void runCashPay({
                               client_request_id: `battle_pass_${Date.now()}`,
                               channel: 'wechat',
-                              amount_cents: BATTLE_PASS_CASH_CENTS,
                               subject: '付费战令',
                               business_type: 'battle_pass',
                               business_id: String(battlePassQuery.data?.season?.id ?? 'season'),
@@ -2003,7 +2005,6 @@ export function LotteryApp(): React.ReactNode {
                               void runCashPay({
                                 client_request_id: `shop_cash_${item.id}_${Date.now()}`,
                                 channel: 'wechat',
-                                amount_cents: item.price_cash,
                                 subject: item.name,
                                 business_type: 'shop_item',
                                 business_id: item.id,

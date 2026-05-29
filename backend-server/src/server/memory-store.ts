@@ -969,6 +969,18 @@ export class MemoryStore {
     return this.deliverySubmitResult(activated);
   }
 
+  public getDeliveryRequest(requestId: string): DeliveryRequest | undefined {
+    return this.deliveryRequests.find((item) => item.id === requestId);
+  }
+
+  public getDeliveryShippingFeeCents(userId: string, requestId: string): number {
+    const request = this.deliveryRequests.find((item) => item.id === requestId && item.user_id === userId);
+    if (!request) {
+      throw notFound;
+    }
+    return request.shipping_fee_cents;
+  }
+
   public fulfillDeliveryRequest(userId: string, requestId: string, amountCents: number): DeliverySubmitResult {
     const request = this.deliveryRequests.find((item) => item.id === requestId && item.user_id === userId);
     if (!request) {
@@ -1308,6 +1320,11 @@ export class MemoryStore {
 
   public compliancePublic(): { readonly disclosure_updated_at: string; readonly filing_number: string; readonly rules_text: string } {
     return { ...this.complianceSettings };
+  }
+
+  public updateCompliance(input: Partial<{ readonly disclosure_updated_at: string; readonly filing_number: string; readonly rules_text: string }>): { readonly disclosure_updated_at: string; readonly filing_number: string; readonly rules_text: string } {
+    Object.assign(this.complianceSettings, input);
+    return this.compliancePublic();
   }
 
   public recordInviteRegistration(inviterId: string, inviteeId: string): void {

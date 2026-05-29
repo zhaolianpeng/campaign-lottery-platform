@@ -2,6 +2,7 @@ export interface ApiEnvelope<T> {
   readonly code: string;
   readonly message: string;
   readonly data: T;
+  readonly error_id?: string;
 }
 
 export const AUTH_EXPIRED_EVENT = 'lottery:auth-expired';
@@ -39,6 +40,22 @@ function normalizeAuthExpiredMessage(message: string | undefined): string {
   return trimmed;
 }
 
+async function parseApiEnvelope<T>(response: Response): Promise<ApiEnvelope<T>> {
+  const contentType = response.headers.get('content-type') ?? '';
+  const raw = await response.text();
+  if (!raw.trim()) {
+    throw new ApiRequestError('invalid_response', '服务器返回空响应', response.status);
+  }
+  if (!contentType.includes('application/json')) {
+    throw new ApiRequestError('invalid_response', '服务器返回非 JSON 响应', response.status);
+  }
+  try {
+    return JSON.parse(raw) as ApiEnvelope<T>;
+  } catch {
+    throw new ApiRequestError('invalid_response', '无法解析服务器响应', response.status);
+  }
+}
+
 export async function apiRequest<T>(
   path: string,
   token: string,
@@ -53,11 +70,18 @@ export async function apiRequest<T>(
     headers.set('Content-Type', 'application/json');
   }
 
-  const response = await fetch(apiUrl(path), {
-    ...init,
-    headers,
-  });
-  const payload = (await response.json()) as ApiEnvelope<T>;
+  let response: Response;
+  try {
+    response = await fetch(apiUrl(path), {
+      ...init,
+      headers,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '网络请求失败';
+    throw new ApiRequestError('network_error', message, 0);
+  }
+
+  const payload = await parseApiEnvelope<T>(response);
   if (!response.ok || payload.code !== 'ok') {
     if (response.status === 401 && token && typeof window !== 'undefined') {
       window.dispatchEvent(

@@ -41,6 +41,13 @@ type PaymentModule = {
     readonly channelResponseBody: string;
     readonly channelResponseContentType: string;
     readonly verified: boolean;
+    readonly alreadyProcessed?: boolean;
+    readonly order?: { readonly orderNo: string };
+    readonly notify?: {
+      readonly orderNo: string;
+      readonly paidAt: string;
+      readonly rawNotifyId: string;
+    };
   }>;
   readonly queryOrder: (orderNo: string, options?: { readonly syncChannel?: boolean }) => Promise<{ readonly order: any; readonly channelPaid: boolean }>;
   readonly requestRefund: (input: Record<string, unknown>) => Promise<unknown>;

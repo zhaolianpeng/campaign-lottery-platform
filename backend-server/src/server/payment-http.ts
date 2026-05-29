@@ -2,6 +2,7 @@ import { bearerToken, corsHeaders, fail, ok } from './api-response';
 import { unauthorized } from './errors';
 import { getService } from './singleton';
 import { assertPaymentEnabled, clientIpFromRequest, getPaymentModule, toAppError } from './payment-gateway';
+import { fulfillOrderAfterNotify, logPaymentNotify } from './payment-notify-handler';
 
 export { corsHeaders };
 
@@ -54,7 +55,25 @@ export async function withPaymentNotify(
     });
 
     const payment = await getPaymentModule();
-    const result = await payment.handlePaymentNotify(channel, headers, rawBody);
+    const result = await payment.handlePaymentNotify(channel, headers, rawBody) as {
+      readonly verified: boolean;
+      readonly alreadyProcessed?: boolean;
+      readonly channelResponseBody: string;
+      readonly channelResponseContentType: string;
+      readonly notify?: {
+        readonly orderNo: string;
+        readonly rawNotifyId?: string;
+        readonly paidAt?: string;
+      };
+    };
+
+    if (result.verified && result.notify) {
+      const notifyId = result.notify.rawNotifyId || `${result.notify.orderNo}:${result.notify.paidAt ?? 'paid'}`;
+      const isNew = await logPaymentNotify(channel, result.notify.orderNo, notifyId, rawBody, true);
+      if (isNew && !result.alreadyProcessed) {
+        await fulfillOrderAfterNotify(result.notify.orderNo);
+      }
+    }
 
     return new Response(result.channelResponseBody, {
       status: result.verified ? 200 : 400,

@@ -2,6 +2,7 @@
 
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { getUserToken } from '@/client/auth-token';
 import { fulfillPaymentOrder, pollPaymentUntilPaid } from '@/client/payment-api';
 import { resumePendingPayment } from '@/client/payment-checkout';
 
@@ -9,7 +10,7 @@ export default function PayOrderPage(): React.ReactNode {
   const params = useParams<{ orderNo: string }>();
   const router = useRouter();
   const orderNo = params.orderNo;
-  const token = typeof window !== 'undefined' ? (window.sessionStorage.getItem('campaign-lottery-token') ?? '') : '';
+  const token = typeof window !== 'undefined' ? getUserToken() : '';
   const invalidAccess = !token || !orderNo;
   const [status, setStatus] = useState<'pending' | 'paid' | 'error'>(invalidAccess ? 'error' : 'pending');
   const [message, setMessage] = useState(invalidAccess ? '请先登录后再查看支付结果' : '正在确认支付结果…');
@@ -27,7 +28,10 @@ export default function PayOrderPage(): React.ReactNode {
           return;
         }
         await pollPaymentUntilPaid(token, orderNo, { maxAttempts: 30 });
-        await fulfillPaymentOrder(token, orderNo);
+        const fulfillment = await fulfillPaymentOrder(token, orderNo);
+        if (fulfillment.status !== 'fulfilled') {
+          throw new Error('支付已确认，权益发放处理中，请稍后刷新');
+        }
         setStatus('paid');
         setMessage('支付成功，权益已到账');
       } catch (error) {
