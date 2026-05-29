@@ -5,6 +5,40 @@ const path = require('node:path');
 const mysql = require('mysql2/promise');
 const { Umzug } = require('umzug');
 
+function loadEnvFile(filePath) {
+  try {
+    const content = require('node:fs').readFileSync(filePath, 'utf8');
+    for (const line of content.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) {
+        continue;
+      }
+      const eq = trimmed.indexOf('=');
+      if (eq <= 0) {
+        continue;
+      }
+      const key = trimmed.slice(0, eq).trim();
+      let value = trimmed.slice(eq + 1).trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      if (process.env[key] == null) {
+        process.env[key] = value;
+      }
+    }
+  } catch {
+    // Ignore missing env files.
+  }
+}
+
+function hydrateEnvFromDotenv(backendRoot) {
+  loadEnvFile(path.join(backendRoot, '.env.local'));
+  loadEnvFile(path.join(backendRoot, '.env'));
+}
+
 function hydrateEnvFromEcosystem(backendRoot, repoRoot) {
   if (process.env.MYSQL_ENABLED) {
     return;
@@ -214,6 +248,7 @@ async function main() {
   const command = process.argv[2] || 'up';
   const backendRoot = path.resolve(__dirname, '..');
   const repoRoot = path.resolve(backendRoot, '..');
+  hydrateEnvFromDotenv(backendRoot);
   hydrateEnvFromEcosystem(backendRoot, repoRoot);
   const config = loadMysqlConfig();
   const connection = await mysql.createConnection({
