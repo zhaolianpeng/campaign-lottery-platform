@@ -1,0 +1,27 @@
+{
+  "notifyBaseUrl": "https://your-api.example.com",
+  "orderExpireMinutes": 30,
+  "mock": true,
+  "wechat": {
+    "enabled": true,
+    "appId": "wx_your_app_id",
+    "mchId": "1234567890",
+    "apiV3Key": "your-32-char-api-v3-key-here12",
+    "serialNo": "certificate_serial_no",
+    "privateKeyPath": "../payment-module/certs/apiclient_key.pem",
+    "platformCertPath": "../payment-module/certs/wechatpay_platform.pem",
+    "notifyPath": "/api/v1/payments/wechat/notify",
+    "h5AppName": "Campaign Lottery",
+    "h5AppUrl": "https://your-site.example.com"
+  },
+  "alipay": {
+    "enabled": true,
+    "appId": "2021000000000000",
+    "privateKeyPath": "../payment-module/certs/alipay_app_private.pem",
+    "alipayPublicKeyPath": "../payment-module/certs/alipay_public.pem",
+    "gateway": "https://openapi.alipay.com/gateway.do",
+    "notifyPath": "/api/v1/payments/alipay/notify",
+    "signType": "RSA2",
+    "returnUrl": "https://your-site.example.com/pay/return"
+  }
+}

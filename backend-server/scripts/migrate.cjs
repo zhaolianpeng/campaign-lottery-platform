@@ -5,6 +5,40 @@ const path = require('node:path');
 const mysql = require('mysql2/promise');
 const { Umzug } = require('umzug');
 
+function loadEnvFile(filePath) {
+  try {
+    const content = require('node:fs').readFileSync(filePath, 'utf8');
+    for (const line of content.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) {
+        continue;
+      }
+      const eq = trimmed.indexOf('=');
+      if (eq <= 0) {
+        continue;
+      }
+      const key = trimmed.slice(0, eq).trim();
+      let value = trimmed.slice(eq + 1).trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      if (process.env[key] == null) {
+        process.env[key] = value;
+      }
+    }
+  } catch {
+    // Ignore missing env files.
+  }
+}
+
+function hydrateEnvFromDotenv(backendRoot) {
+  loadEnvFile(path.join(backendRoot, '.env.local'));
+  loadEnvFile(path.join(backendRoot, '.env'));
+}
+
 function hydrateEnvFromEcosystem(backendRoot, repoRoot) {
   if (process.env.MYSQL_ENABLED) {
     return;
@@ -54,13 +88,20 @@ function loadMysqlConfig() {
     throw new Error('MYSQL_ENABLED is false; refusing to run migrations.');
   }
 
+  const password = process.env.MYSQL_PASSWORD || '';
+  if (!password && !(process.env.MYSQL_DSN || '').trim()) {
+    throw new Error(
+      'MYSQL_PASSWORD is required when MYSQL_ENABLED is true (set it in the shell, .env.local, or ecosystem.config.cjs env)',
+    );
+  }
+
   return {
     dsn: process.env.MYSQL_DSN || '',
     host: process.env.MYSQL_HOST || '127.0.0.1',
     port: Number(process.env.MYSQL_PORT || 3306),
     database: process.env.MYSQL_DATABASE || 'campaign_lottery_platform',
     user: process.env.MYSQL_USER || 'campaign_lottery_app',
-    password: process.env.MYSQL_PASSWORD || '',
+    password,
     charset: process.env.MYSQL_CHARSET || 'utf8mb4',
   };
 }
@@ -214,6 +255,7 @@ async function main() {
   const command = process.argv[2] || 'up';
   const backendRoot = path.resolve(__dirname, '..');
   const repoRoot = path.resolve(backendRoot, '..');
+  hydrateEnvFromDotenv(backendRoot);
   hydrateEnvFromEcosystem(backendRoot, repoRoot);
   const config = loadMysqlConfig();
   const connection = await mysql.createConnection({

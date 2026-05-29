@@ -1,5 +1,7 @@
 # 模块文档
 
+交互设计（IXD）文档见 [interaction-design/README.md](interaction-design/README.md)。缺口实现后续迭代见仓库根目录 [缺口模块后续迭代清单.md](../缺口模块后续迭代清单.md)。
+
 ## 用户端模块
 
 用户端入口是 `front-page/app/page.tsx`，核心实现位于 `front-page/src/features/lottery/lottery-app.tsx`。

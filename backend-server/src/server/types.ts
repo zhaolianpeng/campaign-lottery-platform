@@ -7,6 +7,7 @@ export type UserStatus = 'pending_phone' | 'active' | 'frozen' | 'disabled' | 'c
 export type RegisterSource = 'wechat' | 'mobile' | 'guest' | 'admin_import';
 export type LoginType = 'wechat' | 'mobile_code' | 'phone_login' | 'guest' | 'admin';
 export type CEndFeatureKey = 'series' | 'inventory' | 'exchange' | 'rank' | 'member' | 'shop' | 'social' | 'puzzle';
+export type InventoryDeliveryStatus = 'not_requested' | 'pending_payment' | 'pending_fulfillment' | 'fulfilled';
 
 export interface CEndFeatureToggles {
   readonly series: boolean;
@@ -82,6 +83,8 @@ export interface UserAccount {
   readonly cash_balance: number;
   readonly frozen_balance: number;
   readonly status: UserStatus;
+  /** 已绑定微信时返回，用于 JSAPI 支付 */
+  readonly wechat_openid?: string;
 }
 
 export interface UserLoginLog {
@@ -195,6 +198,7 @@ export interface Campaign {
   readonly starts_at: string;
   readonly ends_at: string;
   readonly daily_draw_limit: number;
+  readonly requires_phone_login: boolean;
   readonly miss_weight: number;
   readonly banner_image_url: string;
   readonly campaign_summary: string;
@@ -307,14 +311,40 @@ export interface UserInventory {
   readonly prize_level: string;
   readonly campaign_id: string;
   readonly source: 'draw' | 'exchange' | 'redeem' | 'collection_reward';
+  readonly shipping_value_yuan: number;
+  readonly delivery_status: InventoryDeliveryStatus;
+  readonly delivery_request_id?: string;
+  readonly exchange_offer_id?: string;
   readonly created_at: string;
+}
+
+export interface DeliveryRequest {
+  readonly id: string;
+  readonly user_id: string;
+  readonly item_ids: readonly string[];
+  readonly subtotal_yuan: number;
+  readonly shipping_fee_cents: number;
+  readonly status: 'pending_payment' | 'pending_fulfillment' | 'fulfilled';
+  readonly created_at: string;
+  readonly updated_at: string;
+  readonly paid_at?: string;
+}
+
+export interface DeliverySubmitResult {
+  readonly delivery_request_id: string;
+  readonly subtotal_yuan: number;
+  readonly shipping_fee_cents: number;
+  readonly free_shipping: boolean;
+  readonly requires_payment: boolean;
+  readonly submitted_item_count: number;
 }
 
 export interface ExchangeOffer {
   readonly id: string;
   readonly user_id: string;
   readonly user_nickname?: string;
-  readonly have_prize_id: string;
+  readonly have_inventory_item_ids: readonly string[];
+  readonly have_prize_ids: readonly string[];
   readonly have_prize_name: string;
   readonly want_prize_id: string;
   readonly want_prize_name: string;
@@ -323,7 +353,7 @@ export interface ExchangeOffer {
 }
 
 export interface ExchangeOfferMutation {
-  readonly have_prize_id: string;
+  readonly have_inventory_item_ids: readonly string[];
   readonly want_prize_id: string;
 }
 
@@ -333,6 +363,7 @@ export interface UserMember {
   readonly points: number;
   readonly total_draws: number;
   readonly total_spent: number;
+  readonly checked_in_today?: boolean;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -424,6 +455,7 @@ export interface CampaignMutation {
   readonly starts_at: string;
   readonly ends_at: string;
   readonly daily_draw_limit: number;
+  readonly requires_phone_login: boolean;
   readonly miss_weight: number;
   readonly banner_image_url?: string;
   readonly campaign_summary?: string;
@@ -458,6 +490,8 @@ export interface FulfillmentTask {
   readonly draw_record_id: string;
   readonly user_id: string;
   readonly prize_id: string;
+  readonly inventory_item_id?: string;
+  readonly delivery_request_id?: string;
   readonly status: string;
   readonly payload_json: string;
   readonly operator_note: string;
@@ -905,6 +939,7 @@ export interface FlashListInfo {
 }
 
 export interface ActivityRules {
+  readonly campaign_id?: string;
   readonly up_prize_id?: string;
   readonly up_multiplier?: number;
   readonly up_level?: string;

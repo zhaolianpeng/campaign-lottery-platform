@@ -24,3 +24,6 @@ export const phoneAlreadyBound = new AppError('phone_already_bound', '手机号�
 export const phoneCodeInvalid = new AppError('phone_code_invalid', '验证码错误或已过期', 400);
 export const phoneVerificationRequired = new AppError('phone_verification_required', '请使用短信验证码登录', 403);
 export const userStatusForbidden = new AppError('user_status_forbidden', '当前账号状态不允许执行该操作', 403);
+export const drawPhoneBindingRequired = new AppError('draw_phone_binding_required', '当前盲盒需要先绑定手机号后才能抽取', 403);
+export const paymentForbidden = new AppError('payment_forbidden', '无权操作该支付订单', 403);
+export const paymentNotPaid = new AppError('payment_not_paid', '订单尚未支付成功', 409);

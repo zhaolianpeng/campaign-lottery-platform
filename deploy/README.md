@@ -10,23 +10,50 @@
 
 ## 一键发布
 
-在本机执行：
+在本机执行（**四个变量均为必填**；缺任一项脚本会在本地立即退出）：
 
 ```bash
 cd deploy
 DEPLOY_PASSWORD='服务器 SSH 密码' \
 ADMIN_PASSWORD='后台登录密码' \
 MYSQL_PASSWORD='MySQL 业务密码' \
+CORS_ALLOW_ORIGIN='https://your-domain.example' \
 ./release_82.sh
 ```
+
+| 变量 | 用途 |
+| --- | --- |
+| `DEPLOY_PASSWORD` | SSH 登录远程服务器 |
+| `ADMIN_PASSWORD` | 后台管理登录密码（写入 PM2 `env`） |
+| `MYSQL_PASSWORD` | MySQL 业务账号 `campaign_lottery_app` 密码（远程 `npm run migrate` 与 PM2 均依赖此值） |
+| `CORS_ALLOW_ORIGIN` | 生产 CORS 白名单，禁止使用 `*` |
 
 可选变量：
 
 - `DEPLOY_HOST`：默认 `82.156.54.232`
 - `DEPLOY_USER`：默认 `ubuntu`
-- `REMOTE_PROJECT_DIR`：默认 `/home/ubuntu/campaign-lottery-platform`
+- `REMOTE_PROJECT_DIR`：默认 `/home/ubuntu/campaign-lottery-next`（发布脚本会把模板中的路径替换为该值；若与 PM2/nginx 实际目录不一致，会跑错代码或健康检查失败）
 - `NGINX_SITE_PATH`：默认 `/etc/nginx/sites-available/gaokao-api`
-- `CORS_ALLOW_ORIGIN`：默认 `*`
+
+说明：`release_82.sh` 不会同步 `.env.local` 到服务器；migrate 与 PM2 的数据库密码均来自本机执行脚本时传入的 `MYSQL_PASSWORD`。若需在服务器上手动执行 `npm run migrate`，请在 `backend-server/.env.local` 中配置 `MYSQL_ENABLED=true` 与 `MYSQL_PASSWORD`，或在 shell 中 export 同名变量。
+
+## HTTPS（生产推荐）
+
+nginx 模板默认 `listen 80`。上线 HTTPS 时可用 certbot：
+
+```bash
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d your-domain.example
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+外网验证：`curl -fsS https://your-domain.example/healthz` 应返回 `"status":"ok"`（`STORAGE_MODE=mysql` 且 MySQL/Redis 正常时）。
+
+## 监控与日志
+
+- API healthz：`GET /healthz`（含 `storage_mode`、`schema_version`）
+- PM2 日志：`~/.pm2/logs/campaign-lottery-api-*.log`、`campaign-lottery-front-*.log`
+- 可选：设置 `SENTRY_DSN` 环境变量接入错误追踪（后续接入）
 
 ## PM2 发布步骤
 
@@ -35,8 +62,9 @@ MYSQL_PASSWORD='MySQL 业务密码' \
    - `ADMIN_PASSWORD`
    - `MYSQL_PASSWORD`
    - 如有跨域要求，调整 `CORS_ALLOW_ORIGIN`
-3. 在 `backend-server` 目录执行 `npm install && npm run migrate && npm run build`。
-4. 在 `front-page` 目录执行 `npm install && npm run build`。
+   - 支付联调：`PAYMENT_ENABLED=true`，并确保 `backend-server/config/payment.config.json` 存在（发布脚本会从 `payment.config.mock.json` 复制）
+3. 在 `backend-server` 目录执行 `rm -rf .next && npm install && npm run migrate && npm run build`。
+4. 在 `front-page` 目录执行 `rm -rf .next && npm install && npm run build`（必须先删 `.next`，否则可能继续提供旧登录页静态资源）。
 5. 使用 PM2 启动或重载：
 
 ```bash
@@ -61,6 +89,10 @@ pm2 save
 sudo nginx -t
 sudo systemctl reload nginx
 ```
+
+## npm 源
+
+各子项目已配置 `.npmrc` 使用 `https://registry.npmjs.org/`。若线上 `npm install` 报 `E401`，多为 `package-lock.json` 仍指向需登录的私有源（如阿里云制品库），或服务器 `~/.npmrc` 配置了过期 token。发布脚本已显式传入 `--registry=https://registry.npmjs.org/`。
 
 ## 关键约束
 

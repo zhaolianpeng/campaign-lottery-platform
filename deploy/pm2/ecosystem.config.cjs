@@ -2,23 +2,25 @@ module.exports = {
   apps: [
     {
       name: 'campaign-lottery-api',
-      cwd: '/home/ubuntu/campaign-lottery-platform/backend-server',
+      cwd: '/home/ubuntu/campaign-lottery-next/backend-server',
       script: 'node_modules/.bin/next',
       args: 'start --port 18100',
       env: {
         NODE_ENV: 'production',
         PORT: '18100',
         ADMIN_USER: 'admin',
-        ADMIN_PASSWORD: 'change-me',
-        CORS_ALLOW_ORIGIN: '*',
+        ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
+        CORS_ALLOW_ORIGIN: process.env.CORS_ALLOW_ORIGIN,
         MYSQL_ENABLED: 'true',
         MYSQL_HOST: '127.0.0.1',
         MYSQL_PORT: '3306',
         MYSQL_DATABASE: 'campaign_lottery_platform',
         MYSQL_USER: 'campaign_lottery_app',
-        MYSQL_PASSWORD: 'change-me',
+        MYSQL_PASSWORD: process.env.MYSQL_PASSWORD,
         MYSQL_CONNECTION_LIMIT: '10',
         REDIS_ENABLED: 'false',
+        PAYMENT_ENABLED: 'true',
+        PAYMENT_CONFIG_PATH: 'config/payment.config.json',
       },
       max_memory_restart: '500M',
       error_file: '/home/ubuntu/.pm2/logs/campaign-lottery-api-error.log',
@@ -26,7 +28,7 @@ module.exports = {
     },
     {
       name: 'campaign-lottery-front',
-      cwd: '/home/ubuntu/campaign-lottery-platform/front-page',
+      cwd: '/home/ubuntu/campaign-lottery-next/front-page',
       script: 'node_modules/.bin/next',
       args: 'start --port 3000',
       env: {

@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
   starts_at DATETIME NOT NULL,
   ends_at DATETIME NOT NULL,
   daily_draw_limit INT NOT NULL DEFAULT 0,
+  requires_phone_login TINYINT(1) NOT NULL DEFAULT 0,
   miss_weight INT NOT NULL DEFAULT 0,
   banner_image_url VARCHAR(255) NOT NULL DEFAULT '',
   campaign_summary VARCHAR(255) NOT NULL DEFAULT '',

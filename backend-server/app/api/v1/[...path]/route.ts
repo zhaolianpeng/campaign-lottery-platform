@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { anonymousDrawToken, bearerToken, corsHeaders, fail, ok } from '@/server/api-response';
+import { anonymousDrawToken, bearerToken, corsHeaders, fail, ok, requestIdFromRequest } from '@/server/api-response';
 import {
   deletePendingAnonymousWins,
   deleteCampaignConfig,
@@ -14,9 +14,13 @@ import {
   upsertShopItem,
 } from '@/server/admin-config-repository';
 import { getAppConfig } from '@/server/config';
-import { notFound, phoneVerificationRequired } from '@/server/errors';
+import { AppError, notFound, phoneVerificationRequired } from '@/server/errors';
 import { getService } from '@/server/singleton';
 import { getOauthUrl, getJssdkConfig } from '@/server/wechat-service';
+import { verifyAdminLogin } from '@/server/admin-auth';
+import { writeAdminAudit } from '@/server/audit-log';
+import { getRepositories } from '@/server/repositories';
+import { incrementRateLimit } from '@/server/redis-helpers';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +33,7 @@ export function OPTIONS(): Response {
 
 const guestLoginSchema = z.object({
   nickname: z.string().optional().default(''),
+  invite_from: z.string().optional(),
 });
 
 const drawSchema = z.object({
@@ -48,6 +53,7 @@ const campaignMutationSchema = z.object({
   starts_at: z.string().min(1),
   ends_at: z.string().min(1),
   daily_draw_limit: z.number().int().nonnegative(),
+  requires_phone_login: z.boolean().default(false),
   miss_weight: z.number().int().nonnegative(),
   banner_image_url: z.string().optional(),
   campaign_summary: z.string().optional(),
@@ -80,12 +86,16 @@ const prizeMutationSchema = z.object({
 });
 
 const exchangeOfferSchema = z.object({
-  have_prize_id: z.string().min(1),
+  have_inventory_item_ids: z.array(z.string().min(1)).min(1),
   want_prize_id: z.string().min(1),
 });
 
 const redeemSchema = z.object({
   prize_id: z.string().min(1),
+});
+
+const deliveryRequestSchema = z.object({
+  item_ids: z.array(z.string().min(1)).min(1),
 });
 
 const fulfillmentMutationSchema = z.object({
@@ -261,7 +271,11 @@ async function readJson(request: Request): Promise<unknown> {
   if (!request.body) {
     return {};
   }
-  return request.json();
+  const text = await request.text();
+  if (!text.trim()) {
+    return {};
+  }
+  return JSON.parse(text) as unknown;
 }
 
 async function segments(context: RouteContext): Promise<readonly string[]> {
@@ -273,201 +287,255 @@ function searchParam(request: Request, name: string): string {
   return new URL(request.url).searchParams.get(name) ?? '';
 }
 
+async function handleReadRequest(request: Request, context: RouteContext): Promise<Response | null> {
+  const path = await segments(context);
+  const service = await getService();
+  const token = bearerToken(request);
+
+  if (path.join('/') === 'config/public') {
+    const config = getAppConfig();
+    return ok('public config', {
+      wechat: {
+        quick_login_enabled: config.wechat.quickLoginEnabled,
+      },
+      sms: {
+        provider: config.sms.provider || 'mock',
+        mock_enabled: config.sms.provider.toLowerCase() === 'mock',
+      },
+      c_end_features: service.cEndFeatureToggles(),
+      compliance: service.compliancePublic(),
+    });
+  }
+  if (path.join('/') === 'auth/carrier-login') {
+    throw new AppError('not_implemented', '运营商一键登录暂未开通', 501);
+  }
+  if (path[0] === 'users' && path[1] && path[2] === 'public-inventory') {
+    return ok('public inventory', service.publicUserInventory(path[1]));
+  }
+  if (path.join('/') === 'campaigns') {
+    return ok('campaign list', service.campaignList());
+  }
+  if (path.join('/') === 'me') {
+    return ok('current user', service.currentUser(token));
+  }
+  if (path.join('/') === 'me/account') {
+    return ok('current user account', service.currentUserAccount(token));
+  }
+  if (path.join('/') === 'me/draw-records') {
+    return ok('user draw records', service.drawRecords(token));
+  }
+  if (path.join('/') === 'blindbox/campaigns') {
+    return ok('campaign list with progress', service.campaignListWithProgress(token));
+  }
+  if (path[0] === 'blindbox' && path[1] === 'campaigns' && path[3] === 'probabilities' && path[2]) {
+    return ok('campaign probabilities', service.campaignProbabilities(path[2]));
+  }
+  if (path.join('/') === 'blindbox/pity-status') {
+    return ok('pity status', service.pityStatus(token, searchParam(request, 'campaign_id')));
+  }
+  if (path.join('/') === 'blindbox/inventory') {
+    return ok('user inventory', service.userInventory(token));
+  }
+  if (path.join('/') === 'blindbox/series-progress') {
+    return ok('series progress', service.seriesProgress(token, searchParam(request, 'campaign_id')));
+  }
+  if (path.join('/') === 'blindbox/exchange-offers') {
+    return ok('exchange offers', service.exchangeOffers());
+  }
+  if (path.join('/') === 'blindbox/member') {
+    return ok('member info', service.userMember(token));
+  }
+  if (path.join('/') === 'blindbox/points-log') {
+    return ok('points log', service.pointsLog(token));
+  }
+  if (path.join('/') === 'blindbox/leaderboard') {
+    const limit = Number(searchParam(request, 'limit') || 20);
+    const campaignId = searchParam(request, 'campaign_id') || undefined;
+    return ok('leaderboard', service.leaderboard(limit, campaignId));
+  }
+  if (path.join('/') === 'admin/overview') {
+    return ok('admin overview', service.adminOverview(token));
+  }
+  if (path.join('/') === 'admin/audit-logs') {
+    service.adminOverview(token);
+    const logs = await getRepositories().adminAudit.listRecent(Number(searchParam(request, 'limit') || 100));
+    return ok('admin audit logs', logs);
+  }
+  if (path.join('/') === 'admin/draw-records/export') {
+    const records = service.adminDrawRecords(token, {
+      user_id: searchParam(request, 'user_id') || undefined,
+      campaign_id: searchParam(request, 'campaign_id') || undefined,
+      result: searchParam(request, 'result') || undefined,
+      from: searchParam(request, 'from') || undefined,
+      to: searchParam(request, 'to') || undefined,
+    });
+    const header = 'id,campaign_id,user_id,prize_name,result,drawn_at\n';
+    const csv =
+      header +
+      records
+        .map((row) =>
+          [row.id, row.campaign_id, row.user_id, row.prize_name, row.result, row.drawn_at]
+            .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
+            .join(','),
+        )
+        .join('\n');
+    return new Response(csv, {
+      status: 200,
+      headers: {
+        ...corsHeaders(),
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="draw-records.csv"',
+      },
+    });
+  }
+  if (path.join('/') === 'admin/shop-items') {
+    return ok('admin shop items', service.adminShopItems(token));
+  }
+  if (path.join('/') === 'admin/first-recharge/packs') {
+    return ok('admin first recharge packs', service.adminFirstRechargePacks(token));
+  }
+  if (path.join('/') === 'admin/campaigns') {
+    return ok('admin campaigns', service.adminCampaigns(token));
+  }
+  if (path.join('/') === 'admin/feature-toggles') {
+    return ok('admin feature toggles', service.adminCEndFeatureToggles(token));
+  }
+  if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path.length === 3) {
+    return ok('admin campaign', service.adminCampaigns(token).find((campaign) => campaign.id === path[2]) ?? null);
+  }
+  if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path[3] === 'prizes') {
+    return ok('admin prizes', service.adminPrizes(token, path[2]));
+  }
+  if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path[3] === 'pity-config') {
+    const campaign = service.adminCampaigns(token).find((item) => item.id === path[2]);
+    return ok('pity config', campaign?.pity_config ?? null);
+  }
+  if (path.join('/') === 'admin/fulfillment-tasks' || path.join('/') === 'admin/delivery/pending') {
+    return ok('fulfillment tasks', service.fulfillmentTasks(token));
+  }
+  if (path.join('/') === 'admin/draw-records' || path.join('/') === 'admin/lottery-logs') {
+    return ok('draw records', service.adminDrawRecords(token, {
+      user_id: searchParam(request, 'user_id') || undefined,
+      campaign_id: searchParam(request, 'campaign_id') || undefined,
+      result: searchParam(request, 'result') || undefined,
+      from: searchParam(request, 'from') || undefined,
+      to: searchParam(request, 'to') || undefined,
+    }));
+  }
+  if (path.join('/') === 'admin/statistics') {
+    return ok('statistics', service.drawStatistics(token, searchParam(request, 'campaign_id')));
+  }
+  if (path.join('/') === 'admin/users') {
+    return ok('admin users', service.adminUsers(token, {
+      page: Number(searchParam(request, 'page') || 1),
+      page_size: Number(searchParam(request, 'page_size') || 20),
+      keyword: searchParam(request, 'keyword'),
+      status: searchParam(request, 'status'),
+      register_source: searchParam(request, 'register_source'),
+    }));
+  }
+  if (path[0] === 'admin' && path[1] === 'users' && path[2] && path.length === 3) {
+    return ok('admin user detail', service.adminUserDetail(token, path[2]));
+  }
+  if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'points-log') {
+    return ok('admin user points log', service.adminUserPointsLog(token, path[2]));
+  }
+  if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'login-logs') {
+    return ok('admin user login logs', service.adminUserLoginLogs(token, path[2]));
+  }
+  if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'status-logs') {
+    return ok('admin user status logs', service.adminUserStatusLogs(token, path[2]));
+  }
+  if (path.join('/') === 'battle-pass/info') {
+    return ok('battle pass info', service.battlePassInfo(token));
+  }
+  if (path.join('/') === 'month-card/status') {
+    return ok('month card status', service.monthCardStatus(token));
+  }
+  if (path.join('/') === 'blindbox/my-card') {
+    return ok('user card', service.userCard(token));
+  }
+  if (path[0] === 'blindbox' && path[1] === 'hint' && path[2]) {
+    return ok('campaign hint', service.campaignHint(path[2]));
+  }
+  if (path[0] === 'blindbox' && path[1] === 'up-pool' && path[2]) {
+    return ok('up pool info', service.campaignProbabilities(path[2]));
+  }
+  if (path.join('/') === 'shop/items') {
+    return ok('shop items', service.shopItems());
+  }
+  if (path.join('/') === 'shop/items/inventory') {
+    return ok('user items', service.userItems(token));
+  }
+  if (path.join('/') === 'first-recharge/packs') {
+    return ok('first recharge packs', service.firstRechargePacks());
+  }
+  if (path.join('/') === 'first-recharge/status') {
+    return ok('first recharge status', service.firstRechargeStatus(token));
+  }
+  if (path.join('/') === 'share/cards') {
+    return ok('share cards', service.shareCards(token));
+  }
+  if (path.join('/') === 'share/invitees') {
+    return ok('invite records', service.inviteRecords(token));
+  }
+  if (path.join('/') === 'share/invite-stats') {
+    return ok('invite stats', service.inviteStats(token));
+  }
+  if (path.join('/') === 'share/assist-progress') {
+    return ok('assist progress', service.assistProgress(token));
+  }
+  if (path.join('/') === 'team/my') {
+    return ok('my team', service.myTeam(token));
+  }
+  if (path.join('/') === 'share/gifts/incoming') {
+    return ok('incoming gifts', service.incomingGifts(token));
+  }
+  if (path.join('/') === 'share/gifts/sent') {
+    return ok('sent gifts', service.sentGifts(token));
+  }
+  if (path.join('/') === 'puzzle/templates') {
+    return ok('puzzle templates', service.puzzleTemplates(token));
+  }
+  if (path[0] === 'puzzle' && path[1] === 'progress' && path[2]) {
+    return ok('puzzle progress', service.puzzleInfo(token, path[2]));
+  }
+  if (path.join('/') === 'puzzle/my') {
+    return ok('all puzzle progress', service.allPuzzleInfo(token));
+  }
+  if (path.join('/') === 'puzzle/team/my') {
+    return ok('my puzzle teams', service.myPuzzleTeams(token));
+  }
+  if (path.join('/') === 'flash/list') {
+    return ok('flash list', service.flashList(token));
+  }
+  if (path.join('/') === 'flash/my') {
+    return ok('my flash subscriptions', service.myFlashSubscriptions(token));
+  }
+  if (path.join('/') === 'activities') {
+    return ok('activity list', service.activityList(token));
+  }
+  if (path[0] === 'activities' && path[1]) {
+    return ok('activity detail', service.activityInfo(token, path[1]));
+  }
+  if (path.join('/') === 'auth/wechat/oauth-url') {
+    return ok('oauth url', { url: getOauthUrl() });
+  }
+  if (path.join('/') === 'auth/wechat/jssdk-config') {
+    const url = searchParam(request, 'url') || request.headers.get('referer') || '';
+    const config = await getJssdkConfig(url);
+    return ok('jssdk config', config);
+  }
+
+  return null;
+}
+
 export async function GET(request: Request, context: RouteContext): Promise<Response> {
   try {
-    const path = await segments(context);
-    const service = await getService();
-    const token = bearerToken(request);
-
-    if (path.join('/') === 'config/public') {
-      const config = getAppConfig();
-      return ok('public config', {
-        wechat: {
-          quick_login_enabled: config.wechat.quickLoginEnabled,
-        },
-        sms: {
-          provider: config.sms.provider || 'mock',
-          mock_enabled: config.sms.provider.toLowerCase() === 'mock',
-        },
-        c_end_features: service.cEndFeatureToggles(),
-      });
+    const response = await handleReadRequest(request, context);
+    if (response) {
+      return response;
     }
-    if (path.join('/') === 'campaigns') {
-      return ok('campaign list', service.campaignList());
-    }
-    if (path.join('/') === 'me') {
-      return ok('current user', service.currentUser(token));
-    }
-    if (path.join('/') === 'me/account') {
-      return ok('current user account', service.currentUserAccount(token));
-    }
-    if (path.join('/') === 'me/draw-records') {
-      return ok('user draw records', service.drawRecords(token));
-    }
-    if (path.join('/') === 'blindbox/campaigns') {
-      return ok('campaign list with progress', service.campaignListWithProgress(token));
-    }
-    if (path[0] === 'blindbox' && path[1] === 'campaigns' && path[3] === 'probabilities' && path[2]) {
-      return ok('campaign probabilities', service.campaignProbabilities(path[2]));
-    }
-    if (path.join('/') === 'blindbox/pity-status') {
-      return ok('pity status', service.pityStatus(token, searchParam(request, 'campaign_id')));
-    }
-    if (path.join('/') === 'blindbox/inventory') {
-      return ok('user inventory', service.userInventory(token));
-    }
-    if (path.join('/') === 'blindbox/series-progress') {
-      return ok('series progress', service.seriesProgress(token, searchParam(request, 'campaign_id')));
-    }
-    if (path.join('/') === 'blindbox/exchange-offers') {
-      return ok('exchange offers', service.exchangeOffers());
-    }
-    if (path.join('/') === 'blindbox/member') {
-      return ok('member info', service.userMember(token));
-    }
-    if (path.join('/') === 'blindbox/points-log') {
-      return ok('points log', service.pointsLog(token));
-    }
-    if (path.join('/') === 'blindbox/leaderboard') {
-      const limit = Number(searchParam(request, 'limit') || 20);
-      return ok('leaderboard', service.leaderboard(limit));
-    }
-    if (path.join('/') === 'admin/overview') {
-      return ok('admin overview', service.adminOverview(token));
-    }
-    if (path.join('/') === 'admin/shop-items') {
-      return ok('admin shop items', service.adminShopItems(token));
-    }
-    if (path.join('/') === 'admin/first-recharge/packs') {
-      return ok('admin first recharge packs', service.adminFirstRechargePacks(token));
-    }
-    if (path.join('/') === 'admin/campaigns') {
-      return ok('admin campaigns', service.adminCampaigns(token));
-    }
-    if (path.join('/') === 'admin/feature-toggles') {
-      return ok('admin feature toggles', service.adminCEndFeatureToggles(token));
-    }
-    if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path.length === 3) {
-      return ok('admin campaign', service.adminCampaigns(token).find((campaign) => campaign.id === path[2]) ?? null);
-    }
-    if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path[3] === 'prizes') {
-      return ok('admin prizes', service.adminPrizes(token, path[2]));
-    }
-    if (path[0] === 'admin' && path[1] === 'campaigns' && path[2] && path[3] === 'pity-config') {
-      const campaign = service.adminCampaigns(token).find((item) => item.id === path[2]);
-      return ok('pity config', campaign?.pity_config ?? null);
-    }
-    if (path.join('/') === 'admin/fulfillment-tasks' || path.join('/') === 'admin/delivery/pending') {
-      return ok('fulfillment tasks', service.fulfillmentTasks(token));
-    }
-    if (path.join('/') === 'admin/draw-records' || path.join('/') === 'admin/lottery-logs') {
-      return ok('draw records', service.adminDrawRecords(token));
-    }
-    if (path.join('/') === 'admin/statistics') {
-      return ok('statistics', service.drawStatistics(token, searchParam(request, 'campaign_id')));
-    }
-    if (path.join('/') === 'admin/users') {
-      return ok('admin users', service.adminUsers(token, {
-        page: Number(searchParam(request, 'page') || 1),
-        page_size: Number(searchParam(request, 'page_size') || 20),
-        keyword: searchParam(request, 'keyword'),
-        status: searchParam(request, 'status'),
-        register_source: searchParam(request, 'register_source'),
-      }));
-    }
-    if (path[0] === 'admin' && path[1] === 'users' && path[2] && path.length === 3) {
-      return ok('admin user detail', service.adminUserDetail(token, path[2]));
-    }
-    if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'points-log') {
-      return ok('admin user points log', service.adminUserPointsLog(token, path[2]));
-    }
-    if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'login-logs') {
-      return ok('admin user login logs', service.adminUserLoginLogs(token, path[2]));
-    }
-    if (path[0] === 'admin' && path[1] === 'users' && path[2] && path[3] === 'status-logs') {
-      return ok('admin user status logs', service.adminUserStatusLogs(token, path[2]));
-    }
-    if (path.join('/') === 'battle-pass/info') {
-      return ok('battle pass info', service.battlePassInfo(token));
-    }
-    if (path.join('/') === 'month-card/status') {
-      return ok('month card status', service.monthCardStatus(token));
-    }
-    if (path.join('/') === 'blindbox/my-card') {
-      return ok('user card', service.userCard(token));
-    }
-    if (path[0] === 'blindbox' && path[1] === 'hint' && path[2]) {
-      return ok('campaign hint', service.campaignHint(path[2]));
-    }
-    if (path[0] === 'blindbox' && path[1] === 'up-pool' && path[2]) {
-      return ok('up pool info', service.campaignProbabilities(path[2]));
-    }
-    if (path.join('/') === 'shop/items') {
-      return ok('shop items', service.shopItems());
-    }
-    if (path.join('/') === 'shop/items/inventory') {
-      return ok('user items', service.userItems(token));
-    }
-    if (path.join('/') === 'first-recharge/packs') {
-      return ok('first recharge packs', service.firstRechargePacks());
-    }
-    if (path.join('/') === 'first-recharge/status') {
-      return ok('first recharge status', service.firstRechargeStatus(token));
-    }
-    if (path.join('/') === 'share/cards') {
-      return ok('share cards', service.shareCards(token));
-    }
-    if (path.join('/') === 'share/invitees') {
-      return ok('invite records', service.inviteRecords(token));
-    }
-    if (path.join('/') === 'share/invite-stats') {
-      return ok('invite stats', service.inviteStats(token));
-    }
-    if (path.join('/') === 'share/assist-progress') {
-      return ok('assist progress', service.assistProgress(token));
-    }
-    if (path.join('/') === 'team/my') {
-      return ok('my team', service.myTeam(token));
-    }
-    if (path.join('/') === 'share/gifts/incoming') {
-      return ok('incoming gifts', service.incomingGifts(token));
-    }
-    if (path.join('/') === 'share/gifts/sent') {
-      return ok('sent gifts', service.sentGifts(token));
-    }
-    if (path.join('/') === 'puzzle/templates') {
-      return ok('puzzle templates', service.puzzleTemplates(token));
-    }
-    if (path[0] === 'puzzle' && path[1] === 'progress' && path[2]) {
-      return ok('puzzle progress', service.puzzleInfo(token, path[2]));
-    }
-    if (path.join('/') === 'puzzle/my') {
-      return ok('all puzzle progress', service.allPuzzleInfo(token));
-    }
-    if (path.join('/') === 'puzzle/team/my') {
-      return ok('my puzzle teams', service.myPuzzleTeams(token));
-    }
-    if (path.join('/') === 'flash/list') {
-      return ok('flash list', service.flashList(token));
-    }
-    if (path.join('/') === 'flash/my') {
-      return ok('my flash subscriptions', service.myFlashSubscriptions(token));
-    }
-    if (path.join('/') === 'activities') {
-      return ok('activity list', service.activityList(token));
-    }
-    if (path[0] === 'activities' && path[1]) {
-      return ok('activity detail', service.activityInfo(token, path[1]));
-    }
-    if (path.join('/') === 'auth/wechat/oauth-url') {
-      return ok('oauth url', { url: getOauthUrl() });
-    }
-    if (path.join('/') === 'auth/wechat/jssdk-config') {
-      const url = searchParam(request, 'url') || request.headers.get('referer') || '';
-      const config = await getJssdkConfig(url);
-      return ok('jssdk config', config);
-    }
-
     throw notFound;
   } catch (error) {
     return fail(error);
@@ -477,13 +545,30 @@ export async function GET(request: Request, context: RouteContext): Promise<Resp
 export async function POST(request: Request, context: RouteContext): Promise<Response> {
   try {
     const path = await segments(context);
-    const service = await getService();
     const token = bearerToken(request);
+
+    if (path.join('/') === 'blindbox/exchange-offers') {
+      const body = await readJson(request);
+      const parsed = exchangeOfferSchema.safeParse(body);
+      if (parsed.success) {
+        const service = await getService();
+        return ok('exchange offer created', service.createExchangeOffer(token, parsed.data), 201);
+      }
+      return ok('exchange offers', (await getService()).exchangeOffers());
+    }
+
+    const readResponse = await handleReadRequest(request, context);
+    if (readResponse) {
+      return readResponse;
+    }
+
+    const service = await getService();
     const guestDrawToken = anonymousDrawToken(request);
     const body = await readJson(request);
 
     if (path.join('/') === 'auth/guest-login') {
-      const result = service.guestLogin(guestLoginSchema.parse(body).nickname);
+      const guestInput = guestLoginSchema.parse(body);
+      const result = service.guestLogin(guestInput.nickname, guestInput.invite_from);
       const claimedPendingDraws = service.claimAnonymousWins(guestDrawToken, result.user.id);
       if (claimedPendingDraws > 0) {
         await deletePendingAnonymousWins(guestDrawToken);
@@ -505,6 +590,11 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     }
     if (path.join('/') === 'auth/phone/code') {
       const input = phoneCodeSchema.parse(body);
+      const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1';
+      const allowed = await incrementRateLimit(`phone-code:${ip}`, 10, 3600);
+      if (!allowed) {
+        throw new AppError('rate_limited', '验证码请求过于频繁，请稍后再试', 429);
+      }
       return ok('phone code sent', service.sendPhoneCode(input.phone, input.scene));
     }
     if (path.join('/') === 'auth/phone/verify') {
@@ -527,14 +617,14 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
       }
       return ok('blind box draw completed', result);
     }
-    if (path.join('/') === 'blindbox/exchange-offers') {
-      return ok('exchange offer created', service.createExchangeOffer(token, exchangeOfferSchema.parse(body)), 201);
-    }
     if (path[0] === 'blindbox' && path[1] === 'exchange-offers' && path[2] && path[3] === 'accept') {
       return ok('exchange offer accepted', service.acceptExchangeOffer(token, path[2]));
     }
     if (path.join('/') === 'blindbox/redeem') {
       return ok('redeem completed', service.redeemPrize(token, redeemSchema.parse(body)));
+    }
+    if (path.join('/') === 'blindbox/delivery/request') {
+      return ok('delivery request submitted', service.submitDeliveryRequest(token, deliveryRequestSchema.parse(body).item_ids));
     }
     if (path.join('/') === 'blindbox/checkin') {
       return ok('checkin completed', service.dailyCheckIn(token));
@@ -624,7 +714,29 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     }
     if (path.join('/') === 'admin/login') {
       const input = adminLoginSchema.parse(body);
-      return ok('admin login succeeded', service.adminLogin(input.username, input.password));
+      const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? '127.0.0.1';
+      const admin = await verifyAdminLogin(input.username, input.password, ip);
+      const { token: adminToken } = service.adminLogin(input.username, input.password);
+      await writeAdminAudit({
+        adminUserId: admin.adminUserId,
+        adminUsername: admin.username,
+        action: 'admin.login',
+        resourceType: 'admin_session',
+        resourceId: adminToken,
+        requestId: requestIdFromRequest(request),
+        ipAddress: ip,
+      });
+      return ok('admin login succeeded', { token: adminToken });
+    }
+    if (path.join('/') === 'admin/compliance') {
+      const input = z
+        .object({
+          disclosure_updated_at: z.string().optional(),
+          filing_number: z.string().optional(),
+          rules_text: z.string().optional(),
+        })
+        .parse(body);
+      return ok('compliance updated', service.updateCompliance(token, input));
     }
     if (path.join('/') === 'admin/campaigns') {
       const campaign = service.createCampaign(token, campaignMutationSchema.parse(body));

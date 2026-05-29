@@ -1,0 +1,8 @@
+node_modules/
+dist/
+coverage/
+*.log
+config/payment.config.json
+certs/
+.env
+.env.local

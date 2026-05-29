@@ -16,44 +16,63 @@ const envBoolean = z.preprocess((value) => {
   return value;
 }, z.boolean());
 
-const envSchema = z.object({
-  ADMIN_USER: z.string().default('admin'),
-  ADMIN_PASSWORD: z.string().default(''),
-  CORS_ALLOW_ORIGIN: z.string().default('*'),
+const envSchema = z
+  .object({
+    ADMIN_USER: z.string().default('admin'),
+    ADMIN_PASSWORD: z.string().default(''),
+    CORS_ALLOW_ORIGIN: z.string().default('*'),
+    STORAGE_MODE: z.enum(['mysql', 'memory']).optional(),
 
-  MYSQL_ENABLED: envBoolean.default(false),
-  MYSQL_DSN: z.string().optional(),
-  MYSQL_HOST: z.string().default('127.0.0.1'),
-  MYSQL_PORT: z.coerce.number().int().positive().default(3306),
-  MYSQL_DATABASE: z.string().default('campaign_lottery_platform'),
-  MYSQL_USER: z.string().default('campaign_lottery_app'),
-  MYSQL_PASSWORD: z.string().default(''),
-  MYSQL_CHARSET: z.string().default('utf8mb4'),
-  MYSQL_CONNECTION_LIMIT: z.coerce.number().int().positive().default(10),
+    MYSQL_ENABLED: envBoolean.default(false),
+    MYSQL_DSN: z.string().optional(),
+    MYSQL_HOST: z.string().default('127.0.0.1'),
+    MYSQL_PORT: z.coerce.number().int().positive().default(3306),
+    MYSQL_DATABASE: z.string().default('campaign_lottery_platform'),
+    MYSQL_USER: z.string().default('campaign_lottery_app'),
+    MYSQL_PASSWORD: z.string().default(''),
+    MYSQL_CHARSET: z.string().default('utf8mb4'),
+    MYSQL_CONNECTION_LIMIT: z.coerce.number().int().positive().default(10),
 
-  REDIS_ENABLED: envBoolean.default(false),
-  REDIS_URL: z.string().optional(),
-  REDIS_HOST: z.string().default('127.0.0.1'),
-  REDIS_PORT: z.coerce.number().int().positive().default(6379),
-  REDIS_PASSWORD: z.string().optional(),
-  REDIS_DATABASE: z.coerce.number().int().nonnegative().default(0),
-  REDIS_KEY_PREFIX: z.string().default(''),
+    REDIS_ENABLED: envBoolean.default(false),
+    REDIS_URL: z.string().optional(),
+    REDIS_HOST: z.string().default('127.0.0.1'),
+    REDIS_PORT: z.coerce.number().int().positive().default(6379),
+    REDIS_PASSWORD: z.string().optional(),
+    REDIS_DATABASE: z.coerce.number().int().nonnegative().default(0),
+    REDIS_KEY_PREFIX: z.string().default(''),
 
-  WECHAT_QUICK_LOGIN_ENABLED: envBoolean.default(false),
-  WECHAT_APP_ID: z.string().default(''),
-  WECHAT_APP_SECRET: z.string().default(''),
-  WECHAT_TOKEN: z.string().default(''),
-  WECHAT_REDIRECT_URI: z.string().default(''),
+    WECHAT_QUICK_LOGIN_ENABLED: envBoolean.default(false),
+    WECHAT_APP_ID: z.string().default(''),
+    WECHAT_APP_SECRET: z.string().default(''),
+    WECHAT_TOKEN: z.string().default(''),
+    WECHAT_REDIRECT_URI: z.string().default(''),
 
-  SMS_PROVIDER: z.string().default('mock'),
-  SMS_ACCESS_KEY_ID: z.string().default(''),
-  SMS_ACCESS_KEY_SECRET: z.string().default(''),
-  SMS_SIGN_NAME: z.string().default(''),
-  SMS_TEMPLATE_CODE: z.string().default(''),
-  CARRIER_AUTH_PROVIDER: z.string().default(''),
-  CARRIER_AUTH_APP_ID: z.string().default(''),
-  CARRIER_AUTH_API_KEY: z.string().default(''),
-});
+    SMS_PROVIDER: z.string().default('mock'),
+    SMS_ACCESS_KEY_ID: z.string().default(''),
+    SMS_ACCESS_KEY_SECRET: z.string().default(''),
+    SMS_SIGN_NAME: z.string().default(''),
+    SMS_TEMPLATE_CODE: z.string().default(''),
+    CARRIER_AUTH_PROVIDER: z.string().default(''),
+    CARRIER_AUTH_APP_ID: z.string().default(''),
+    CARRIER_AUTH_API_KEY: z.string().default(''),
+
+    PAYMENT_ENABLED: envBoolean.default(false),
+    PAYMENT_CONFIG_PATH: z.string().default('config/payment.config.json'),
+
+    GUEST_INITIAL_POINTS: z.coerce.number().int().nonnegative().default(100),
+  })
+  .superRefine((data, ctx) => {
+    const nodeEnv = process.env.NODE_ENV ?? 'development';
+    if (nodeEnv === 'production' && data.CORS_ALLOW_ORIGIN.trim() === '*') {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'CORS_ALLOW_ORIGIN cannot be * in production',
+        path: ['CORS_ALLOW_ORIGIN'],
+      });
+    }
+  });
+
+export type StorageMode = 'mysql' | 'memory';
 
 export interface AppConfig {
   readonly admin: {
@@ -62,6 +81,7 @@ export interface AppConfig {
   };
   readonly server: {
     readonly corsAllowOrigin: string;
+    readonly storageMode: StorageMode;
   };
   readonly mysql: {
     readonly enabled: boolean;
@@ -102,9 +122,23 @@ export interface AppConfig {
     readonly appId: string;
     readonly apiKey: string;
   };
+  readonly payment: {
+    readonly enabled: boolean;
+    readonly configPath: string;
+  };
+  readonly guest: {
+    readonly initialPoints: number;
+  };
 }
 
 let cachedConfig: AppConfig | null = null;
+
+function resolveStorageMode(env: z.infer<typeof envSchema>): StorageMode {
+  if (env.STORAGE_MODE) {
+    return env.STORAGE_MODE;
+  }
+  return env.MYSQL_ENABLED ? 'mysql' : 'memory';
+}
 
 export function getAppConfig(): AppConfig {
   if (cachedConfig) {
@@ -112,6 +146,11 @@ export function getAppConfig(): AppConfig {
   }
 
   const env = envSchema.parse(process.env);
+  const storageMode = resolveStorageMode(env);
+  if (storageMode === 'mysql' && !env.MYSQL_ENABLED) {
+    throw new Error('STORAGE_MODE=mysql requires MYSQL_ENABLED=true');
+  }
+
   cachedConfig = {
     admin: {
       user: env.ADMIN_USER,
@@ -119,6 +158,7 @@ export function getAppConfig(): AppConfig {
     },
     server: {
       corsAllowOrigin: env.CORS_ALLOW_ORIGIN,
+      storageMode,
     },
     mysql: {
       enabled: env.MYSQL_ENABLED,
@@ -159,7 +199,18 @@ export function getAppConfig(): AppConfig {
       appId: env.CARRIER_AUTH_APP_ID,
       apiKey: env.CARRIER_AUTH_API_KEY,
     },
+    payment: {
+      enabled: env.PAYMENT_ENABLED,
+      configPath: env.PAYMENT_CONFIG_PATH,
+    },
+    guest: {
+      initialPoints: env.GUEST_INITIAL_POINTS,
+    },
   };
 
   return cachedConfig;
+}
+
+export function resetAppConfigForTests(): void {
+  cachedConfig = null;
 }

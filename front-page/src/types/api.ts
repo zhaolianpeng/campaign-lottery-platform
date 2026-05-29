@@ -6,6 +6,7 @@ export type ExchangeOfferStatus = 'pending' | 'matched' | 'completed' | 'cancell
 export type UserStatus = 'pending_phone' | 'active' | 'frozen' | 'disabled' | 'cancelled';
 export type RegisterSource = 'wechat' | 'mobile' | 'guest' | 'admin_import';
 export type TabKey = 'series' | 'inventory' | 'exchange' | 'rank' | 'member' | 'shop' | 'social' | 'puzzle';
+export type InventoryDeliveryStatus = 'not_requested' | 'pending_payment' | 'pending_fulfillment' | 'fulfilled';
 
 export interface CEndFeatureToggles {
   readonly series: boolean;
@@ -27,6 +28,11 @@ export interface PublicConfig {
     readonly mock_enabled: boolean;
   };
   readonly c_end_features?: CEndFeatureToggles;
+  readonly compliance?: {
+    readonly disclosure_updated_at: string;
+    readonly filing_number: string;
+    readonly rules_text: string;
+  };
 }
 
 export interface User {
@@ -141,6 +147,7 @@ export interface Campaign {
   readonly starts_at: string;
   readonly ends_at: string;
   readonly daily_draw_limit: number;
+  readonly requires_phone_login: boolean;
   readonly miss_weight: number;
   readonly banner_image_url: string;
   readonly campaign_summary: string;
@@ -252,14 +259,28 @@ export interface UserInventory {
   readonly prize_level: string;
   readonly campaign_id: string;
   readonly source: 'draw' | 'exchange' | 'redeem' | 'collection_reward';
+  readonly shipping_value_yuan: number;
+  readonly delivery_status: InventoryDeliveryStatus;
+  readonly delivery_request_id?: string;
+  readonly exchange_offer_id?: string;
   readonly created_at: string;
+}
+
+export interface DeliverySubmitResult {
+  readonly delivery_request_id: string;
+  readonly subtotal_yuan: number;
+  readonly shipping_fee_cents: number;
+  readonly free_shipping: boolean;
+  readonly requires_payment: boolean;
+  readonly submitted_item_count: number;
 }
 
 export interface ExchangeOffer {
   readonly id: string;
   readonly user_id: string;
   readonly user_nickname?: string;
-  readonly have_prize_id: string;
+  readonly have_inventory_item_ids: readonly string[];
+  readonly have_prize_ids: readonly string[];
   readonly have_prize_name: string;
   readonly want_prize_id: string;
   readonly want_prize_name: string;
@@ -273,6 +294,7 @@ export interface UserMember {
   readonly points: number;
   readonly total_draws: number;
   readonly total_spent: number;
+  readonly checked_in_today?: boolean;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -483,12 +505,76 @@ export interface FlashListInfo {
   readonly purchasable: boolean;
 }
 
+export interface BlendResult {
+  readonly source_prize_id: string;
+  readonly source_prize_name: string;
+  readonly source_level: string;
+  readonly result_prize_id: string;
+  readonly result_prize_name: string;
+  readonly result_level: string;
+  readonly remaining_src: number;
+}
+
+export interface RedeemResult {
+  readonly record_id: string;
+  readonly prize_id: string;
+  readonly prize_name: string;
+  readonly points_cost: number;
+  readonly remaining: number;
+}
+
+export interface CheckInResult {
+  readonly points_awarded: number;
+  readonly streak_days: number;
+  readonly is_bonus: boolean;
+  readonly new_balance: number;
+}
+
+export interface HintMessage {
+  readonly type: string;
+  readonly content: string;
+}
+
+export interface ShareCard {
+  readonly id: string;
+  readonly title: string;
+  readonly description: string;
+  readonly invite_link?: string;
+  readonly prize_name?: string;
+  readonly prize_level?: string;
+}
+
+export interface PublicInventoryItem {
+  readonly prize_id: string;
+  readonly prize_name: string;
+  readonly prize_level: string;
+  readonly campaign_id: string;
+  readonly count: number;
+}
+
+export interface AdminStatistics {
+  readonly total_users: number;
+  readonly total_draws: number;
+  readonly total_wins: number;
+  readonly total_revenue_cents: number;
+  readonly campaign_draws: readonly { readonly campaign_id: string; readonly campaign_name: string; readonly draws: number }[];
+}
+
 export interface ActivityListInfo {
   readonly activity: {
     readonly id: string;
     readonly name: string;
     readonly description: string;
     readonly type: string;
+    readonly banner_url?: string;
+    readonly rules?: {
+      readonly campaign_id?: string;
+      readonly up_campaign_id?: string;
+      readonly up_prize_id?: string;
+      readonly up_multiplier?: number;
+      readonly up_level?: string;
+      readonly checkin_multiplier?: number;
+    };
     readonly status: string;
   };
   readonly joined: boolean;

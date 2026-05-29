@@ -1,4 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import {
+  BUILTIN_STARRY_ACTIVITY_BANNER_URL,
+  BUILTIN_STARRY_CAMPAIGN_BANNER_URL,
+  BUILTIN_SUMMER_ACTIVITY_BANNER_URL,
+  BUILTIN_SUMMER_CAMPAIGN_BANNER_URL,
+} from './builtin-banner-assets';
 import { syncAdminConfigWithMysql } from './admin-config-repository';
 import { getAppConfig } from './config';
 import {
@@ -51,6 +57,8 @@ import type {
   CreateTeamRequest,
   DrawRecord,
   DrawStatistics,
+  DeliveryRequest,
+  DeliverySubmitResult,
   ExchangeOffer,
   ExchangeOfferMutation,
   FirstRechargePack,
@@ -66,12 +74,14 @@ import type {
   InviteRecord,
   InviteStats,
   ItemType,
+  InventoryDeliveryStatus,
   LeaderboardEntry,
   MonthCardPurchaseResult,
   MonthCardStatus,
   PendingAnonymousWin,
   PityConfig,
   Prize,
+  PrizeLevel,
   PrizeMutation,
   PrizeSummary,
   PuzzleInfo,
@@ -111,6 +121,8 @@ import type {
 
 const POINTS_PER_DRAW = 100;
 const PHONE_CODE_TTL_MS = 5 * 60 * 1000;
+const FREE_SHIPPING_THRESHOLD_YUAN = 98;
+const SHIPPING_FEE_CENTS = 990;
 
 interface PhoneVerificationCode {
   readonly id: number;
@@ -269,6 +281,7 @@ export class MemoryStore {
   private readonly drawRecords: DrawRecord[] = [];
   private readonly quotaUsed = new Map<string, number>();
   private readonly inventory: UserInventory[] = [];
+  private readonly deliveryRequests: DeliveryRequest[] = [];
   private readonly exchangeOffers: ExchangeOffer[] = [];
   private readonly members = new Map<string, UserMember>();
   private readonly pointsLogs: UserPointsLog[] = [];
@@ -279,6 +292,12 @@ export class MemoryStore {
   private readonly fulfillmentTaskItems: FulfillmentTask[] = [];
   private readonly checkInDates = new Map<string, string>();
   private readonly checkInStreaks = new Map<string, number>();
+  private readonly dailyAssistByHelper = new Map<string, number>();
+  private readonly complianceSettings = {
+    disclosure_updated_at: '2026-05-28T00:00:00.000Z',
+    filing_number: '',
+    rules_text: '抽奖结果由系统随机生成，概率公示信息仅供参考。未成年人请在监护人指导下消费。',
+  };
   private readonly shareCounts = new Map<string, number>();
   private readonly userCards = new Map<string, UserCard>();
   private readonly userItems = new Map<string, UserItem>();
@@ -579,9 +598,13 @@ export class MemoryStore {
     }
   }
 
-  public assertAssetAllowed(userId: string): void {
+  public assertAssetAllowed(userId: string, options?: { readonly allowPendingPhone?: boolean }): void {
     const user = this.users.get(userId);
-    if (!user || user.status === 'pending_phone' || user.status === 'frozen' || user.status === 'disabled' || user.status === 'cancelled') {
+    const allowPendingPhone = options?.allowPendingPhone ?? false;
+    if (
+      !user ||
+      ((!allowPendingPhone && user.status === 'pending_phone') || user.status === 'frozen' || user.status === 'disabled' || user.status === 'cancelled')
+    ) {
       throw userStatusForbidden;
     }
   }
@@ -632,6 +655,7 @@ export class MemoryStore {
       updated_at: user.updated_at ?? user.created_at,
     };
     this.wallets.set(userId, wallet);
+    const wechatUser = this.wechatUsers.get(userId);
     return {
       user: { ...user },
       profile: this.userProfiles.get(userId) ? { ...this.userProfiles.get(userId)! } : undefined,
@@ -639,6 +663,7 @@ export class MemoryStore {
       cash_balance: wallet.cash_balance,
       frozen_balance: wallet.frozen_balance,
       status: (user.status ?? 'active') as UserStatus,
+      wechat_openid: wechatUser?.openid,
     };
   }
 
@@ -780,25 +805,8 @@ export class MemoryStore {
     };
     this.drawRecords.unshift(record);
     this.inventory.unshift({
-      id: randomId('inv'),
-      user_id: userId,
-      prize_id: prize.id,
-      prize_name: prize.name,
-      prize_level: prize.level,
+      ...this.createInventoryItem(userId, prize, 'draw', record.drawn_at),
       campaign_id: campaignId,
-      source: 'draw',
-      created_at: record.drawn_at,
-    });
-    this.fulfillmentTaskItems.unshift({
-      id: this.fulfillmentTaskItems.length + 1,
-      draw_record_id: record.id,
-      user_id: userId,
-      prize_id: prize.id,
-      status: 'pending',
-      payload_json: JSON.stringify({ prize_name: prize.name }),
-      operator_note: '',
-      created_at: record.drawn_at,
-      updated_at: record.drawn_at,
     });
     return record;
   }
@@ -879,7 +887,7 @@ export class MemoryStore {
   }
 
   public getUserInventory(userId: string): readonly UserInventory[] {
-    return this.inventory.filter((item) => item.user_id === userId).map((item) => ({ ...item }));
+    return this.inventory.filter((item) => item.user_id === userId).map((item) => this.normalizeInventoryItem(item));
   }
 
   private finalizeAnonymousWinClaim(userId: string, pendingWin: PendingAnonymousWin): DrawRecord {
@@ -895,27 +903,100 @@ export class MemoryStore {
     };
     this.drawRecords.unshift(record);
     this.inventory.unshift({
-      id: randomId('inv'),
-      user_id: userId,
-      prize_id: pendingWin.prize_id,
-      prize_name: pendingWin.prize_name,
-      prize_level: pendingWin.prize_level,
+      ...this.createInventoryItem(
+        userId,
+        {
+          ...this.findPrize(pendingWin.prize_id),
+          level: pendingWin.prize_level as PrizeLevel,
+          name: pendingWin.prize_name,
+        },
+        'draw',
+        pendingWin.drawn_at,
+      ),
       campaign_id: pendingWin.campaign_id,
-      source: 'draw',
-      created_at: pendingWin.drawn_at,
-    });
-    this.fulfillmentTaskItems.unshift({
-      id: this.fulfillmentTaskItems.length + 1,
-      draw_record_id: record.id,
-      user_id: userId,
-      prize_id: pendingWin.prize_id,
-      status: 'pending',
-      payload_json: JSON.stringify({ prize_name: pendingWin.prize_name }),
-      operator_note: 'anonymous draw claimed after login',
-      created_at: pendingWin.drawn_at,
-      updated_at: pendingWin.drawn_at,
     });
     return record;
+  }
+
+  public submitDeliveryRequest(userId: string, itemIds: readonly string[]): DeliverySubmitResult {
+    const uniqueItemIds = [...new Set(itemIds.map((itemId) => itemId.trim()).filter(Boolean))];
+    if (!uniqueItemIds.length) {
+      throw new AppError('delivery_items_required', '请先勾选需要发货的奖品', 400);
+    }
+
+    const selected = this.inventory
+      .map((item, index) => ({ item: this.normalizeInventoryItem(item), index }))
+      .filter(({ item }) => item.user_id === userId && uniqueItemIds.includes(item.id));
+
+    if (selected.length !== uniqueItemIds.length) {
+      throw new AppError('delivery_item_not_found', '部分奖品不存在或已失效', 404);
+    }
+    if (selected.some(({ item }) => item.delivery_status !== 'not_requested')) {
+      throw new AppError('delivery_status_invalid', '所选奖品已在发货流程中，请刷新后重试', 400);
+    }
+    if (selected.some(({ item }) => item.exchange_offer_id)) {
+      throw new AppError('delivery_item_listed_exchange', '已挂到交换市场的奖品不能提交发货', 400);
+    }
+
+    const subtotalYuan = Number(selected.reduce((sum, { item }) => sum + item.shipping_value_yuan, 0).toFixed(2));
+    const shippingFeeCents = subtotalYuan >= FREE_SHIPPING_THRESHOLD_YUAN ? 0 : SHIPPING_FEE_CENTS;
+    const createdAt = nowISO();
+    const request: DeliveryRequest = {
+      id: randomId('ship'),
+      user_id: userId,
+      item_ids: uniqueItemIds,
+      subtotal_yuan: subtotalYuan,
+      shipping_fee_cents: shippingFeeCents,
+      status: shippingFeeCents > 0 ? 'pending_payment' : 'pending_fulfillment',
+      created_at: createdAt,
+      updated_at: createdAt,
+      paid_at: shippingFeeCents > 0 ? undefined : createdAt,
+    };
+    this.deliveryRequests.unshift(request);
+
+    if (shippingFeeCents > 0) {
+      for (const { index, item } of selected) {
+        this.inventory[index] = {
+          ...item,
+          delivery_status: 'pending_payment',
+          delivery_request_id: request.id,
+        };
+      }
+      return this.deliverySubmitResult(request);
+    }
+
+    const activated = this.activateDeliveryRequest(request.id, createdAt);
+    return this.deliverySubmitResult(activated);
+  }
+
+  public getDeliveryRequest(requestId: string): DeliveryRequest | undefined {
+    return this.deliveryRequests.find((item) => item.id === requestId);
+  }
+
+  public getDeliveryShippingFeeCents(userId: string, requestId: string): number {
+    const request = this.deliveryRequests.find((item) => item.id === requestId && item.user_id === userId);
+    if (!request) {
+      throw notFound;
+    }
+    return request.shipping_fee_cents;
+  }
+
+  public fulfillDeliveryRequest(userId: string, requestId: string, amountCents: number): DeliverySubmitResult {
+    const request = this.deliveryRequests.find((item) => item.id === requestId && item.user_id === userId);
+    if (!request) {
+      throw notFound;
+    }
+    if (request.status === 'pending_fulfillment' || request.status === 'fulfilled') {
+      return this.deliverySubmitResult(request);
+    }
+    if (request.shipping_fee_cents <= 0) {
+      throw new AppError('delivery_fee_not_required', '当前发货申请无需支付运费', 400);
+    }
+    if (request.shipping_fee_cents !== amountCents) {
+      throw new AppError('payment_amount_mismatch', '运费支付金额不匹配', 400);
+    }
+    const activated = this.activateDeliveryRequest(request.id, nowISO());
+    return this.deliverySubmitResult(activated);
   }
 
   public getSeriesProgress(userId: string, campaignId: string, campaignName: string): SeriesProgress {
@@ -961,20 +1042,48 @@ export class MemoryStore {
   }
 
   public createExchangeOffer(userId: string, input: ExchangeOfferMutation): ExchangeOffer {
-    const have = this.findPrize(input.have_prize_id);
+    const uniqueInventoryIds = [...new Set(input.have_inventory_item_ids.map((itemId) => itemId.trim()).filter(Boolean))];
+    if (!uniqueInventoryIds.length) {
+      throw new AppError('exchange_item_required', '请先勾选用于交换的奖品', 400);
+    }
+
+    const selectedInventory = uniqueInventoryIds.map((itemId) => {
+      const index = this.inventory.findIndex((item) => item.id === itemId && item.user_id === userId);
+      const inventoryItem = index >= 0 ? this.normalizeInventoryItem(this.inventory[index]) : null;
+      if (!inventoryItem) {
+        throw notFound;
+      }
+      if (inventoryItem.delivery_status !== 'not_requested') {
+        throw new AppError('exchange_item_delivery_locked', '发货流程中的奖品不能挂交换', 400);
+      }
+      if (inventoryItem.exchange_offer_id) {
+        throw new AppError('exchange_item_already_listed', '所选奖品中有部分已挂到交换市场', 400);
+      }
+      return { index, item: inventoryItem };
+    });
+
     const want = this.findPrize(input.want_prize_id);
     const user = this.users.get(userId);
+    const havePrizeNames = selectedInventory.map(({ item }) => item.prize_name);
+    const havePrizeIds = selectedInventory.map(({ item }) => item.prize_id);
     const offer: ExchangeOffer = {
       id: randomId('ex'),
       user_id: userId,
       user_nickname: user?.nickname ?? '',
-      have_prize_id: have.id,
-      have_prize_name: have.name,
+      have_inventory_item_ids: selectedInventory.map(({ item }) => item.id),
+      have_prize_ids: havePrizeIds,
+      have_prize_name: havePrizeNames.join(' + '),
       want_prize_id: want.id,
       want_prize_name: want.name,
       status: 'pending',
       created_at: nowISO(),
     };
+    for (const { index, item } of selectedInventory) {
+      this.inventory[index] = {
+        ...item,
+        exchange_offer_id: offer.id,
+      };
+    }
     this.exchangeOffers.unshift(offer);
     return offer;
   }
@@ -984,7 +1093,15 @@ export class MemoryStore {
     if (index < 0) {
       throw notFound;
     }
-    this.exchangeOffers[index] = { ...this.exchangeOffers[index], status: 'cancelled' };
+    const offer = this.exchangeOffers[index];
+    this.exchangeOffers[index] = { ...offer, status: 'cancelled' };
+    for (const inventoryItemId of offer.have_inventory_item_ids) {
+      const inventoryIndex = this.inventory.findIndex((item) => item.id === inventoryItemId && item.user_id === userId);
+      if (inventoryIndex >= 0) {
+        const inventoryItem = this.normalizeInventoryItem(this.inventory[inventoryIndex]);
+        this.inventory[inventoryIndex] = { ...inventoryItem, exchange_offer_id: undefined };
+      }
+    }
   }
 
   public acceptExchangeOffer(userId: string, offerId: string): ExchangeOffer {
@@ -993,6 +1110,65 @@ export class MemoryStore {
     if (!offer || offer.status !== 'pending' || offer.user_id === userId) {
       throw notFound;
     }
+
+    const offerInventories = offer.have_inventory_item_ids.map((inventoryItemId) => {
+      const inventoryIndex = this.inventory.findIndex((item) => item.id === inventoryItemId && item.user_id === offer.user_id);
+      const inventoryItem = inventoryIndex >= 0 ? this.normalizeInventoryItem(this.inventory[inventoryIndex]) : null;
+      if (!inventoryItem || inventoryItem.exchange_offer_id !== offer.id) {
+        throw new AppError('exchange_offer_unavailable', '该交换挂单已失效', 400);
+      }
+      return { index: inventoryIndex, item: inventoryItem };
+    });
+
+    const takerInventoryIndex = this.inventory.findIndex((item) => {
+      const current = this.normalizeInventoryItem(item);
+      return (
+        current.user_id === userId &&
+        current.prize_id === offer.want_prize_id &&
+        current.delivery_status === 'not_requested' &&
+        !current.exchange_offer_id
+      );
+    });
+    const takerInventory = takerInventoryIndex >= 0 ? this.normalizeInventoryItem(this.inventory[takerInventoryIndex]) : null;
+    if (!takerInventory) {
+      throw new AppError('exchange_target_missing', '你当前没有可交换的目标奖品', 400);
+    }
+
+    const primaryOfferInventory = offerInventories[0]?.item;
+    if (!primaryOfferInventory) {
+      throw new AppError('exchange_offer_unavailable', '该交换挂单已失效', 400);
+    }
+
+    this.inventory[offerInventories[0].index] = {
+      ...primaryOfferInventory,
+      user_id: offer.user_id,
+      prize_id: takerInventory.prize_id,
+      prize_name: takerInventory.prize_name,
+      prize_level: takerInventory.prize_level,
+      campaign_id: takerInventory.campaign_id,
+      source: 'exchange',
+      shipping_value_yuan: this.prizeShippingValueYuan(takerInventory.prize_level),
+      exchange_offer_id: undefined,
+    };
+    for (const { index, item } of offerInventories.slice(1)) {
+      this.inventory[index] = {
+        ...item,
+        user_id: userId,
+        source: 'exchange',
+        exchange_offer_id: undefined,
+      };
+    }
+    this.inventory[takerInventoryIndex] = {
+      ...takerInventory,
+      user_id: userId,
+      prize_id: primaryOfferInventory.prize_id,
+      prize_name: primaryOfferInventory.prize_name,
+      prize_level: primaryOfferInventory.prize_level,
+      campaign_id: primaryOfferInventory.campaign_id,
+      source: 'exchange',
+      shipping_value_yuan: this.prizeShippingValueYuan(primaryOfferInventory.prize_level),
+      exchange_offer_id: undefined,
+    };
     this.exchangeOffers[index] = { ...offer, status: 'completed' };
     return this.exchangeOffers[index];
   }
@@ -1002,11 +1178,15 @@ export class MemoryStore {
     if (!member) {
       throw unauthorized;
     }
-    return { ...member };
+    return {
+      ...member,
+      checked_in_today: this.checkInDates.get(userId) === todayKey(),
+    };
   }
 
   public updateUserMember(member: UserMember): void {
-    this.members.set(member.user_id, { ...member, updated_at: nowISO() });
+    const { checked_in_today: _checkedInToday, ...persisted } = member;
+    this.members.set(persisted.user_id, { ...persisted, updated_at: nowISO() });
   }
 
   public getPointsLog(userId: string): readonly UserPointsLog[] {
@@ -1029,14 +1209,7 @@ export class MemoryStore {
     this.updateUserMember(updated);
     this.logPoints(userId, -cost, updated.points, 'redeem', `兑换 ${prize.name}`);
     this.inventory.unshift({
-      id: randomId('inv'),
-      user_id: userId,
-      prize_id: prize.id,
-      prize_name: prize.name,
-      prize_level: prize.level,
-      campaign_id: prize.campaign_id,
-      source: 'redeem',
-      created_at: nowISO(),
+      ...this.createInventoryItem(userId, prize, 'redeem'),
     });
 
     return {
@@ -1105,12 +1278,14 @@ export class MemoryStore {
     };
   }
 
-  public leaderboard(limit: number): readonly LeaderboardEntry[] {
+  public leaderboard(limit: number, campaignId?: string): readonly LeaderboardEntry[] {
     const entries = [...this.users.values()].map((user) => {
-      const collectedIds = new Set(
-        this.inventory.filter((item) => item.user_id === user.id).map((item) => item.prize_id),
-      );
-      const totalCount = [...this.prizesByCampaign.values()].reduce((sum, prizes) => sum + prizes.length, 0);
+      const userItems = this.inventory.filter((item) => item.user_id === user.id);
+      const scoped = campaignId ? userItems.filter((item) => item.campaign_id === campaignId) : userItems;
+      const collectedIds = new Set(scoped.map((item) => item.prize_id));
+      const totalCount = campaignId
+        ? (this.prizesByCampaign.get(campaignId)?.length ?? 0)
+        : [...this.prizesByCampaign.values()].reduce((sum, prizes) => sum + prizes.length, 0);
       return {
         rank: 0,
         user_id: user.id,
@@ -1126,6 +1301,45 @@ export class MemoryStore {
       .sort((left, right) => right.collected_count - left.collected_count)
       .slice(0, limit)
       .map((entry, index) => ({ ...entry, rank: index + 1 }));
+  }
+
+  public publicUserInventory(userId: string): readonly { readonly prize_id: string; readonly prize_name: string; readonly prize_level: string; readonly campaign_id: string; readonly count: number }[] {
+    const counts = new Map<string, { readonly prize_id: string; readonly prize_name: string; readonly prize_level: string; readonly campaign_id: string; count: number }>();
+    for (const item of this.inventory.filter((row) => row.user_id === userId)) {
+      const current = counts.get(item.prize_id) ?? {
+        prize_id: item.prize_id,
+        prize_name: item.prize_name,
+        prize_level: item.prize_level,
+        campaign_id: item.campaign_id,
+        count: 0,
+      };
+      counts.set(item.prize_id, { ...current, count: current.count + 1 });
+    }
+    return [...counts.values()];
+  }
+
+  public compliancePublic(): { readonly disclosure_updated_at: string; readonly filing_number: string; readonly rules_text: string } {
+    return { ...this.complianceSettings };
+  }
+
+  public updateCompliance(input: Partial<{ readonly disclosure_updated_at: string; readonly filing_number: string; readonly rules_text: string }>): { readonly disclosure_updated_at: string; readonly filing_number: string; readonly rules_text: string } {
+    Object.assign(this.complianceSettings, input);
+    return this.compliancePublic();
+  }
+
+  public recordInviteRegistration(inviterId: string, inviteeId: string): void {
+    if (!inviterId || inviterId === inviteeId) {
+      return;
+    }
+    if (this.inviteRecords.some((row) => row.invitee_id === inviteeId)) {
+      return;
+    }
+    this.inviteRecords.unshift({
+      id: randomId('invte'),
+      inviter_id: inviterId,
+      invitee_id: inviteeId,
+      created_at: nowISO(),
+    });
   }
 
   public adminLogin(username: string, password: string): string {
@@ -1185,6 +1399,7 @@ export class MemoryStore {
       starts_at: input.starts_at,
       ends_at: input.ends_at,
       daily_draw_limit: input.daily_draw_limit,
+      requires_phone_login: input.requires_phone_login,
       miss_weight: input.miss_weight,
       banner_image_url: input.banner_image_url ?? '',
       campaign_summary: input.campaign_summary ?? '',
@@ -1206,6 +1421,7 @@ export class MemoryStore {
       starts_at: input.starts_at,
       ends_at: input.ends_at,
       daily_draw_limit: input.daily_draw_limit,
+      requires_phone_login: input.requires_phone_login,
       miss_weight: input.miss_weight,
       banner_image_url: input.banner_image_url ?? '',
       campaign_summary: input.campaign_summary ?? '',
@@ -1439,9 +1655,31 @@ export class MemoryStore {
     this.firstRechargePackList = next;
   }
 
-  public adminDrawRecords(token: string): readonly DrawRecord[] {
+  public adminDrawRecords(
+    token: string,
+    filters?: { readonly user_id?: string; readonly campaign_id?: string; readonly result?: string; readonly from?: string; readonly to?: string },
+  ): readonly DrawRecord[] {
     this.ensureAdmin(token);
-    return this.drawRecords.map((record) => ({ ...record }));
+    return this.drawRecords
+      .filter((record) => {
+        if (filters?.user_id && record.user_id !== filters.user_id) {
+          return false;
+        }
+        if (filters?.campaign_id && record.campaign_id !== filters.campaign_id) {
+          return false;
+        }
+        if (filters?.result && record.result !== filters.result) {
+          return false;
+        }
+        if (filters?.from && record.drawn_at < filters.from) {
+          return false;
+        }
+        if (filters?.to && record.drawn_at > filters.to) {
+          return false;
+        }
+        return true;
+      })
+      .map((record) => ({ ...record }));
   }
 
   public adminUsers(token: string, query: { readonly page?: number; readonly page_size?: number; readonly keyword?: string; readonly status?: string; readonly register_source?: string }): AdminUserListResult {
@@ -1599,6 +1837,20 @@ export class MemoryStore {
       fulfilled_at: input.status === 'fulfilled' ? nowISO() : task.fulfilled_at,
     };
     this.fulfillmentTaskItems[index] = updated;
+    if (updated.status === 'fulfilled' && updated.inventory_item_id) {
+      const inventoryIndex = this.inventory.findIndex((item) => item.id === updated.inventory_item_id);
+      if (inventoryIndex >= 0) {
+        const inventoryItem = this.normalizeInventoryItem(this.inventory[inventoryIndex]);
+        this.inventory[inventoryIndex] = {
+          ...inventoryItem,
+          delivery_status: 'fulfilled',
+          delivery_request_id: updated.delivery_request_id ?? inventoryItem.delivery_request_id,
+        };
+      }
+      if (updated.delivery_request_id) {
+        this.refreshDeliveryRequestStatus(updated.delivery_request_id);
+      }
+    }
     return updated;
   }
 
@@ -1636,7 +1888,11 @@ export class MemoryStore {
     const config = cardConfigs[input.card_type];
     const member = this.getUserMember(userId);
     if (member.points < config.price) {
-      throw insufficientPoints;
+      throw new AppError(
+        'insufficient_points',
+        `积分不足：需要 ${config.price} 积分，当前 ${member.points} 积分`,
+        409,
+      );
     }
     const updated = { ...member, points: member.points - config.price, total_spent: member.total_spent + config.price };
     this.updateUserMember(updated);
@@ -1690,6 +1946,25 @@ export class MemoryStore {
     return { card, new_points: result.points };
   }
 
+  /** 现金支付履约：开通月卡/周卡/季卡，不扣积分 */
+  public grantMonthCard(userId: string, cardType: CardType): MonthCardPurchaseResult {
+    const config = cardConfigs[cardType];
+    const member = this.getUserMember(userId);
+    const card: UserCard = {
+      id: randomId('card'),
+      user_id: userId,
+      card_type: cardType,
+      price: config.price,
+      started_at: nowISO(),
+      expires_at: addDays(config.durationDays),
+      daily_free_used: 0,
+      free_date: todayKey(),
+      created_at: nowISO(),
+    };
+    this.userCards.set(userId, card);
+    return { card, new_points: member.points };
+  }
+
   public battlePassInfo(userId: string): BattlePassInfo {
     if (!this.battlePassSeason) {
       return { season: null, tasks: [], rewards: [], level_progress: 0 };
@@ -1715,7 +1990,15 @@ export class MemoryStore {
     const updated = { ...member, points: member.points - cost };
     this.updateUserMember(updated);
     this.logPoints(userId, -cost, updated.points, 'battle_pass', '购买付费战令');
+    return this.grantBattlePass(userId);
+  }
+
+  /** 现金支付履约：开通付费战令，不扣积分 */
+  public grantBattlePass(userId: string): BattlePass {
     const current = this.getOrCreateBattlePass(userId);
+    if (current.pass_type === 'paid') {
+      return current;
+    }
     const next = { ...current, pass_type: 'paid' as const, bought_at: nowISO(), updated_at: nowISO() };
     this.battlePasses.set(userId, next);
     return next;
@@ -1767,6 +2050,25 @@ export class MemoryStore {
       quantity,
       points_cost: pointsCost,
       new_points: updated.points,
+      new_qty: newQty,
+    };
+  }
+
+  /** 现金支付履约：发放商店道具，不扣积分 */
+  public grantShopItem(userId: string, input: BuyShopItemRequest): BuyShopItemResult {
+    const item = this.shopItemList.find((candidate) => candidate.id === input.shop_item_id && candidate.is_active);
+    if (!item) {
+      throw notFound;
+    }
+    const quantity = Math.max(1, input.quantity ?? 1);
+    const member = this.getUserMember(userId);
+    const newQty = this.addUserItem(userId, item.item_type, item.item_qty * quantity);
+    return {
+      item_type: item.item_type,
+      item_name: item.name,
+      quantity,
+      points_cost: 0,
+      new_points: member.points,
       new_qty: newQty,
     };
   }
@@ -1829,14 +2131,7 @@ export class MemoryStore {
     }
     const result = this.prizeList(input.campaign_id).find((candidate) => candidate.level === nextLevel) ?? source;
     this.inventory.unshift({
-      id: randomId('inv'),
-      user_id: userId,
-      prize_id: result.id,
-      prize_name: result.name,
-      prize_level: result.level,
-      campaign_id: result.campaign_id,
-      source: 'collection_reward',
-      created_at: nowISO(),
+      ...this.createInventoryItem(userId, result, 'collection_reward'),
     });
     return {
       source_prize_id: source.id,
@@ -1901,10 +2196,17 @@ export class MemoryStore {
   }
 
   public recordAssist(userId: string, assistType: AssistType, helperId: string): AssistProgress {
+    const today = new Date().toISOString().slice(0, 10);
+    const limitKey = `${helperId || 'anon'}:${today}`;
+    const used = this.dailyAssistByHelper.get(limitKey) ?? 0;
+    if (helperId && used >= 10) {
+      throw new AppError('assist_daily_limit', '今日助力次数已达上限', 429);
+    }
     const progress = this.getAssistProgress(userId, assistType);
     const next = { ...progress, current: Math.min(progress.target_count, progress.current + (helperId ? 1 : 0)) };
     this.assistProgress.set(`${userId}:${assistType}`, next);
     if (helperId) {
+      this.dailyAssistByHelper.set(limitKey, used + 1);
       this.inviteRecords.unshift({ id: randomId('invte'), inviter_id: userId, invitee_id: helperId, created_at: nowISO() });
     }
     return next;
@@ -2002,14 +2304,17 @@ export class MemoryStore {
     const newItemId = randomId('inv');
     this.gifts[index] = { ...gift, status: 'received', received_at: nowISO() };
     this.inventory.unshift({
-      id: newItemId,
-      user_id: userId,
-      prize_id: gift.prize_id,
-      prize_name: gift.prize_name,
-      prize_level: gift.prize_level,
-      campaign_id: this.findPrize(gift.prize_id).campaign_id,
-      source: 'exchange',
-      created_at: nowISO(),
+      ...this.createInventoryItem(
+        userId,
+        {
+          ...this.findPrize(gift.prize_id),
+          name: gift.prize_name,
+          level: gift.prize_level as PrizeLevel,
+        },
+        'exchange',
+        nowISO(),
+        newItemId,
+      ),
     });
     return { gift_id: giftId, prize_name: gift.prize_name, prize_level: gift.prize_level, new_item_id: newItemId };
   }
@@ -2296,21 +2601,23 @@ export class MemoryStore {
         starts_at: startsAt,
         ends_at: new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString(),
         daily_draw_limit: 3,
+        requires_phone_login: false,
         miss_weight: 86,
-        banner_image_url: '',
+        banner_image_url: BUILTIN_SUMMER_CAMPAIGN_BANNER_URL,
         campaign_summary: '新用户登录即可参与，中奖后进入发奖队列，支持后台配置库存和概率。',
       },
       {
-        id: 'series_starry_001',
-        name: '星空系列',
+        id: 'camp_blindbox_001',
+        name: '梦幻星辰系列盲盒',
         slug: 'starry-night',
         status: 'online',
         starts_at: startsAt,
         ends_at: endsAt,
         daily_draw_limit: 10,
+        requires_phone_login: false,
         miss_weight: 72,
-        banner_image_url: '',
-        campaign_summary: '收集星光、月色与银河，集齐普通款和隐藏款可解锁限定奖励。',
+        banner_image_url: BUILTIN_STARRY_CAMPAIGN_BANNER_URL,
+        campaign_summary: '收集12款星辰主题公仔，集齐全套可兑换隐藏款，活动期内隐藏款概率提升。',
         pity_config: {
           enabled: true,
           soft_pity_n: 20,
@@ -2327,6 +2634,7 @@ export class MemoryStore {
         starts_at: startsAt,
         ends_at: new Date(now + 45 * 24 * 60 * 60 * 1000).toISOString(),
         daily_draw_limit: 8,
+        requires_phone_login: false,
         miss_weight: 68,
         banner_image_url: '',
         campaign_summary: '超萌猫咪盲盒，集齐全部款式可以解锁隐藏版布偶猫王。',
@@ -2342,17 +2650,17 @@ export class MemoryStore {
       { id: 'prize_002', campaign_id: 'camp_launch_001', name: '20元优惠券', level: 'A', stock: 60, probability_weight: 18, status: 'active' },
       { id: 'prize_003', campaign_id: 'camp_launch_001', name: '品牌周边礼盒', level: 'B', stock: 20, probability_weight: 8, status: 'active' },
     ]);
-    this.prizesByCampaign.set('series_starry_001', [
-      { id: 'star_01', campaign_id: 'series_starry_001', name: '繁星点点', level: 'common', stock: 500, probability_weight: 15, status: 'active' },
-      { id: 'star_02', campaign_id: 'series_starry_001', name: '月光如水', level: 'common', stock: 500, probability_weight: 15, status: 'active' },
-      { id: 'star_03', campaign_id: 'series_starry_001', name: '银河之泪', level: 'common', stock: 400, probability_weight: 14, status: 'active' },
-      { id: 'star_04', campaign_id: 'series_starry_001', name: '流星划过', level: 'common', stock: 400, probability_weight: 12, status: 'active' },
-      { id: 'star_05', campaign_id: 'series_starry_001', name: '极光之舞', level: 'common', stock: 300, probability_weight: 10, status: 'active' },
-      { id: 'star_06', campaign_id: 'series_starry_001', name: '星云之眼', level: 'common', stock: 300, probability_weight: 6, status: 'active' },
-      { id: 'star_07', campaign_id: 'series_starry_001', name: '星月传说', level: 'rare', stock: 100, probability_weight: 15, status: 'active' },
-      { id: 'star_08', campaign_id: 'series_starry_001', name: '北极光', level: 'rare', stock: 80, probability_weight: 10, status: 'active' },
-      { id: 'star_09', campaign_id: 'series_starry_001', name: '宇宙之心', level: 'secret', stock: 10, probability_weight: 2, status: 'active' },
-      { id: 'star_10', campaign_id: 'series_starry_001', name: '星辰大海', level: 'limited', stock: 3, probability_weight: 1, status: 'active' },
+    this.prizesByCampaign.set('camp_blindbox_001', [
+      { id: 'star_01', campaign_id: 'camp_blindbox_001', name: '繁星点点', level: 'common', stock: 500, probability_weight: 15, status: 'active' },
+      { id: 'star_02', campaign_id: 'camp_blindbox_001', name: '月光如水', level: 'common', stock: 500, probability_weight: 15, status: 'active' },
+      { id: 'star_03', campaign_id: 'camp_blindbox_001', name: '银河之泪', level: 'common', stock: 400, probability_weight: 14, status: 'active' },
+      { id: 'star_04', campaign_id: 'camp_blindbox_001', name: '流星划过', level: 'common', stock: 400, probability_weight: 12, status: 'active' },
+      { id: 'star_05', campaign_id: 'camp_blindbox_001', name: '极光之舞', level: 'common', stock: 300, probability_weight: 10, status: 'active' },
+      { id: 'star_06', campaign_id: 'camp_blindbox_001', name: '星云之眼', level: 'common', stock: 300, probability_weight: 6, status: 'active' },
+      { id: 'star_07', campaign_id: 'camp_blindbox_001', name: '星月传说', level: 'rare', stock: 100, probability_weight: 15, status: 'active' },
+      { id: 'star_08', campaign_id: 'camp_blindbox_001', name: '北极光', level: 'rare', stock: 80, probability_weight: 10, status: 'active' },
+      { id: 'star_09', campaign_id: 'camp_blindbox_001', name: '宇宙之心', level: 'secret', stock: 10, probability_weight: 2, status: 'active' },
+      { id: 'star_10', campaign_id: 'camp_blindbox_001', name: '星辰大海', level: 'limited', stock: 3, probability_weight: 1, status: 'active' },
     ]);
     this.prizesByCampaign.set('series_cat_001', [
       { id: 'cat_01', campaign_id: 'series_cat_001', name: '英短蓝猫', level: 'common', stock: 600, probability_weight: 16, status: 'active' },
@@ -2433,7 +2741,7 @@ export class MemoryStore {
       {
         id: 'puzzle_starry_week',
         name: '星空拼图周挑战',
-        campaign_id: 'series_starry_001',
+        campaign_id: 'camp_blindbox_001',
         total_pieces: 6,
         piece_names: ['星芒', '月影', '银河', '流光', '极光', '宇宙'],
         reward_type: 'points',
@@ -2461,7 +2769,7 @@ export class MemoryStore {
     this.flashSales = [
       {
         id: 'flash_starry_secret',
-        campaign_id: 'series_starry_001',
+        campaign_id: 'camp_blindbox_001',
         name: '宇宙之心限时抢购',
         description: '会员专属隐藏款限量抢购。',
         price_points: 1500,
@@ -2479,11 +2787,11 @@ export class MemoryStore {
     this.activities = [
       {
         id: 'activity_launch_week',
-        name: '开服星光周',
-        description: '参与活动领取额外积分，抽盒与收集都有奖励。',
+        name: '夏季开门红抽奖活动',
+        description: '新用户登录即可参与，中奖后进入发奖队列，支持后台配置库存和概率。',
         type: 'festival',
-        banner_url: '',
-        rules: { checkin_multiplier: 2 },
+        banner_url: BUILTIN_SUMMER_ACTIVITY_BANNER_URL,
+        rules: { campaign_id: 'camp_launch_001', checkin_multiplier: 2 },
         sort_order: 1,
         status: 'active',
         start_at: startsAt,
@@ -2493,11 +2801,11 @@ export class MemoryStore {
       },
       {
         id: 'activity_up_starry',
-        name: '星空隐藏 UP',
-        description: '宇宙之心限时概率提升。',
+        name: '梦幻星辰系列盲盒',
+        description: '宇宙之心限时概率提升，活动期内冲刺隐藏款。',
         type: 'up_pool',
-        banner_url: '',
-        rules: { up_campaign_id: 'series_starry_001', up_prize_id: 'star_09', up_multiplier: 3, up_level: 'secret' },
+        banner_url: BUILTIN_STARRY_ACTIVITY_BANNER_URL,
+        rules: { campaign_id: 'camp_blindbox_001', up_campaign_id: 'camp_blindbox_001', up_prize_id: 'star_09', up_multiplier: 3, up_level: 'secret' },
         sort_order: 2,
         status: 'active',
         start_at: startsAt,
@@ -2521,6 +2829,20 @@ export class MemoryStore {
 
   private quotaKey(userId: string, campaignId: string): string {
     return `${userId}:${campaignId}:${todayKey()}`;
+  }
+
+  public grantMemberPoints(
+    userId: string,
+    points: number,
+    reason: string,
+    remark: string,
+  ): { readonly points_added: number; readonly new_points: number } {
+    const member = this.getUserMember(userId);
+    const pointsAdded = Math.max(0, points);
+    const updated = { ...member, points: member.points + pointsAdded };
+    this.updateUserMember(updated);
+    this.logPoints(userId, pointsAdded, updated.points, reason, remark);
+    return { points_added: pointsAdded, new_points: updated.points };
   }
 
   private logPoints(userId: string, points: number, balance: number, reason: string, remark: string): void {
@@ -2603,6 +2925,126 @@ export class MemoryStore {
       return 500;
     }
     return 200;
+  }
+
+  private prizeShippingValueYuan(level: string): number {
+    if (level === 'limited' || level === 'S') {
+      return 99;
+    }
+    if (level === 'secret' || level === 'A') {
+      return 69;
+    }
+    if (level === 'rare') {
+      return 39;
+    }
+    return 19;
+  }
+
+  private normalizeInventoryItem(item: UserInventory): UserInventory {
+    return {
+      ...item,
+      shipping_value_yuan: item.shipping_value_yuan ?? this.prizeShippingValueYuan(item.prize_level),
+      delivery_status: (item.delivery_status ?? 'not_requested') as InventoryDeliveryStatus,
+    };
+  }
+
+  private createInventoryItem(
+    userId: string,
+    prize: Prize,
+    source: UserInventory['source'],
+    createdAt = nowISO(),
+    inventoryItemId = randomId('inv'),
+  ): UserInventory {
+    return {
+      id: inventoryItemId,
+      user_id: userId,
+      prize_id: prize.id,
+      prize_name: prize.name,
+      prize_level: prize.level,
+      campaign_id: prize.campaign_id,
+      source,
+      shipping_value_yuan: this.prizeShippingValueYuan(prize.level),
+      delivery_status: 'not_requested',
+      created_at: createdAt,
+    };
+  }
+
+  private deliverySubmitResult(request: DeliveryRequest): DeliverySubmitResult {
+    return {
+      delivery_request_id: request.id,
+      subtotal_yuan: request.subtotal_yuan,
+      shipping_fee_cents: request.shipping_fee_cents,
+      free_shipping: request.shipping_fee_cents === 0,
+      requires_payment: request.status === 'pending_payment',
+      submitted_item_count: request.item_ids.length,
+    };
+  }
+
+  private activateDeliveryRequest(requestId: string, paidAt: string): DeliveryRequest {
+    const requestIndex = this.deliveryRequests.findIndex((item) => item.id === requestId);
+    const request = this.deliveryRequests[requestIndex];
+    if (!request) {
+      throw notFound;
+    }
+
+    const updatedRequest: DeliveryRequest = {
+      ...request,
+      status: 'pending_fulfillment',
+      updated_at: paidAt,
+      paid_at: request.shipping_fee_cents > 0 ? paidAt : request.paid_at ?? paidAt,
+    };
+    this.deliveryRequests[requestIndex] = updatedRequest;
+
+    for (const itemId of request.item_ids) {
+      const inventoryIndex = this.inventory.findIndex((item) => item.id === itemId && item.user_id === request.user_id);
+      if (inventoryIndex < 0) {
+        continue;
+      }
+      const inventoryItem = this.normalizeInventoryItem(this.inventory[inventoryIndex]);
+      this.inventory[inventoryIndex] = {
+        ...inventoryItem,
+        delivery_status: 'pending_fulfillment',
+        delivery_request_id: request.id,
+      };
+      if (!this.fulfillmentTaskItems.some((task) => task.inventory_item_id === itemId)) {
+        this.fulfillmentTaskItems.unshift({
+          id: this.fulfillmentTaskItems.length + 1,
+          draw_record_id: request.id,
+          user_id: request.user_id,
+          prize_id: inventoryItem.prize_id,
+          inventory_item_id: itemId,
+          delivery_request_id: request.id,
+          status: 'pending',
+          payload_json: JSON.stringify({
+            prize_name: inventoryItem.prize_name,
+            subtotal_yuan: request.subtotal_yuan,
+            shipping_fee_cents: request.shipping_fee_cents,
+            free_shipping: request.shipping_fee_cents === 0,
+          }),
+          operator_note: request.shipping_fee_cents === 0 ? '满额包邮自动提交发货' : '用户已支付运费，待发货',
+          created_at: paidAt,
+          updated_at: paidAt,
+        });
+      }
+    }
+
+    return updatedRequest;
+  }
+
+  private refreshDeliveryRequestStatus(requestId: string): void {
+    const requestIndex = this.deliveryRequests.findIndex((item) => item.id === requestId);
+    const request = this.deliveryRequests[requestIndex];
+    if (!request) {
+      return;
+    }
+    const relatedTasks = this.fulfillmentTaskItems.filter((task) => task.delivery_request_id === requestId);
+    if (relatedTasks.length > 0 && relatedTasks.every((task) => task.status === 'fulfilled')) {
+      this.deliveryRequests[requestIndex] = {
+        ...request,
+        status: 'fulfilled',
+        updated_at: nowISO(),
+      };
+    }
   }
 
   public spendDrawPoints(userId: string, drawCount: number): UserMember {

@@ -151,6 +151,7 @@ type CampaignEditorValues = {
   readonly starts_at: string;
   readonly ends_at: string;
   readonly daily_draw_limit: string;
+  readonly requires_phone_login: boolean;
   readonly miss_weight: string;
   readonly banner_image_url: string;
   readonly campaign_summary: string;
@@ -261,6 +262,7 @@ function createCampaignEditorValues(initial?: Campaign): CampaignEditorValues {
     starts_at: toDatetimeLocalValue(initial?.starts_at ?? new Date().toISOString()),
     ends_at: toDatetimeLocalValue(initial?.ends_at ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()),
     daily_draw_limit: String(initial?.daily_draw_limit ?? 5),
+    requires_phone_login: initial?.requires_phone_login ?? false,
     miss_weight: String(initial?.miss_weight ?? 70),
     banner_image_url: initial?.banner_image_url ?? '',
     campaign_summary: initial?.campaign_summary ?? '管理端创建的盲盒草稿，请补充奖品后再上线。',
@@ -275,6 +277,7 @@ function toCampaignPayload(campaign: Campaign | null, values: CampaignEditorValu
     starts_at: toIsoValue(values.starts_at) ?? campaign?.starts_at ?? new Date().toISOString(),
     ends_at: toIsoValue(values.ends_at) ?? campaign?.ends_at ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
     daily_draw_limit: Number(values.daily_draw_limit),
+    requires_phone_login: values.requires_phone_login,
     miss_weight: Number(values.miss_weight),
     banner_image_url: values.banner_image_url.trim(),
     campaign_summary: values.campaign_summary.trim(),
@@ -365,6 +368,9 @@ export function AdminApp(): React.ReactNode {
   const [pityEditor, setPityEditor] = useState<PityEditorValues | null>(null);
   const [shopItemEditor, setShopItemEditor] = useState<{ readonly itemId?: string; readonly values: ShopItemEditorValues } | null>(null);
   const [firstRechargeEditor, setFirstRechargeEditor] = useState<{ readonly packId?: string; readonly values: FirstRechargeEditorValues } | null>(null);
+  const [recordUserId, setRecordUserId] = useState('');
+  const [recordCampaignId, setRecordCampaignId] = useState('');
+  const [recordResult, setRecordResult] = useState('');
   const queryClient = useQueryClient();
 
   const loginForm = useForm<LoginValues>({
@@ -425,9 +431,28 @@ export function AdminApp(): React.ReactNode {
   });
 
   const recordsQuery = useQuery({
-    queryKey: ['admin-records', token],
-    queryFn: () => apiRequest<DrawRecord[]>('/api/v1/admin/draw-records', token),
+    queryKey: ['admin-records', token, recordUserId, recordCampaignId, recordResult],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (recordUserId.trim()) {
+        params.set('user_id', recordUserId.trim());
+      }
+      if (recordCampaignId.trim()) {
+        params.set('campaign_id', recordCampaignId.trim());
+      }
+      if (recordResult.trim()) {
+        params.set('result', recordResult.trim());
+      }
+      const query = params.toString();
+      return apiRequest<DrawRecord[]>(`/api/v1/admin/draw-records${query ? `?${query}` : ''}`, token);
+    },
     enabled: Boolean(token) && tab === 'records',
+  });
+
+  const statisticsQuery = useQuery({
+    queryKey: ['admin-statistics', token],
+    queryFn: () => apiRequest<{ readonly total_draws: number; readonly total_wins: number; readonly win_rate: number }>('/api/v1/admin/statistics', token),
+    enabled: Boolean(token) && tab === 'overview',
   });
 
   const battlePassQuery = useQuery({
@@ -705,6 +730,14 @@ export function AdminApp(): React.ReactNode {
     },
   });
 
+  const kickSessionsMutation = useMutation({
+    mutationFn: (userId: string) =>
+      apiRequest(`/api/v1/admin/users/${userId}/kick-sessions`, token, { method: 'POST', body: '{}' }),
+    onSuccess: () => {
+      window.alert('已踢出该用户全部会话');
+    },
+  });
+
   const campaigns = campaignsQuery.data ?? [];
   const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId);
   const selectedPrizes = prizesQuery.data ?? [];
@@ -949,6 +982,12 @@ export function AdminApp(): React.ReactNode {
                 </div>
               ))}
             </div>
+            {statisticsQuery.data ? (
+              <div className="rounded-xl border border-zinc-800 bg-[#1a1a24] p-4 text-sm text-zinc-400">
+                统计：总抽 {statisticsQuery.data.total_draws} · 中奖 {statisticsQuery.data.total_wins} · 中奖率{' '}
+                {statisticsQuery.data.win_rate.toFixed(1)}%
+              </div>
+            ) : null}
             <AdminList title="盲盒列表">
               {(overviewQuery.data?.campaigns ?? []).map((campaign) => (
                 <DataCard
@@ -1069,6 +1108,14 @@ export function AdminApp(): React.ReactNode {
                         type="button"
                       >
                         调整积分
+                      </button>
+                      <button
+                        className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-200 disabled:opacity-50"
+                        disabled={kickSessionsMutation.isPending}
+                        onClick={() => kickSessionsMutation.mutate(userDetailQuery.data.user.id)}
+                        type="button"
+                      >
+                        踢出会话
                       </button>
                     </div>
 
@@ -1414,6 +1461,29 @@ export function AdminApp(): React.ReactNode {
         {tab === 'records' ? (
           <section className="space-y-4">
             <h2 className="text-xl font-black text-white">抽奖记录</h2>
+            <div className="flex flex-wrap gap-2">
+              <input
+                className="rounded-lg border border-zinc-700 bg-[#222] px-3 py-2 text-xs text-zinc-100"
+                onChange={(event) => setRecordUserId(event.target.value)}
+                placeholder="用户 ID"
+                value={recordUserId}
+              />
+              <input
+                className="rounded-lg border border-zinc-700 bg-[#222] px-3 py-2 text-xs text-zinc-100"
+                onChange={(event) => setRecordCampaignId(event.target.value)}
+                placeholder="盲盒 ID"
+                value={recordCampaignId}
+              />
+              <select
+                className="rounded-lg border border-zinc-700 bg-[#222] px-3 py-2 text-xs text-zinc-100"
+                onChange={(event) => setRecordResult(event.target.value)}
+                value={recordResult}
+              >
+                <option value="">全部结果</option>
+                <option value="win">win</option>
+                <option value="miss">miss</option>
+              </select>
+            </div>
             <div className="overflow-x-auto rounded-xl border border-zinc-800 bg-[#1a1a24]">
               <table className="w-full min-w-[640px] border-collapse text-sm">
                 <thead className="bg-white/[0.04] text-left text-xs text-zinc-500">
@@ -1591,6 +1661,12 @@ export function AdminApp(): React.ReactNode {
               <Field label="开始时间"><input className="admin-input" type="datetime-local" value={campaignEditor.values.starts_at} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, starts_at: event.target.value } } : current)} /></Field>
               <Field label="结束时间"><input className="admin-input" type="datetime-local" value={campaignEditor.values.ends_at} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, ends_at: event.target.value } } : current)} /></Field>
               <Field label="每日抽取上限"><input className="admin-input" min={0} type="number" value={campaignEditor.values.daily_draw_limit} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, daily_draw_limit: event.target.value } } : current)} /></Field>
+              <Field label="抽盲盒是否要求手机号登录">
+                <label className="flex items-center gap-2 text-sm text-zinc-300">
+                  <input checked={campaignEditor.values.requires_phone_login} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, requires_phone_login: event.target.checked } } : current)} type="checkbox" />
+                  <span>{campaignEditor.values.requires_phone_login ? '需要先绑定手机号' : '任何登录状态都可以抽'}</span>
+                </label>
+              </Field>
               <Field label="未中权重"><input className="admin-input" min={0} type="number" value={campaignEditor.values.miss_weight} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, miss_weight: event.target.value } } : current)} /></Field>
               <Field label="Banner 图片 URL"><input className="admin-input" placeholder="https://... 或 /api/v1/uploads/..." value={campaignEditor.values.banner_image_url} onChange={(event) => setCampaignEditor((current) => current ? { ...current, values: { ...current.values, banner_image_url: event.target.value } } : current)} /></Field>
               <Field label="当前状态"><input className="admin-input" disabled value={campaignEditor.campaign?.status ?? 'draft'} /></Field>

@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto';
-import { campaignInactive, noDrawChances, wechatPhoneRequired } from './errors';
+import { campaignInactive, drawPhoneBindingRequired, noDrawChances, wechatPhoneRequired } from './errors';
 import { MemoryStore } from './memory-store';
 import { PityTracker, ProbabilityEngine, type PityEngineConfig } from './probability';
 import { exchangeCode, getUserInfo, decryptPhoneNumber } from './wechat-service';
@@ -34,6 +34,7 @@ import type {
   ClaimFirstRechargeResult,
   ComposePuzzleResult,
   CreateTeamRequest,
+  DeliverySubmitResult,
   DrawConfig,
   DrawRecord,
   DrawStatistics,
@@ -90,8 +91,25 @@ export class LotteryService {
 
   public constructor(private readonly store: MemoryStore) {}
 
-  public guestLogin(nickname: string): ReturnType<MemoryStore['createGuestSession']> {
-    return this.store.createGuestSession(nickname);
+  public guestLogin(nickname: string, inviteFrom?: string): ReturnType<MemoryStore['createGuestSession']> {
+    const result = this.store.createGuestSession(nickname);
+    if (inviteFrom) {
+      this.store.recordInviteRegistration(inviteFrom, result.user.id);
+    }
+    return result;
+  }
+
+  public compliancePublic(): ReturnType<MemoryStore['compliancePublic']> {
+    return this.store.compliancePublic();
+  }
+
+  public updateCompliance(token: string, input: Parameters<MemoryStore['updateCompliance']>[0]): ReturnType<MemoryStore['updateCompliance']> {
+    this.adminOverview(token);
+    return this.store.updateCompliance(input);
+  }
+
+  public publicUserInventory(userId: string): ReturnType<MemoryStore['publicUserInventory']> {
+    return this.store.publicUserInventory(userId);
   }
 
   public async wechatLogin(code: string): Promise<WechatLoginResult> {
@@ -249,7 +267,10 @@ export class LotteryService {
     }
 
     if (authenticatedUser) {
-      this.store.assertAssetAllowed(authenticatedUser.id);
+      if (campaign.requires_phone_login && authenticatedUser.status === 'pending_phone') {
+        throw drawPhoneBindingRequired;
+      }
+      this.store.assertAssetAllowed(authenticatedUser.id, { allowPendingPhone: !campaign.requires_phone_login });
       this.store.spendDrawPoints(authenticatedUser.id, drawCount);
     }
     this.store.deductDrawQuota(actorId, campaign.id, drawCount);
@@ -384,6 +405,23 @@ export class LotteryService {
     return this.store.getUserInventory(user.id);
   }
 
+  public submitDeliveryRequest(token: string, itemIds: readonly string[]): DeliverySubmitResult {
+    const user = this.assetUserFromToken(token);
+    return this.store.submitDeliveryRequest(user.id, itemIds);
+  }
+
+  public getDeliveryShippingFeeCentsByUserId(userId: string, requestId: string): number {
+    return this.store.getDeliveryShippingFeeCents(userId, requestId);
+  }
+
+  public fulfillDeliveryRequestByUserId(userId: string, requestId: string, amountCents: number): DeliverySubmitResult {
+    return this.store.fulfillDeliveryRequest(userId, requestId, amountCents);
+  }
+
+  public deliveryRequestById(requestId: string) {
+    return this.store.getDeliveryRequest(requestId);
+  }
+
   public seriesProgress(token: string, campaignId: string): SeriesProgress {
     const user = this.store.userFromToken(token);
     const campaign = this.store.getCampaign(campaignId);
@@ -434,8 +472,8 @@ export class LotteryService {
     return this.store.shareReward(user.id);
   }
 
-  public leaderboard(limit: number): readonly LeaderboardEntry[] {
-    return this.store.leaderboard(limit);
+  public leaderboard(limit: number, campaignId?: string): readonly LeaderboardEntry[] {
+    return this.store.leaderboard(limit, campaignId);
   }
 
   public drawRecords(token: string): readonly DrawRecord[] {
@@ -511,8 +549,11 @@ export class LotteryService {
     return this.store.updateFulfillmentTask(token, taskId, input);
   }
 
-  public adminDrawRecords(token: string): readonly DrawRecord[] {
-    return this.store.adminDrawRecords(token);
+  public adminDrawRecords(
+    token: string,
+    filters?: { readonly user_id?: string; readonly campaign_id?: string; readonly result?: string; readonly from?: string; readonly to?: string },
+  ): readonly DrawRecord[] {
+    return this.store.adminDrawRecords(token, filters);
   }
 
   public drawStatistics(token: string, campaignId: string): DrawStatistics {
@@ -662,6 +703,27 @@ export class LotteryService {
   public claimFirstRecharge(token: string, input: ClaimFirstRechargeRequest): ClaimFirstRechargeResult {
     const user = this.assetUserFromToken(token);
     return this.store.claimFirstRecharge(user.id, input);
+  }
+
+  public claimFirstRechargeByUserId(userId: string, packId: string): ClaimFirstRechargeResult {
+    return this.store.claimFirstRecharge(userId, { pack_id: packId });
+  }
+
+  public grantMonthCardByUserId(userId: string, cardType: CardType): MonthCardPurchaseResult {
+    return this.store.grantMonthCard(userId, cardType);
+  }
+
+  public grantShopItemByUserId(userId: string, input: BuyShopItemRequest): BuyShopItemResult {
+    return this.store.grantShopItem(userId, input);
+  }
+
+  public grantBattlePassByUserId(userId: string): BattlePass {
+    return this.store.grantBattlePass(userId);
+  }
+
+  public grantPointsPackByUserId(userId: string, _packId: string, amountCents: number): { readonly points_added: number; readonly new_points: number } {
+    const pointsAdded = Math.max(1, Math.floor(amountCents / 10));
+    return this.store.grantMemberPoints(userId, pointsAdded, 'payment', '积分充值');
   }
 
   public createShareCard(token: string, cardType: string, prizeName = '', prizeLevel = ''): ShareCard {
@@ -876,7 +938,7 @@ export class LotteryService {
     return this.store.getUserInventory(userId).filter((item) => item.prize_id === prizeId).length <= 1;
   }
 
-  private safeUserFromToken(token: string): { readonly id: string } | null {
+  private safeUserFromToken(token: string): User | null {
     try {
       return this.store.userFromToken(token);
     } catch {
