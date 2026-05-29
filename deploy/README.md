@@ -90,6 +90,10 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
+## npm 源
+
+各子项目已配置 `.npmrc` 使用 `https://registry.npmjs.org/`。若线上 `npm install` 报 `E401`，多为 `package-lock.json` 仍指向需登录的私有源（如阿里云制品库），或服务器 `~/.npmrc` 配置了过期 token。发布脚本已显式传入 `--registry=https://registry.npmjs.org/`。
+
 ## 关键约束
 
 - `/campaign-h5/` 必须代理到 `http://127.0.0.1:3000/`，不能把前缀原样转发给 Next，否则前台和 MIS 会 404。

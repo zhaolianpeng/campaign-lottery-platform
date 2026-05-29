@@ -111,7 +111,7 @@ echo "[3/6] Install backend dependencies and run migrations"
   export MYSQL_DATABASE='campaign_lottery_platform'; \
   export MYSQL_USER='campaign_lottery_app'; \
   export MYSQL_PASSWORD='${MYSQL_PASSWORD}'; \
-  cd '$REMOTE_PROJECT_DIR/backend-server' && npm install --no-fund --no-audit && npm run migrate && \
+  cd '$REMOTE_PROJECT_DIR/backend-server' && npm install --registry=https://registry.npmjs.org/ --no-fund --no-audit && npm run migrate && \
   if [ ! -f config/payment.config.json ]; then cp config/payment.config.mock.json config/payment.config.json; fi"
 "${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/payment-module' && rm -rf node_modules dist && ln -s ../backend-server/node_modules node_modules && ../backend-server/node_modules/.bin/tsc -p tsconfig.build.json"
 "${ssh_cmd[@]}" "rm -rf '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery/payment-module' && mkdir -p '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery' && cp -R '$REMOTE_PROJECT_DIR/payment-module' '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery/payment-module' && rm -rf '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery/payment-module/node_modules'"
@@ -121,7 +121,7 @@ echo "[4/6] Verify synced front-page source (no legacy guest nickname login UI)"
 
 echo "[5/6] Build frontend and backend (clean .next to avoid stale UI bundles)"
 "${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/backend-server' && rm -rf .next && npm run build"
-"${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/front-page' && rm -rf .next && npm install --no-fund --no-audit && npm run build"
+"${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/front-page' && rm -rf .next && npm install --registry=https://registry.npmjs.org/ --no-fund --no-audit && npm run build"
 "${ssh_cmd[@]}" "if grep -rq '输入昵称' '$REMOTE_PROJECT_DIR/front-page/.next' 2>/dev/null; then echo 'ERROR: front-page build still contains legacy login UI (输入昵称)' >&2; exit 1; fi"
 
 echo "[6/6] Replace PM2/nginx config and restart services"
