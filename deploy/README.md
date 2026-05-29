@@ -24,7 +24,7 @@ MYSQL_PASSWORD='MySQL 业务密码' \
 
 - `DEPLOY_HOST`：默认 `82.156.54.232`
 - `DEPLOY_USER`：默认 `ubuntu`
-- `REMOTE_PROJECT_DIR`：默认 `/home/ubuntu/campaign-lottery-platform`
+- `REMOTE_PROJECT_DIR`：默认 `/home/ubuntu/campaign-lottery-platform`（必须与 `deploy/pm2/ecosystem.config.cjs`、`deploy/nginx/gaokao-api.conf` 中的路径一致；若写成 `campaign-lottery-next` 等其它目录，线上会继续跑旧代码）
 - `NGINX_SITE_PATH`：默认 `/etc/nginx/sites-available/gaokao-api`
 - `CORS_ALLOW_ORIGIN`：默认 `*`
 

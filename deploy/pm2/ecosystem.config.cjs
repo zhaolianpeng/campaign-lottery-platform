@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: 'campaign-lottery-api',
-      cwd: '/home/ubuntu/campaign-lottery-platform/backend-server',
+      cwd: '/home/ubuntu/campaign-lottery-next/backend-server',
       script: 'node_modules/.bin/next',
       args: 'start --port 18100',
       env: {
@@ -26,7 +26,7 @@ module.exports = {
     },
     {
       name: 'campaign-lottery-front',
-      cwd: '/home/ubuntu/campaign-lottery-platform/front-page',
+      cwd: '/home/ubuntu/campaign-lottery-next/front-page',
       script: 'node_modules/.bin/next',
       args: 'start --port 3000',
       env: {

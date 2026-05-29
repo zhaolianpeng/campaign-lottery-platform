@@ -91,21 +91,25 @@ echo "[3/5] Install backend dependencies and run migrations"
 "${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/payment-module' && rm -rf node_modules dist && ln -s ../backend-server/node_modules node_modules && ../backend-server/node_modules/.bin/tsc -p tsconfig.build.json"
 "${ssh_cmd[@]}" "rm -rf '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery/payment-module' && mkdir -p '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery' && cp -R '$REMOTE_PROJECT_DIR/payment-module' '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery/payment-module' && rm -rf '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery/payment-module/node_modules'"
 
-echo "[4/5] Build frontend and backend (clean .next to avoid stale UI bundles)"
+echo "[4/6] Verify synced front-page source (no legacy guest nickname login UI)"
+"${ssh_cmd[@]}" "if grep -q '输入昵称' '$REMOTE_PROJECT_DIR/front-page/src/features/lottery/lottery-app.tsx'; then echo 'ERROR: remote lottery-app.tsx still has legacy login UI — check REMOTE_PROJECT_DIR and local branch' >&2; exit 1; fi"
+
+echo "[5/6] Build frontend and backend (clean .next to avoid stale UI bundles)"
 "${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/backend-server' && rm -rf .next && npm run build"
 "${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/front-page' && rm -rf .next && npm install --no-fund --no-audit && npm run build"
 "${ssh_cmd[@]}" "if grep -rq '输入昵称' '$REMOTE_PROJECT_DIR/front-page/.next' 2>/dev/null; then echo 'ERROR: front-page build still contains legacy login UI (输入昵称)' >&2; exit 1; fi"
 
-echo "[5/5] Replace PM2/nginx config and reload services"
+echo "[6/6] Replace PM2/nginx config and restart services"
 "${ssh_cmd[@]}" "set -e; \
   cp '$REMOTE_PROJECT_DIR/ecosystem.config.cjs' '$REMOTE_PROJECT_DIR/ecosystem.config.cjs.bak.'\$(date +%Y%m%d%H%M%S); \
   sudo cp '$NGINX_SITE_PATH' '$NGINX_SITE_PATH.bak.'\$(date +%Y%m%d%H%M%S); \
   sudo cp /tmp/campaign-lottery-gaokao-api.conf '$NGINX_SITE_PATH'; \
   sudo nginx -t; \
   sudo systemctl reload nginx; \
-  pm2 reload '$REMOTE_PROJECT_DIR/ecosystem.config.cjs' --update-env; \
+  pm2 startOrRestart '$REMOTE_PROJECT_DIR/ecosystem.config.cjs' --update-env; \
   pm2 save >/dev/null; \
   curl -fsS http://127.0.0.1:18100/healthz >/dev/null; \
-  curl -fsS http://127.0.0.1:3000 >/dev/null"
+  curl -fsS http://127.0.0.1:3000 >/dev/null; \
+  if curl -fsS http://127.0.0.1:3000/ | grep -q '输入昵称'; then echo 'ERROR: running front still serves legacy login HTML' >&2; exit 1; fi"
 
-echo "Deployment completed"
+echo "Deployment completed to $REMOTE_PROJECT_DIR"
