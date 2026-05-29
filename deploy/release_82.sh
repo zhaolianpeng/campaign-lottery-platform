@@ -5,11 +5,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 REMOTE_HOST="${DEPLOY_HOST:-82.156.54.232}"
 REMOTE_USER="${DEPLOY_USER:-ubuntu}"
-REMOTE_PROJECT_DIR="${REMOTE_PROJECT_DIR:-/home/ubuntu/campaign-lottery-platform}"
+REMOTE_PROJECT_DIR="${REMOTE_PROJECT_DIR:-/home/ubuntu/campaign-lottery-next}"
 NGINX_SITE_PATH="${NGINX_SITE_PATH:-/etc/nginx/sites-available/gaokao-api}"
-SSH_PASSWORD="${DEPLOY_PASSWORD:-}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
-MYSQL_PASSWORD="${MYSQL_PASSWORD:-}"
+SSH_PASSWORD="${DEPLOY_PASSWORD:-Zhao42818664051}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-zhao42818664051}"
+MYSQL_PASSWORD="${MYSQL_PASSWORD:-CampaignDB_20260521!}"
 CORS_ALLOW_ORIGIN="${CORS_ALLOW_ORIGIN:-*}"
 
 if [[ -z "$SSH_PASSWORD" ]]; then
@@ -91,9 +91,10 @@ echo "[3/5] Install backend dependencies and run migrations"
 "${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/payment-module' && rm -rf node_modules dist && ln -s ../backend-server/node_modules node_modules && ../backend-server/node_modules/.bin/tsc -p tsconfig.build.json"
 "${ssh_cmd[@]}" "rm -rf '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery/payment-module' && mkdir -p '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery' && cp -R '$REMOTE_PROJECT_DIR/payment-module' '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery/payment-module' && rm -rf '$REMOTE_PROJECT_DIR/backend-server/node_modules/@campaign-lottery/payment-module/node_modules'"
 
-echo "[4/5] Build frontend and backend"
-"${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/backend-server' && npm run build"
-"${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/front-page' && npm install --no-fund --no-audit && npm run build"
+echo "[4/5] Build frontend and backend (clean .next to avoid stale UI bundles)"
+"${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/backend-server' && rm -rf .next && npm run build"
+"${ssh_cmd[@]}" "cd '$REMOTE_PROJECT_DIR/front-page' && rm -rf .next && npm install --no-fund --no-audit && npm run build"
+"${ssh_cmd[@]}" "if grep -rq '输入昵称' '$REMOTE_PROJECT_DIR/front-page/.next' 2>/dev/null; then echo 'ERROR: front-page build still contains legacy login UI (输入昵称)' >&2; exit 1; fi"
 
 echo "[5/5] Replace PM2/nginx config and reload services"
 "${ssh_cmd[@]}" "set -e; \
