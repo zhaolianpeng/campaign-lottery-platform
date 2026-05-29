@@ -11,5 +11,25 @@ CREATE TABLE IF NOT EXISTS user_pity_state (
   UNIQUE KEY uk_user_pity_state (user_id, campaign_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-ALTER TABLE draw_records
-  ADD UNIQUE KEY uk_draw_records_request_id (request_id);
+-- Legacy rows use DEFAULT '' for request_id; multiple '' values violate UNIQUE.
+UPDATE draw_records
+SET request_id = CONCAT('legacy_', id)
+WHERE request_id IS NULL OR request_id = '';
+
+SET @dbname = DATABASE();
+SET @preparedStatement = (
+  SELECT IF(
+    EXISTS (
+      SELECT 1
+      FROM INFORMATION_SCHEMA.STATISTICS
+      WHERE TABLE_SCHEMA = @dbname
+        AND TABLE_NAME = 'draw_records'
+        AND INDEX_NAME = 'uk_draw_records_request_id'
+    ),
+    'SELECT 1',
+    'ALTER TABLE draw_records ADD UNIQUE KEY uk_draw_records_request_id (request_id)'
+  )
+);
+PREPARE addUniqueIfNotExists FROM @preparedStatement;
+EXECUTE addUniqueIfNotExists;
+DEALLOCATE PREPARE addUniqueIfNotExists;
