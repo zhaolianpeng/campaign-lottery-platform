@@ -118,7 +118,8 @@ echo "[6/6] Replace PM2/nginx config and restart services"
   sudo cp /tmp/campaign-lottery-gaokao-api.conf '$NGINX_SITE_PATH'; \
   sudo nginx -t; \
   sudo systemctl reload nginx; \
-  pm2 startOrRestart '$REMOTE_PROJECT_DIR/ecosystem.config.cjs' --update-env; \
+  pm2 delete campaign-lottery-api campaign-lottery-front >/dev/null 2>&1 || true; \
+  pm2 start '$REMOTE_PROJECT_DIR/ecosystem.config.cjs' --update-env; \
   pm2 save >/dev/null; \
   api_ready=0; \
   for i in \$(seq 1 30); do \
