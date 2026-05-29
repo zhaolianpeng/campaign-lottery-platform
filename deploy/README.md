@@ -10,7 +10,7 @@
 
 ## 一键发布
 
-在本机执行：
+在本机执行（**四个变量均为必填**；缺任一项脚本会在本地立即退出）：
 
 ```bash
 cd deploy
@@ -21,13 +21,21 @@ CORS_ALLOW_ORIGIN='https://your-domain.example' \
 ./release_82.sh
 ```
 
+| 变量 | 用途 |
+| --- | --- |
+| `DEPLOY_PASSWORD` | SSH 登录远程服务器 |
+| `ADMIN_PASSWORD` | 后台管理登录密码（写入 PM2 `env`） |
+| `MYSQL_PASSWORD` | MySQL 业务账号 `campaign_lottery_app` 密码（远程 `npm run migrate` 与 PM2 均依赖此值） |
+| `CORS_ALLOW_ORIGIN` | 生产 CORS 白名单，禁止使用 `*` |
+
 可选变量：
 
 - `DEPLOY_HOST`：默认 `82.156.54.232`
 - `DEPLOY_USER`：默认 `ubuntu`
-- `REMOTE_PROJECT_DIR`：默认 `/home/ubuntu/campaign-lottery-platform`（发布脚本会把模板中的路径替换为该值；若与 PM2/nginx 实际目录不一致，会跑错代码或健康检查失败）
+- `REMOTE_PROJECT_DIR`：默认 `/home/ubuntu/campaign-lottery-next`（发布脚本会把模板中的路径替换为该值；若与 PM2/nginx 实际目录不一致，会跑错代码或健康检查失败）
 - `NGINX_SITE_PATH`：默认 `/etc/nginx/sites-available/gaokao-api`
-- `CORS_ALLOW_ORIGIN`：**必填**，生产禁止使用 `*`
+
+说明：`release_82.sh` 不会同步 `.env.local` 到服务器；migrate 与 PM2 的数据库密码均来自本机执行脚本时传入的 `MYSQL_PASSWORD`。若需在服务器上手动执行 `npm run migrate`，请在 `backend-server/.env.local` 中配置 `MYSQL_ENABLED=true` 与 `MYSQL_PASSWORD`，或在 shell 中 export 同名变量。
 
 ## HTTPS（生产推荐）
 

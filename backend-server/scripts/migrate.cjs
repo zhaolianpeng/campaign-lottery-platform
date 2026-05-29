@@ -88,13 +88,20 @@ function loadMysqlConfig() {
     throw new Error('MYSQL_ENABLED is false; refusing to run migrations.');
   }
 
+  const password = process.env.MYSQL_PASSWORD || '';
+  if (!password && !(process.env.MYSQL_DSN || '').trim()) {
+    throw new Error(
+      'MYSQL_PASSWORD is required when MYSQL_ENABLED is true (set it in the shell, .env.local, or ecosystem.config.cjs env)',
+    );
+  }
+
   return {
     dsn: process.env.MYSQL_DSN || '',
     host: process.env.MYSQL_HOST || '127.0.0.1',
     port: Number(process.env.MYSQL_PORT || 3306),
     database: process.env.MYSQL_DATABASE || 'campaign_lottery_platform',
     user: process.env.MYSQL_USER || 'campaign_lottery_app',
-    password: process.env.MYSQL_PASSWORD || '',
+    password,
     charset: process.env.MYSQL_CHARSET || 'utf8mb4',
   };
 }
