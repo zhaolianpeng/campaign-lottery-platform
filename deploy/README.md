@@ -24,13 +24,13 @@ MYSQL_PASSWORD='MySQL 业务密码' \
 
 - `DEPLOY_HOST`：默认 `82.156.54.232`
 - `DEPLOY_USER`：默认 `ubuntu`
-- `REMOTE_PROJECT_DIR`：默认 `/home/ubuntu/campaign-lottery-platform`（必须与 `deploy/pm2/ecosystem.config.cjs`、`deploy/nginx/gaokao-api.conf` 中的路径一致；若写成 `campaign-lottery-next` 等其它目录，线上会继续跑旧代码）
+- `REMOTE_PROJECT_DIR`：默认 `/home/ubuntu/campaign-lottery-next`（发布脚本会把模板中的路径替换为该值；若与 PM2/nginx 实际目录不一致，会跑错代码或健康检查失败）
 - `NGINX_SITE_PATH`：默认 `/etc/nginx/sites-available/gaokao-api`
 - `CORS_ALLOW_ORIGIN`：默认 `*`
 
 ## PM2 发布步骤
 
-1. 将 `deploy/pm2/ecosystem.config.cjs` 复制到服务器项目根目录，例如 `/home/ubuntu/campaign-lottery-platform/ecosystem.config.cjs`。
+1. 将 `deploy/pm2/ecosystem.config.cjs` 复制到服务器项目根目录，例如 `/home/ubuntu/campaign-lottery-next/ecosystem.config.cjs`。
 2. 按实际环境修改以下变量：
    - `ADMIN_PASSWORD`
    - `MYSQL_PASSWORD`
